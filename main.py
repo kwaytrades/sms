@@ -43,8 +43,8 @@ async def lifespan(app: FastAPI):
     message_handler = MessageHandler(db_service, openai_service, twilio_service)
     
     # Start scheduler
-    scheduler = DailyScheduler(db_service, message_handler)
-    await scheduler.start()
+    #scheduler = DailyScheduler(db_service, message_handler)
+    #await scheduler.start()
     
     logger.info("✅ SMS Trading Bot started successfully")
     
