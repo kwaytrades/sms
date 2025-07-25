@@ -11,7 +11,7 @@ from services.database import DatabaseService
 from services.openai_service import OpenAIService
 from services.twilio_service import TwilioService
 from core.message_handler import MessageHandler
-from core.scheduler import DailyScheduler
+#from core.scheduler import DailyScheduler
 from webhooks.twilio_webhook import handle_incoming_sms
 from webhooks.stripe_webhook import handle_stripe_webhook
 from admin.dashboard import admin_router
