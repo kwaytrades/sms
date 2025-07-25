@@ -1,4 +1,4 @@
-# ===== main.py =====
+# main.py - Minimal working version
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse
 import uvicorn
@@ -11,10 +11,6 @@ from services.database import DatabaseService
 from services.openai_service import OpenAIService
 from services.twilio_service import TwilioService
 from core.message_handler import MessageHandler
-#from core.scheduler import DailyScheduler
-from webhooks.twilio_webhook import handle_incoming_sms
-from webhooks.stripe_webhook import handle_stripe_webhook
-from admin.dashboard import admin_router
 
 # Configure logging
 logger.remove()
@@ -25,35 +21,33 @@ db_service = None
 openai_service = None
 twilio_service = None
 message_handler = None
-scheduler = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    global db_service, openai_service, twilio_service, message_handler, scheduler
+    global db_service, openai_service, twilio_service, message_handler
     
     logger.info("🚀 Starting SMS Trading Bot...")
     
-    # Initialize services
-    db_service = DatabaseService()
-    await db_service.initialize()
-    
-    openai_service = OpenAIService()
-    twilio_service = TwilioService()
-    message_handler = MessageHandler(db_service, openai_service, twilio_service)
-    
-    # Start scheduler
-    #scheduler = DailyScheduler(db_service, message_handler)
-    #await scheduler.start()
-    
-    logger.info("✅ SMS Trading Bot started successfully")
+    try:
+        # Initialize services
+        db_service = DatabaseService()
+        await db_service.initialize()
+        
+        openai_service = OpenAIService()
+        twilio_service = TwilioService()
+        message_handler = MessageHandler(db_service, openai_service, twilio_service)
+        
+        logger.info("✅ SMS Trading Bot started successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Startup failed: {e}")
+        raise
     
     yield
     
     # Shutdown
     logger.info("🛑 Shutting down SMS Trading Bot...")
-    if scheduler:
-        await scheduler.stop()
     if db_service:
         await db_service.close()
 
@@ -64,12 +58,14 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Include routers
-app.include_router(admin_router, prefix="/admin", tags=["admin"])
-
 @app.get("/")
 async def root():
-    return {"message": "SMS Trading Bot API", "status": "running"}
+    return {
+        "message": "SMS Trading Bot API", 
+        "status": "running",
+        "version": "1.0.0",
+        "environment": settings.environment
+    }
 
 @app.get("/health")
 async def health_check():
@@ -85,12 +81,60 @@ async def health_check():
 @app.post("/webhook/sms")
 async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
     """Handle incoming SMS messages from Twilio"""
-    return await handle_incoming_sms(request, background_tasks, message_handler)
+    try:
+        # Parse Twilio webhook data
+        form_data = await request.form()
+        from_number = form_data.get('From')
+        message_body = form_data.get('Body', '').strip()
+        
+        if not from_number or not message_body:
+            return PlainTextResponse("Missing required fields", status_code=400)
+        
+        # Process message in background
+        if message_handler:
+            background_tasks.add_task(
+                message_handler.process_incoming_message,
+                from_number,
+                message_body
+            )
+        
+        # Return empty TwiML response
+        return PlainTextResponse(
+            '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
+            media_type="application/xml"
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ SMS webhook error: {e}")
+        return PlainTextResponse("Internal error", status_code=500)
 
 @app.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
-    """Handle Stripe webhook events"""
-    return await handle_stripe_webhook(request, db_service)
+    """Handle Stripe webhook events (placeholder)"""
+    try:
+        payload = await request.body()
+        logger.info("Stripe webhook received (not implemented yet)")
+        return {"status": "received", "implemented": False}
+        
+    except Exception as e:
+        logger.error(f"❌ Stripe webhook error: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.get("/admin")
+async def admin_dashboard():
+    """Simple admin dashboard"""
+    return {
+        "title": "SMS Trading Bot Admin",
+        "status": "running",
+        "services": {
+            "database": "connected" if db_service else "disconnected",
+            "message_handler": "active" if message_handler else "inactive"
+        },
+        "stats": {
+            "total_users": "N/A - implement with real DB queries",
+            "messages_today": "N/A - implement with analytics"
+        }
+    }
 
 if __name__ == "__main__":
     uvicorn.run(
