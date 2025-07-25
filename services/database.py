@@ -67,27 +67,28 @@ class DatabaseService:
             logger.error(f"❌ Error getting user by phone {phone_number}: {e}")
             return None
     
-    async def save_user(self, user: UserProfile) -> str:
-        """Save or update user profile"""
-        try:
-            user_dict = user.__dict__.copy()
-            user_dict['updated_at'] = datetime.utcnow()
-            
-            if user._id:
-                # Update existing
-                user_dict.pop('_id')
-                await self.db.users.update_one(
-                    {"_id": ObjectId(user._id)},
-                    {"$set": user_dict}
-                )
-                return user._id
-            else:
-                # Create new
-                result = await self.db.users.insert_one(user_dict)
-                return str(result.inserted_id)
-        except Exception as e:
-            logger.error(f"❌ Error saving user: {e}")
-            raise
+  async def save_user(self, user: UserProfile) -> str:
+    """Save or update user profile"""
+    try:
+        user_dict = user.__dict__.copy()
+        user_dict['updated_at'] = datetime.utcnow()
+        
+        if user._id:
+            # Update existing - remove _id from update data
+            user_dict.pop('_id', None)
+            await self.db.users.update_one(
+                {"_id": ObjectId(user._id)},
+                {"$set": user_dict}
+            )
+            return user._id
+        else:
+            # Create new - remove _id if it's None
+            user_dict.pop('_id', None)  # ← ADD THIS LINE
+            result = await self.db.users.insert_one(user_dict)
+            return str(result.inserted_id)
+    except Exception as e:
+        logger.error(f"❌ Error saving user: {e}")
+        raise
     
     async def save_message(self, message: ChatMessage) -> str:
         """Save chat message"""
