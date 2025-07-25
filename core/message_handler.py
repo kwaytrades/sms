@@ -127,11 +127,20 @@ class MessageHandler:
             return "I'm having trouble processing your request. Please try again."
     
     # In your existing message_handler.py, replace _handle_command with:
+
+
 async def _handle_command(self, user: UserProfile, command: str):
+    """Handle SMS commands - this method was missing!"""
     from core.enhanced_command_handler import EnhancedCommandHandler
     from services.stripe_integration import StripeIntegrationService
     
-    stripe_service = StripeIntegrationService()
-    enhanced_handler = EnhancedCommandHandler(self.db, self.twilio, stripe_service)
-    
-    return await enhanced_handler.handle_command(user, command, user.phone_number)
+    try:
+        stripe_service = StripeIntegrationService()
+        enhanced_handler = EnhancedCommandHandler(self.db, self.twilio, stripe_service)
+        
+        return await enhanced_handler.handle_command(user, command, user.phone_number)
+        
+    except Exception as e:
+        logger.error(f"❌ Command handling failed: {e}")
+        await self.twilio.send_sms(user.phone_number, "Sorry, something went wrong. Please try again.")
+        return False
