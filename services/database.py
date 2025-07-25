@@ -136,3 +136,12 @@ class DatabaseService:
             self.mongo_client.close()
         if self.redis:
             await self.redis.close()
+
+# Add to database initialization
+async def cleanup_invalid_users(self):
+    """Remove users with null _id"""
+    try:
+        result = await self.db.users.delete_many({"_id": None})
+        logger.info(f"Cleaned up {result.deleted_count} invalid users")
+    except Exception as e:
+        logger.error(f"Cleanup failed: {e}")
