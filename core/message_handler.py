@@ -126,25 +126,12 @@ class MessageHandler:
             logger.error(f"❌ Error generating response: {e}")
             return "I'm having trouble processing your request. Please try again."
     
-    async def _handle_command(self, user: UserProfile, command: str):
-        """Handle SMS commands"""
-        command = command.lower()
-        
-        if command == "start":
-            response = f"Welcome to personalized trading insights! You're on our FREE plan (10 messages/week). Reply with stock symbols for analysis or '/help' for commands."
-        
-        elif command == "/upgrade":
-            response = f"Upgrade to unlock more features:\n💎 PAID ($29/mo): 100 msgs + personalized insights\n🚀 PRO ($99/mo): Unlimited + trade alerts\n\nUpgrade: [payment_link]"
-        
-        elif command == "/help":
-            response = "Commands:\n/upgrade - Upgrade plan\n/status - Account info\n/settings - Preferences\n/watchlist - Manage stocks\n/cancel - Cancel subscription\n\nOr just ask about any stock!"
-        
-        elif command == "/status":
-            plan_config = PlanLimits.get_plan_config()[user.plan_type]
-            usage = await self.db.get_usage_count(user._id, plan_config.period)
-            response = f"Plan: {user.plan_type.upper()}\nUsage: {usage}/{plan_config.messages_per_period} this {plan_config.period}\nStatus: {user.subscription_status}"
-        
-        else:
-            response = "Unknown command. Reply '/help' for available commands."
-        
-        await self.twilio.send_sms(user.phone_number, response)
+    # In your existing message_handler.py, replace _handle_command with:
+async def _handle_command(self, user: UserProfile, command: str):
+    from core.enhanced_command_handler import EnhancedCommandHandler
+    from services.stripe_integration import StripeIntegrationService
+    
+    stripe_service = StripeIntegrationService()
+    enhanced_handler = EnhancedCommandHandler(self.db, self.twilio, stripe_service)
+    
+    return await enhanced_handler.handle_command(user, command, user.phone_number)
