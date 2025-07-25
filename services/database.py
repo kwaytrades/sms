@@ -66,8 +66,8 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"❌ Error getting user by phone {phone_number}: {e}")
             return None
-    
-  async def save_user(self, user: UserProfile) -> str:
+    async def save_user(self, user: UserProfile) -> str:
+        
     """Save or update user profile"""
     try:
         user_dict = user.__dict__.copy()
