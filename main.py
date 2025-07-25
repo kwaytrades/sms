@@ -155,3 +155,46 @@ if __name__ == "__main__":
         port=8000,
         reload=settings.environment == "development"
     )
+@app.get("/test")
+async def test_page():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head><title>SMS Bot Test</title></head>
+    <body>
+        <h2>Test SMS Webhook</h2>
+        <form action="/webhook/sms" method="POST">
+            <label>From Phone:</label><br>
+            <input type="text" name="From" value="+1234567890"><br><br>
+            
+            <label>Message:</label><br>
+            <input type="text" name="Body" value="START"><br><br>
+            
+            <input type="submit" value="Send Test SMS">
+        </form>
+        
+        <hr>
+        <h3>Quick Tests:</h3>
+        <button onclick="testCommand('START')">Test START</button>
+        <button onclick="testCommand('/help')">Test /help</button>
+        <button onclick="testCommand('/upgrade')">Test /upgrade</button>
+        
+        <div id="results"></div>
+        
+        <script>
+        function testCommand(message) {
+            fetch('/webhook/sms', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: `From=%2B1234567890&Body=${encodeURIComponent(message)}`
+            })
+            .then(response => response.text())
+            .then(data => {
+                document.getElementById('results').innerHTML = 
+                    `<h4>Response for "${message}":</h4><pre>${data}</pre>`;
+            });
+        }
+        </script>
+    </body>
+    </html>
+    """
