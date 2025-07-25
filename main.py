@@ -69,14 +69,26 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {
-        "status": "healthy",
-        "environment": settings.environment,
-        "services": {
-            "database": "connected" if db_service and db_service.db else "disconnected",
-            "redis": "connected" if db_service and db_service.redis else "disconnected"
+    try:
+        return {
+            "status": "healthy",
+            "environment": settings.environment,
+            "services": {
+                "database": "connected" if db_service and db_service.db else "disconnected",
+                "redis": "connected" if db_service and db_service.redis else "disconnected",
+                "message_handler": "active" if message_handler else "inactive"
+            }
         }
-    }
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "services": {
+                "database": "unknown",
+                "redis": "unknown"
+            }
+        }
 
 @app.post("/webhook/sms")
 async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
