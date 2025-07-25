@@ -155,7 +155,11 @@ if __name__ == "__main__":
         port=8000,
         reload=settings.environment == "development"
     )
-@app.get("/test")
+
+
+from fastapi.responses import HTMLResponse
+
+@app.get("/test", response_class=HTMLResponse)
 async def test_page():
     return """
     <!DOCTYPE html>
