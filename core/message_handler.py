@@ -126,21 +126,87 @@ class MessageHandler:
             logger.error(f"❌ Error generating response: {e}")
             return "I'm having trouble processing your request. Please try again."
     
-    # In your existing message_handler.py, replace _handle_command with:
-
-
-async def _handle_command(self, user: UserProfile, command: str):
-    """Handle SMS commands - this method was missing!"""
-    from core.enhanced_command_handler import EnhancedCommandHandler
-    from services.stripe_integration import StripeIntegrationService
+    async def _handle_command(self, user: UserProfile, command: str):
+        """Handle SMS commands"""
+        try:
+            # Try to use enhanced command handler if available
+            try:
+                from core.enhanced_command_handler import EnhancedCommandHandler
+                from services.stripe_integration import StripeIntegrationService
+                
+                stripe_service = StripeIntegrationService()
+                enhanced_handler = EnhancedCommandHandler(self.db, self.twilio, stripe_service)
+                
+                return await enhanced_handler.handle_command(user, command, user.phone_number)
+                
+            except ImportError:
+                # Fallback to basic command handling
+                response = await self._handle_basic_command(user, command)
+                await self.twilio.send_sms(user.phone_number, response)
+                return True
+                
+        except Exception as e:
+            logger.error(f"❌ Command handling failed: {e}")
+            await self.twilio.send_sms(user.phone_number, "Sorry, something went wrong. Please try again.")
+            return False
     
-    try:
-        stripe_service = StripeIntegrationService()
-        enhanced_handler = EnhancedCommandHandler(self.db, self.twilio, stripe_service)
+    async def _handle_basic_command(self, user: UserProfile, command: str) -> str:
+        """Handle basic commands as fallback"""
+        command = command.lower().strip()
         
-        return await enhanced_handler.handle_command(user, command, user.phone_number)
+        if command == '/start':
+            return f"👋 Welcome {user.name or 'there'}! I'm your AI trading assistant. Send me any trading question or use /help for commands."
         
-    except Exception as e:
-        logger.error(f"❌ Command handling failed: {e}")
-        await self.twilio.send_sms(user.phone_number, "Sorry, something went wrong. Please try again.")
-        return False
+        elif command == '/help':
+            return """🤖 Trading Bot Commands:
+/start - Welcome message
+/help - Show this help
+/portfolio - View your portfolio
+/market - Get market updates
+/subscribe - Upgrade your plan
+
+Just send me any trading question and I'll help! 📈"""
+        
+        elif command == '/portfolio':
+            return "📊 Portfolio feature coming soon! For now, ask me any trading questions."
+        
+        elif command == '/market':
+            return "📈 Market updates feature coming soon! Ask me about specific stocks or crypto."
+        
+        elif command == '/subscribe':
+            return "💎 Premium plans coming soon! Currently testing with unlimited access."
+        
+        else:
+            return f"❓ Unknown command: {command}. Use /help to see available commands."
+    
+    async def _get_conversation_history(self, session_id: str) -> list:
+        """Get conversation history for context"""
+        try:
+            # This would fetch recent messages from the session
+            # For now, return empty list
+            return []
+        except Exception as e:
+            logger.error(f"❌ Error getting conversation history: {e}")
+            return []
+    
+    async def _send_limit_message(self, user: UserProfile, reason: str):
+        """Send usage limit message"""
+        if reason == "subscription_inactive":
+            message = "⚠️ Your subscription is inactive. Please reactivate to continue using the service."
+        elif reason == "limit_reached":
+            message = "📈 You've reached your message limit for this period. Upgrade your plan for unlimited access!"
+        else:
+            message = "⚠️ Usage limit reached. Please check your plan or upgrade for more access."
+        
+        await self.twilio.send_sms(user.phone_number, message)
+    
+    async def _update_usage(self, user: UserProfile):
+        """Update user's usage count"""
+        try:
+            plan_config = PlanLimits.get_plan_config()[user.plan_type]
+            period = plan_config.period
+            ttl = 24 * 3600 if period == "daily" else 30 * 24 * 3600  # 1 day or 30 days
+            
+            await self.db.increment_usage(user._id, period, ttl)
+        except Exception as e:
+            logger.error(f"❌ Error updating usage: {e}")
