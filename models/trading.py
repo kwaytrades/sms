@@ -1,7 +1,7 @@
-# ===== models/trading.py =====
+# models/trading.py
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any  # ← Add Any here
 
 @dataclass
 class Portfolio:
@@ -26,7 +26,7 @@ class TradingData:
     # Behavioral Insights (Learned)
     successful_patterns: Dict[str, float] = field(default_factory=dict)
     loss_patterns: Dict[str, float] = field(default_factory=dict)
-    timing_patterns: Dict[str, Any] = field(default_factory=dict)
+    timing_patterns: Dict[str, Any] = field(default_factory=dict)  # This line was causing the error
     
     # Risk Profile
     actual_risk_tolerance: float = 0.5
@@ -38,3 +38,4 @@ class TradingData:
     data_completeness: float = 0.0
     
     _id: Optional[str] = None
+
