@@ -94,6 +94,11 @@ class UserProfile:
     premarket_enabled: bool = True
     market_close_enabled: bool = True
     promotional_messages: bool = True
+
+    # Timestamps
+    created_at: Optional[datetime] = None
+    last_active_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None 
     
     _id: Optional[str] = None
     
