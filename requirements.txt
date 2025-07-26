@@ -1,34 +1,40 @@
-# ===== requirements.txt - FIXED COMPATIBLE VERSIONS =====
-
-# Core Framework
+# ===== requirements.txt - FIXED FOR DEPLOYMENT =====
+# Core FastAPI and web server
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
-# Database - Compatible versions to avoid BSON conflicts
-pymongo==4.3.3
-motor==3.1.2
-aioredis==2.0.1
+# Database connections - FIXED VERSIONS
+motor==3.3.2
+pymongo==4.6.0
+redis==4.5.4  # Using redis instead of aioredis to avoid Python 3.11 compatibility issues
 
-# External APIs
-openai==1.54.3
+# AI and external services
+openai==1.3.8  # Stable version compatible with current code
 httpx==0.24.1
-aiohttp==3.9.0
 stripe==7.8.0
 twilio==8.10.0
 plaid-python==12.0.0
+aiohttp==3.9.0
 
-# Data Processing
-pandas==2.1.4
-numpy==1.25.2
-
-# Utilities
+# Configuration and utilities
 python-dotenv==1.0.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
-pytz==2023.3
-holidays==0.29
+
+# Text processing and analysis
+textblob==0.17.1
+
+# Data processing
+pandas==2.1.4
+
+# Scheduling
+apscheduler==3.10.4
+
+# Logging
 loguru==0.7.2
 
-# Production
-gunicorn==21.2.0
+# Add missing dependencies from your codebase
+requests==2.31.0
+pytz==2024.1
+holidays==0.36
