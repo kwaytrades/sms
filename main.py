@@ -1,147 +1,263 @@
-# main.py - Complete Unified SMS Trading Bot with Full Feature Set
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Query, Depends
+# ===== main.py - COMPLETE 1000+ LINE VERSION WITH FIXED IMPORTS =====
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
 import uvicorn
 import asyncio
+from contextlib import asynccontextmanager
+from loguru import logger
 import sys
 import os
-import json
-import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
-from loguru import logger
+import traceback
+import time
+from collections import defaultdict, deque
+from threading import Lock
+from typing import Dict, List, Optional, Tuple, Any
 
-# Import all services and core modules
-from config import settings, PLAN_LIMITS, POPULAR_TICKERS, is_popular_ticker
+# Import configuration - FIXED IMPORTS (removed non-existent items)
+from config import settings
+
+# Import services
 from services.database import DatabaseService
 from services.openai_service import OpenAIService
 from services.twilio_service import TwilioService
-from services.stripe_service import StripeService
-from services.technical_analysis import TechnicalAnalysisService
+from services.weekly_scheduler import WeeklyScheduler
 from core.message_handler import MessageHandler
-from core.user_manager import UserManager
-from utils.validators import validate_phone_number, sanitize_input
 
 # Configure logging
 logger.remove()
-logger.add(sys.stdout, level=settings.log_level, format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>")
+logger.add(sys.stdout, level=settings.log_level)
 
-# Global services - will be initialized in lifespan
-db_service = None
-openai_service = None
-twilio_service = None
-stripe_service = None
-ta_service = None
-message_handler = None
-user_manager = None
+# ===== METRICS COLLECTION SYSTEM =====
 
-# Metrics collector for monitoring
 class MetricsCollector:
     def __init__(self):
-        self.start_time = datetime.utcnow()
+        self.lock = Lock()
+        self.start_time = datetime.now()
+        
+        # Request metrics
         self.total_requests = 0
-        self.sms_messages_processed = 0
-        self.successful_analyses = 0
-        self.failed_analyses = 0
+        self.requests_by_endpoint = defaultdict(int)
+        self.requests_by_ticker = defaultdict(int)
+        self.recent_requests = deque(maxlen=100)  # Last 100 requests
+        
+        # Performance metrics
+        self.response_times = defaultdict(list)
         self.cache_hits = 0
         self.cache_misses = 0
-        self.user_signups = 0
-        self.subscription_changes = 0
         
-    def record_request(self):
-        self.total_requests += 1
-    
-    def record_sms_processed(self):
-        self.sms_messages_processed += 1
-    
-    def record_analysis(self, success: bool):
-        if success:
-            self.successful_analyses += 1
-        else:
-            self.failed_analyses += 1
-    
-    def record_cache(self, hit: bool):
-        if hit:
-            self.cache_hits += 1
-        else:
-            self.cache_misses += 1
-    
-    def record_signup(self):
-        self.user_signups += 1
-    
-    def record_subscription_change(self):
-        self.subscription_changes += 1
-    
-    def get_stats(self) -> Dict[str, Any]:
-        uptime = datetime.utcnow() - self.start_time
-        cache_total = self.cache_hits + self.cache_misses
-        cache_hit_rate = (self.cache_hits / cache_total * 100) if cache_total > 0 else 0
+        # Error tracking
+        self.errors_by_endpoint = defaultdict(int)
+        self.recent_errors = deque(maxlen=50)
         
-        return {
-            "uptime_seconds": int(uptime.total_seconds()),
-            "uptime_formatted": str(uptime).split('.')[0],
-            "total_requests": self.total_requests,
-            "sms_messages_processed": self.sms_messages_processed,
-            "successful_analyses": self.successful_analyses,
-            "failed_analyses": self.failed_analyses,
-            "cache_hit_rate": round(cache_hit_rate, 2),
-            "cache_hits": self.cache_hits,
-            "cache_misses": self.cache_misses,
-            "user_signups": self.user_signups,
-            "subscription_changes": self.subscription_changes
-        }
+        # Popular tickers tracking
+        self.ticker_request_count = defaultdict(int)
+        
+    def record_request(self, endpoint: str, ticker: str = None, response_time: float = 0, cache_status: str = None, error: bool = False):
+        with self.lock:
+            self.total_requests += 1
+            self.requests_by_endpoint[endpoint] += 1
+            
+            if ticker:
+                self.requests_by_ticker[ticker.upper()] += 1
+                self.ticker_request_count[ticker.upper()] += 1
+            
+            # Record recent request
+            request_info = {
+                "timestamp": datetime.now().isoformat(),
+                "endpoint": endpoint,
+                "ticker": ticker,
+                "response_time_ms": round(response_time * 1000, 2),
+                "cache_status": cache_status,
+                "error": error
+            }
+            self.recent_requests.append(request_info)
+            
+            # Performance tracking
+            if response_time > 0:
+                self.response_times[endpoint].append(response_time)
+                # Keep only last 50 response times per endpoint
+                if len(self.response_times[endpoint]) > 50:
+                    self.response_times[endpoint] = self.response_times[endpoint][-50:]
+            
+            # Cache tracking
+            if cache_status == "hit":
+                self.cache_hits += 1
+            elif cache_status == "miss":
+                self.cache_misses += 1
+            
+            # Error tracking
+            if error:
+                self.errors_by_endpoint[endpoint] += 1
+                error_info = {
+                    "timestamp": datetime.now().isoformat(),
+                    "endpoint": endpoint,
+                    "ticker": ticker
+                }
+                self.recent_errors.append(error_info)
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        with self.lock:
+            uptime = datetime.now() - self.start_time
+            
+            # Calculate average response times
+            avg_response_times = {}
+            for endpoint, times in self.response_times.items():
+                if times:
+                    avg_response_times[endpoint] = round(sum(times) / len(times) * 1000, 2)  # Convert to ms
+            
+            # Get top tickers
+            top_tickers = sorted(
+                self.ticker_request_count.items(), 
+                key=lambda x: x[1], 
+                reverse=True
+            )[:10]
+            
+            # Calculate requests per minute
+            total_minutes = max(uptime.total_seconds() / 60, 1)
+            requests_per_minute = round(self.total_requests / total_minutes, 2)
+            
+            # Cache hit rate
+            total_cache_requests = self.cache_hits + self.cache_misses
+            cache_hit_rate = round((self.cache_hits / total_cache_requests * 100), 2) if total_cache_requests > 0 else 0
+            
+            return {
+                "uptime": {
+                    "seconds": int(uptime.total_seconds()),
+                    "formatted": str(uptime).split('.')[0]  # Remove microseconds
+                },
+                "requests": {
+                    "total": self.total_requests,
+                    "per_minute": requests_per_minute,
+                    "by_endpoint": dict(self.requests_by_endpoint),
+                    "recent": list(self.recent_requests)[-10:]  # Last 10 requests
+                },
+                "performance": {
+                    "avg_response_times_ms": avg_response_times,
+                    "cache_hit_rate": cache_hit_rate,
+                    "cache_hits": self.cache_hits,
+                    "cache_misses": self.cache_misses
+                },
+                "tickers": {
+                    "top_requested": top_tickers,
+                    "unique_count": len(self.ticker_request_count)
+                },
+                "errors": {
+                    "by_endpoint": dict(self.errors_by_endpoint),
+                    "recent": list(self.recent_errors)[-5:]  # Last 5 errors
+                }
+            }
+
+# ===== PLAN LIMITS CONFIGURATION =====
+# Since we removed this from config, define it here
+PLAN_LIMITS = {
+    "free": {
+        "weekly_limit": settings.free_weekly_limit,
+        "price": 0,
+        "features": ["Basic market updates", "Stock analysis on demand"]
+    },
+    "paid": {
+        "monthly_limit": settings.paid_monthly_limit,
+        "price": 29,
+        "features": ["Personalized insights", "Portfolio tracking", "Market analytics"]
+    },
+    "pro": {
+        "unlimited": True,
+        "daily_cooloff": settings.pro_daily_cooloff,
+        "price": 99,
+        "features": ["Unlimited messages", "Real-time alerts", "Advanced screeners", "Priority support"]
+    }
+}
+
+# Popular tickers list (since removed from config)
+POPULAR_TICKERS = [
+    'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'META', 'TSLA', 'NVDA',
+    'NFLX', 'AMD', 'INTC', 'ORCL', 'CRM', 'ADBE', 'PYPL', 'UBER', 'LYFT',
+    'JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'V', 'MA', 'AXP',
+    'JNJ', 'PFE', 'UNH', 'MRNA', 'ABBV', 'TMO', 'ABT', 'LLY',
+    'WMT', 'TGT', 'HD', 'LOW', 'NKE', 'SBUX', 'MCD', 'DIS', 'AMGN',
+    'XOM', 'CVX', 'COP', 'BA', 'CAT', 'GE', 'MMM', 'HON',
+    'T', 'VZ', 'CMCSA', 'TMUS',
+    'SPY', 'QQQ', 'IWM', 'DIA', 'VTI', 'VOO', 'IVV', 'VEA', 'IEFA', 'EEM',
+    'GLD', 'SLV', 'TLT', 'HYG', 'LQD', 'XLF', 'XLK', 'XLE', 'XLV', 'XLI',
+    'COIN', 'MSTR', 'SQ', 'HOOD',
+    'NIO', 'XPEV', 'LI', 'RIVN', 'LCID', 'ENPH', 'PLUG',
+    'GME', 'AMC', 'BB', 'NOK', 'PLTR', 'WISH', 'CLOV',
+    'GILD', 'BIIB', 'REGN', 'VRTX', 'ILMN',
+    'F', 'SNAP', 'PINS', 'ZM', 'ROKU', 'PTON', 'SHOP',
+    'ARKK', 'ARKQ', 'ARKG', 'ARKW', 'SQQQ', 'TQQQ', 'UVXY', 'VIX'
+]
+
+def is_popular_ticker(ticker: str) -> bool:
+    """Check if ticker is in popular list."""
+    return ticker.upper() in POPULAR_TICKERS
 
 # Global metrics instance
 metrics = MetricsCollector()
 
+# Global services
+db_service = None
+openai_service = None
+twilio_service = None
+message_handler = None
+scheduler_task = None
+
+# Middleware to track requests
+@app.before_request
+def before_request():
+    request.start_time = time.time()
+
+@app.after_request
+def after_request(response):
+    if hasattr(request, 'start_time'):
+        response_time = time.time() - request.start_time
+        
+        # Extract ticker from request args
+        ticker = request.args.get('ticker', None)
+        
+        # Get cache status from response (if it's JSON)
+        cache_status = None
+        try:
+            if response.content_type == 'application/json':
+                response_data = response.get_json()
+                if response_data and isinstance(response_data, dict):
+                    cache_status = response_data.get('cache_status')
+        except:
+            pass
+        
+        # Record metrics
+        metrics.record_request(
+            endpoint=request.endpoint or request.path,
+            ticker=ticker,
+            response_time=response_time,
+            cache_status=cache_status,
+            error=response.status_code >= 400
+        )
+    
+    return response
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    global db_service, openai_service, twilio_service, stripe_service, ta_service, message_handler, user_manager
+    global db_service, openai_service, twilio_service, message_handler, scheduler_task
     
-    logger.info("🚀 Starting Unified SMS Trading Bot with Full Feature Set...")
+    logger.info("🚀 Starting SMS Trading Bot...")
     
     try:
-        # Initialize database service first
+        # Initialize services
         db_service = DatabaseService()
         await db_service.initialize()
-        logger.info("✅ Database service initialized")
         
-        # Initialize other services
         openai_service = OpenAIService()
-        logger.info("✅ OpenAI service initialized")
-        
         twilio_service = TwilioService()
-        logger.info("✅ Twilio service initialized")
+        message_handler = MessageHandler(db_service, openai_service, twilio_service)
         
-        stripe_service = StripeService()
-        logger.info("✅ Stripe service initialized")
+        # Start weekly scheduler
+        scheduler = WeeklyScheduler(db_service, twilio_service)
+        scheduler_task = asyncio.create_task(scheduler.start_scheduler())
+        logger.info("📅 Weekly scheduler started")
         
-        # Initialize technical analysis service with database cache
-        ta_service = TechnicalAnalysisService()
-        await ta_service.initialize(db_service)
-        logger.info("✅ Technical Analysis service initialized")
-        
-        # Initialize user manager
-        user_manager = UserManager(db_service)
-        logger.info("✅ User Manager initialized")
-        
-        # Initialize message handler with all services
-        message_handler = MessageHandler(
-            db_service, 
-            openai_service, 
-            twilio_service, 
-            ta_service,
-            user_manager
-        )
-        logger.info("✅ Message Handler initialized")
-        
-        # Perform startup tasks
-        await _startup_tasks()
-        
-        logger.info("🎉 All services initialized successfully - Ready to serve!")
+        logger.info("✅ SMS Trading Bot started successfully")
         
     except Exception as e:
         logger.error(f"❌ Startup failed: {e}")
@@ -150,220 +266,63 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    logger.info("🛑 Shutting down services...")
-    
-    try:
-        if ta_service:
-            await ta_service.close()
-        if db_service:
-            await db_service.close()
-        logger.info("✅ All services shut down gracefully")
-    except Exception as e:
-        logger.error(f"❌ Shutdown error: {e}")
+    logger.info("🛑 Shutting down SMS Trading Bot...")
+    if scheduler_task:
+        scheduler_task.cancel()
+        logger.info("📅 Weekly scheduler stopped")
+    if db_service:
+        await db_service.close()
 
-async def _startup_tasks():
-    """Perform startup tasks like database cleanup"""
-    try:
-        # Clean up old data (older than 30 days)
-        if db_service:
-            cleanup_result = await db_service.cleanup_old_data(days=30)
-            logger.info(f"🧹 Startup cleanup: {cleanup_result}")
-        
-        # Warm up popular ticker cache if market is open
-        if ta_service and ta_service.market_scheduler.is_market_hours():
-            logger.info("🔥 Market is open - warming up popular ticker cache...")
-            # This would pre-fetch popular tickers in the background
-            
-    except Exception as e:
-        logger.warning(f"⚠️ Startup tasks failed (non-critical): {e}")
-
-# Create FastAPI app
 app = FastAPI(
-    title="Unified SMS Trading Bot",
-    description="Complete SMS-based AI trading assistant with technical analysis, user management, and subscription billing",
-    version="3.0.0",
-    lifespan=lifespan,
-    docs_url="/docs" if settings.environment == "development" else None,
-    redoc_url="/redoc" if settings.environment == "development" else None
+    title="SMS Trading Bot",
+    description="Hyper-personalized SMS trading insights",
+    version="1.0.0",
+    lifespan=lifespan
 )
 
-# Add CORS middleware for development
-if settings.environment == "development":
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-# Middleware to track requests
-@app.middleware("http")
-async def metrics_middleware(request: Request, call_next):
-    start_time = time.time()
-    metrics.record_request()
-    
-    response = await call_next(request)
-    
-    process_time = time.time() - start_time
-    response.headers["X-Process-Time"] = str(process_time)
-    
-    return response
-
-# ============================================================================
-# CORE ENDPOINTS
-# ============================================================================
+# ===== MAIN ENDPOINTS =====
 
 @app.get("/")
 async def root():
-    """API root with comprehensive service information"""
     return {
-        "service": "Unified SMS Trading Bot",
-        "version": "3.0.0",
-        "status": "operational",
-        "description": "Complete SMS-based AI trading assistant",
-        "features": {
-            "sms_interface": "Natural language SMS conversations via Twilio",
-            "technical_analysis": "Built-in RSI, MACD, Support/Resistance, Gap Analysis",
-            "ai_responses": "Personalized responses using OpenAI GPT",
-            "user_management": "Behavioral learning and personalization",
-            "subscription_billing": "Stripe-powered subscription management",
-            "smart_caching": "Redis-based caching with market-aware TTL",
-            "real_time_data": "EODHD market data integration",
-            "security": "Input validation, webhook verification, secure secrets"
-        },
-        "plans": {
-            "free": {"price": "$0", "limit": "4 messages/week", "features": ["Basic analysis"]},
-            "paid": {"price": "$29/month", "limit": "40 messages/week", "features": ["Advanced analysis", "Personalization"]},
-            "pro": {"price": "$99/month", "limit": "120 messages/week", "features": ["Unlimited daily", "Real-time alerts", "Priority support"]}
-        },
+        "message": "SMS Trading Bot API", 
+        "status": "running",
+        "version": "1.0.0",
+        "environment": settings.environment,
+        "capabilities": settings.get_capability_summary(),
+        "plan_limits": PLAN_LIMITS,
         "endpoints": {
+            "health": "/health",
             "sms_webhook": "/webhook/sms",
             "stripe_webhook": "/webhook/stripe",
-            "technical_analysis": "/analysis/{symbol}",
-            "trading_signals": "/signals/{symbol}",
-            "health_check": "/health",
             "admin_dashboard": "/admin",
+            "test_interface": "/test",
             "metrics": "/metrics",
-            "cache_management": "/cache/*",
-            "user_management": "/admin/users/*"
-        },
-        "supported_commands": [
-            "Natural language: 'How is AAPL doing?'",
-            "Price queries: 'TSLA price'",
-            "Commands: START, HELP, UPGRADE, STATUS, WATCHLIST"
-        ],
-        "data_sources": {
-            "market_data": "EODHD Professional API",
-            "ai_responses": "OpenAI GPT-4",
-            "user_data": "MongoDB Atlas",
-            "caching": "Redis"
-        },
-        "uptime": metrics.get_stats()["uptime_formatted"],
-        "environment": settings.environment
+            "user_management": "/admin/users/*",
+            "scheduler": "/admin/scheduler/*"
+        }
     }
 
 @app.get("/health")
 async def health_check():
-    """Comprehensive health check with detailed service status"""
     try:
-        health_status = {
-            "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            "version": "3.0.0",
+        # Get runtime requirements validation
+        validation = settings.validate_runtime_requirements()
+        
+        return {
+            "status": "healthy" if validation["ready_for_production"] or settings.testing_mode else "degraded",
             "environment": settings.environment,
-            "services": {},
-            "metrics": metrics.get_stats(),
-            "configuration": {
-                "cache_enabled": True,
-                "market_hours_aware": True,
-                "behavioral_learning": True,
-                "subscription_management": True
-            }
+            "testing_mode": settings.testing_mode,
+            "services": {
+                "database": "connected" if db_service and db_service.db else "disconnected",
+                "redis": "connected" if db_service and db_service.redis else "disconnected",
+                "message_handler": "active" if message_handler else "inactive",
+                "weekly_scheduler": "active" if scheduler_task and not scheduler_task.done() else "inactive"
+            },
+            "capabilities": settings.get_capability_summary(),
+            "validation": validation,
+            "uptime": metrics.get_metrics()["uptime"]
         }
-        
-        # Check each service
-        service_checks = []
-        
-        # Database check
-        if db_service and db_service.db:
-            try:
-                await db_service.db.command('ping')
-                health_status["services"]["mongodb"] = {"status": "connected", "database": "sms_trading_bot"}
-                service_checks.append(True)
-            except Exception as e:
-                health_status["services"]["mongodb"] = {"status": "error", "error": str(e)}
-                service_checks.append(False)
-        else:
-            health_status["services"]["mongodb"] = {"status": "not_initialized"}
-            service_checks.append(False)
-        
-        # Redis check
-        if db_service and db_service.redis:
-            try:
-                await db_service.redis.ping()
-                health_status["services"]["redis"] = {"status": "connected"}
-                service_checks.append(True)
-            except Exception as e:
-                health_status["services"]["redis"] = {"status": "error", "error": str(e)}
-                service_checks.append(False)
-        else:
-            health_status["services"]["redis"] = {"status": "not_initialized"}
-            service_checks.append(False)
-        
-        # OpenAI check
-        health_status["services"]["openai"] = {
-            "status": "configured" if openai_service and openai_service.client else "not_configured"
-        }
-        service_checks.append(bool(openai_service and openai_service.client))
-        
-        # Twilio check
-        health_status["services"]["twilio"] = {
-            "status": "configured" if twilio_service and twilio_service.client else "not_configured"
-        }
-        service_checks.append(bool(twilio_service))
-        
-        # Stripe check
-        health_status["services"]["stripe"] = {
-            "status": "configured" if stripe_service else "not_configured"
-        }
-        service_checks.append(bool(stripe_service))
-        
-        # Technical Analysis check
-        health_status["services"]["technical_analysis"] = {
-            "status": "active" if ta_service else "inactive",
-            "market_hours": ta_service.market_scheduler.is_market_hours() if ta_service else False
-        }
-        service_checks.append(bool(ta_service))
-        
-        # Message Handler check
-        health_status["services"]["message_handler"] = {
-            "status": "active" if message_handler else "inactive"
-        }
-        service_checks.append(bool(message_handler))
-        
-        # User Manager check
-        health_status["services"]["user_manager"] = {
-            "status": "active" if user_manager else "inactive"
-        }
-        service_checks.append(bool(user_manager))
-        
-        # Overall health determination
-        critical_services_healthy = all(service_checks[:3])  # MongoDB, Redis, OpenAI are critical
-        all_services_healthy = all(service_checks)
-        
-        if all_services_healthy:
-            health_status["status"] = "healthy"
-            status_code = 200
-        elif critical_services_healthy:
-            health_status["status"] = "degraded"
-            status_code = 200
-        else:
-            health_status["status"] = "unhealthy"
-            status_code = 503
-        
-        return JSONResponse(content=health_status, status_code=status_code)
-        
     except Exception as e:
         logger.error(f"Health check error: {e}")
         return JSONResponse(
@@ -371,67 +330,40 @@ async def health_check():
             content={
                 "status": "error",
                 "error": str(e),
-                "timestamp": datetime.utcnow().isoformat()
+                "services": {
+                    "database": "unknown",
+                    "redis": "unknown",
+                    "message_handler": "unknown",
+                    "weekly_scheduler": "unknown"
+                }
             }
         )
 
-# ============================================================================
-# SMS WEBHOOK ENDPOINT
-# ============================================================================
+# ===== SMS WEBHOOK ENDPOINTS =====
 
 @app.post("/webhook/sms")
 async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
-    """
-    Handle incoming SMS messages from Twilio
-    This is the main entry point for user interactions
-    """
+    """Handle incoming SMS messages from Twilio"""
     try:
         # Parse Twilio webhook data
         form_data = await request.form()
         from_number = form_data.get('From')
         message_body = form_data.get('Body', '').strip()
-        twilio_message_sid = form_data.get('MessageSid')
         
-        # Log incoming message
-        logger.info(f"📱 SMS received from {from_number}: {message_body[:50]}{'...' if len(message_body) > 50 else ''}")
-        
-        # Validate required fields
         if not from_number or not message_body:
-            logger.error("❌ Missing required fields in SMS webhook")
             return PlainTextResponse("Missing required fields", status_code=400)
         
-        # Validate and sanitize phone number
-        try:
-            validated_phone = validate_phone_number(from_number)
-        except ValueError as e:
-            logger.error(f"❌ Invalid phone number {from_number}: {e}")
-            return PlainTextResponse("Invalid phone number", status_code=400)
+        # Process message in background
+        if message_handler:
+            background_tasks.add_task(
+                message_handler.process_incoming_message,
+                from_number,
+                message_body
+            )
+        else:
+            logger.warning("Message handler not available - testing mode")
         
-        # Sanitize message body
-        sanitized_message = sanitize_input(message_body)
-        
-        # Check if system is healthy enough to process
-        if not message_handler:
-            logger.error("❌ Message handler not available")
-            # Send error SMS if Twilio is available
-            if twilio_service:
-                error_msg = "System temporarily unavailable. Please try again in a few minutes."
-                await twilio_service.send_sms(validated_phone, error_msg)
-            return PlainTextResponse("Service unavailable", status_code=503)
-        
-        # Record metrics
-        metrics.record_sms_processed()
-        
-        # Process message in background to return quickly to Twilio
-        background_tasks.add_task(
-            _process_sms_message,
-            validated_phone,
-            sanitized_message,
-            twilio_message_sid
-        )
-        
-        # Return empty TwiML response immediately
-        # (We send SMS responses directly via Twilio API, not TwiML)
+        # Return empty TwiML response
         return PlainTextResponse(
             '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
             media_type="application/xml"
@@ -441,562 +373,995 @@ async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
         logger.error(f"❌ SMS webhook error: {e}")
         return PlainTextResponse("Internal error", status_code=500)
 
-async def _process_sms_message(phone_number: str, message_body: str, message_sid: str):
-    """Background task to process SMS message"""
-    try:
-        logger.info(f"🔄 Processing SMS {message_sid} from {phone_number}")
-        
-        # Process message through message handler
-        success = await message_handler.process_incoming_message(phone_number, message_body)
-        
-        if success:
-            logger.info(f"✅ Successfully processed SMS {message_sid}")
-        else:
-            logger.error(f"❌ Failed to process SMS {message_sid}")
-            
-    except Exception as e:
-        logger.error(f"❌ Background SMS processing error for {message_sid}: {e}")
-
-# ============================================================================
-# STRIPE WEBHOOK ENDPOINT
-# ============================================================================
-
 @app.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
-    """Handle Stripe webhook events for subscription management"""
+    """Handle Stripe webhook events"""
     try:
         payload = await request.body()
-        sig_header = request.headers.get('stripe-signature')
-        
-        logger.info("💳 Stripe webhook received")
-        
-        if not stripe_service:
-            logger.error("❌ Stripe service not available")
-            return JSONResponse(status_code=503, content={"error": "Stripe service unavailable"})
-        
-        # Verify webhook signature and get event
-        event = await stripe_service.handle_webhook(payload, sig_header)
-        
-        if not event:
-            logger.error("❌ Failed to verify Stripe webhook")
-            return JSONResponse(status_code=400, content={"error": "Invalid webhook"})
-        
-        # Handle different event types
-        event_type = event['type']
-        logger.info(f"💳 Processing Stripe event: {event_type}")
-        
-        if event_type in ['customer.subscription.created', 'customer.subscription.updated']:
-            subscription = event['data']['object']
-            customer_id = subscription['customer']
-            
-            # Update user subscription in database
-            if user_manager:
-                success = await user_manager.update_subscription_from_stripe(customer_id, subscription)
-                if success:
-                    metrics.record_subscription_change()
-                    logger.info(f"✅ Updated subscription for customer {customer_id}")
-                else:
-                    logger.error(f"❌ Failed to update subscription for customer {customer_id}")
-        
-        elif event_type == 'customer.subscription.deleted':
-            subscription = event['data']['object']
-            customer_id = subscription['customer']
-            
-            # Handle subscription cancellation
-            if user_manager:
-                # Find user and update to free plan
-                user = await user_manager.db.db.users.find_one({"stripe_customer_id": customer_id})
-                if user:
-                    await user_manager.update_subscription(user["phone_number"], "free")
-                    metrics.record_subscription_change()
-                    logger.info(f"✅ Cancelled subscription for customer {customer_id}")
-        
-        elif event_type == 'invoice.payment_failed':
-            invoice = event['data']['object']
-            customer_id = invoice['customer']
-            logger.warning(f"⚠️ Payment failed for customer {customer_id}")
-            
-            # Optionally notify user via SMS about payment failure
-            if user_manager and twilio_service:
-                user = await user_manager.db.db.users.find_one({"stripe_customer_id": customer_id})
-                if user:
-                    message = "⚠️ Payment failed for your SMS Trading Bot subscription. Please update your payment method to continue receiving premium features."
-                    await twilio_service.send_sms(user["phone_number"], message)
-        
-        return {"status": "success", "event_type": event_type}
+        # TODO: Implement Stripe webhook signature verification
+        # TODO: Handle subscription events
+        logger.info("Stripe webhook received")
+        return {"status": "received", "message": "Stripe webhook processed"}
         
     except Exception as e:
         logger.error(f"❌ Stripe webhook error: {e}")
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return {"status": "error", "message": str(e)}
 
-# ============================================================================
-# TECHNICAL ANALYSIS ENDPOINTS
-# ============================================================================
-
-@app.get("/analysis/{symbol}")
-async def get_technical_analysis(
-    symbol: str,
-    interval: str = Query("1d", description="Time interval (1d, 4h, 1h)"),
-    period: str = Query("1mo", description="Time period (1mo, 3mo, 6mo, 1y)")
-):
-    """
-    Get comprehensive technical analysis for a symbol
-    Includes price data, indicators, support/resistance, signals
-    """
-    try:
-        if not ta_service:
-            raise HTTPException(status_code=503, detail="Technical analysis service not available")
-        
-        logger.info(f"📊 Technical analysis requested for {symbol}")
-        
-        # Get analysis
-        result = await ta_service.analyze_symbol(symbol, interval, period)
-        
-        # Record metrics
-        if "error" in result:
-            metrics.record_analysis(False)
-            logger.error(f"❌ Technical analysis failed for {symbol}: {result['error']}")
-        else:
-            metrics.record_analysis(True)
-            # Record cache hit/miss
-            cache_status = result.get("cache_status", "unknown")
-            metrics.record_cache(cache_status == "hit")
-            logger.info(f"✅ Technical analysis completed for {symbol} (cache: {cache_status})")
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"❌ Technical analysis endpoint error: {e}")
-        metrics.record_analysis(False)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/signals/{symbol}")
-async def get_trading_signals(symbol: str):
-    """Get just the trading signals for a symbol (lighter endpoint)"""
-    try:
-        if not ta_service:
-            raise HTTPException(status_code=503, detail="Technical analysis service not available")
-        
-        signals = await ta_service.get_trading_signals(symbol)
-        
-        return {
-            "symbol": symbol.upper(),
-            "signals": signals,
-            "timestamp": datetime.utcnow().isoformat(),
-            "count": len(signals)
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Trading signals error for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/price/{symbol}")
-async def get_current_price(symbol: str):
-    """Get just the current price for a symbol (fastest endpoint)"""
-    try:
-        if not ta_service:
-            raise HTTPException(status_code=503, detail="Technical analysis service not available")
-        
-        # Get basic analysis (should hit cache for popular symbols)
-        analysis = await ta_service.analyze_symbol(symbol, "1d", "1mo")
-        
-        if "error" in analysis:
-            raise HTTPException(status_code=404, detail=f"No data available for {symbol}")
-        
-        return {
-            "symbol": symbol.upper(),
-            "price": analysis["current_price"],
-            "change": analysis["price_change"],
-            "volume": analysis["volume"],
-            "timestamp": analysis["timestamp"],
-            "cache_status": analysis.get("cache_status", "unknown")
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Price endpoint error for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ============================================================================
-# CACHE MANAGEMENT ENDPOINTS
-# ============================================================================
-
-@app.get("/cache/stats")
-async def get_cache_stats():
-    """Get comprehensive cache statistics"""
-    try:
-        if not ta_service:
-            return {"error": "Technical analysis service not available"}
-        
-        stats = await ta_service.get_cache_stats()
-        
-        # Add service-level cache metrics
-        stats.update({
-            "service_metrics": {
-                "cache_hits": metrics.cache_hits,
-                "cache_misses": metrics.cache_misses,
-                "hit_rate": round((metrics.cache_hits / (metrics.cache_hits + metrics.cache_misses) * 100), 2) if (metrics.cache_hits + metrics.cache_misses) > 0 else 0
-            },
-            "popular_tickers": {
-                "count": len(POPULAR_TICKERS),
-                "examples": POPULAR_TICKERS[:10]
-            }
-        })
-        
-        return stats
-        
-    except Exception as e:
-        logger.error(f"❌ Cache stats error: {e}")
-        return {"error": str(e)}
-
-@app.post("/cache/clear")
-async def clear_all_cache():
-    """Clear all technical analysis cache"""
-    try:
-        if not ta_service:
-            return {"error": "Technical analysis service not available"}
-        
-        success = await ta_service.clear_cache()
-        
-        if success:
-            logger.info("🗑️ All cache cleared by admin")
-            return {"message": "All cache cleared successfully", "timestamp": datetime.utcnow().isoformat()}
-        else:
-            return {"error": "Failed to clear cache"}
-        
-    except Exception as e:
-        logger.error(f"❌ Clear cache error: {e}")
-        return {"error": str(e)}
-
-@app.delete("/cache/{symbol}")
-async def invalidate_symbol_cache(symbol: str):
-    """Invalidate cache for specific symbol"""
-    try:
-        if not ta_service:
-            return {"error": "Technical analysis service not available"}
-        
-        success = await ta_service.invalidate_cache(symbol)
-        
-        message = f"Cache {'invalidated' if success else 'not found'} for {symbol.upper()}"
-        logger.info(f"🗑️ {message}")
-        
-        return {
-            "message": message,
-            "symbol": symbol.upper(),
-            "success": success,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Invalidate cache error for {symbol}: {e}")
-        return {"error": str(e)}
-
-@app.post("/cache/prewarm")
-async def prewarm_popular_cache():
-    """Pre-warm cache for popular tickers (admin function)"""
-    try:
-        if not ta_service:
-            return {"error": "Technical analysis service not available"}
-        
-        # This would trigger pre-warming of popular tickers
-        logger.info("🔥 Cache pre-warming triggered by admin")
-        
-        # For now, just return success
-        return {
-            "message": "Cache pre-warming initiated",
-            "popular_tickers": len(POPULAR_TICKERS),
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Cache pre-warm error: {e}")
-        return {"error": str(e)}
-
-# ============================================================================
-# ADMIN AND USER MANAGEMENT ENDPOINTS
-# ============================================================================
+# ===== ADMIN ENDPOINTS =====
 
 @app.get("/admin")
 async def admin_dashboard():
-    """Comprehensive admin dashboard with system statistics"""
+    """Comprehensive admin dashboard"""
     try:
-        dashboard_data = {
+        user_stats = await db_service.get_user_stats() if db_service else {}
+        
+        # Get scheduler status
+        scheduler_status = {"status": "unknown"}
+        if db_service and twilio_service:
+            try:
+                temp_scheduler = WeeklyScheduler(db_service, twilio_service)
+                scheduler_status = await temp_scheduler.get_scheduler_status()
+            except Exception as e:
+                scheduler_status = {"status": "error", "error": str(e)}
+        
+        # Get metrics
+        system_metrics = metrics.get_metrics()
+        
+        return {
             "title": "SMS Trading Bot Admin Dashboard",
             "status": "operational",
-            "timestamp": datetime.utcnow().isoformat(),
-            "version": "3.0.0",
-            "environment": settings.environment
-        }
-        
-        # Get system metrics
-        dashboard_data["metrics"] = metrics.get_stats()
-        
-        # Get user statistics
-        if user_manager:
-            dashboard_data["users"] = await user_manager.get_user_stats()
-        
-        # Get database statistics
-        if db_service:
-            dashboard_data["database"] = await db_service.get_stats()
-        
-        # Get technical analysis statistics
-        if ta_service:
-            dashboard_data["technical_analysis"] = await ta_service.get_stats()
-        
-        # Add service health
-        dashboard_data["services"] = {
-            "database": "connected" if db_service and db_service.db else "disconnected",
-            "redis": "connected" if db_service and db_service.redis else "disconnected",
-            "openai": "configured" if openai_service and openai_service.client else "not_configured",
-            "twilio": "configured" if twilio_service and twilio_service.client else "not_configured",
-            "stripe": "configured" if stripe_service else "not_configured",
-            "technical_analysis": "active" if ta_service else "inactive",
-            "message_handler": "active" if message_handler else "inactive"
-        }
-        
-        # Add configuration info
-        dashboard_data["configuration"] = {
-            "plans": PLAN_LIMITS,
-            "popular_tickers_count": len(POPULAR_TICKERS),
-            "cache_ttl": {
-                "popular": settings.cache_popular_ttl,
-                "ondemand": settings.cache_ondemand_ttl,
-                "afterhours": settings.cache_afterhours_ttl
+            "version": "1.0.0",
+            "environment": settings.environment,
+            "services": {
+                "database": "connected" if db_service else "disconnected",
+                "message_handler": "active" if message_handler else "inactive",
+                "weekly_scheduler": "active" if scheduler_task and not scheduler_task.done() else "inactive"
+            },
+            "user_stats": user_stats,
+            "scheduler": scheduler_status,
+            "metrics": system_metrics,
+            "configuration": settings.get_capability_summary(),
+            "plan_limits": PLAN_LIMITS,
+            "popular_tickers": {
+                "count": len(POPULAR_TICKERS),
+                "sample": POPULAR_TICKERS[:10]
             }
         }
-        
-        return dashboard_data
-        
     except Exception as e:
         logger.error(f"❌ Admin dashboard error: {e}")
-        return {"error": str(e), "timestamp": datetime.utcnow().isoformat()}
+        return {"error": str(e)}
+
+# ===== USER MANAGEMENT ENDPOINTS =====
 
 @app.get("/admin/users/{phone_number}")
 async def get_user_profile(phone_number: str):
-    """Get detailed user profile for admin"""
+    """Get user profile for admin"""
+    if not db_service:
+        raise HTTPException(status_code=503, detail="Database service unavailable")
+    
     try:
-        if not user_manager:
-            raise HTTPException(status_code=503, detail="User manager not available")
-        
-        # Validate phone number format
-        try:
-            validated_phone = validate_phone_number(phone_number)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid phone number: {e}")
-        
-        user = await user_manager.get_user_by_phone(validated_phone)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Get additional user data
-        user_data = {
-            "profile": user,
-            "usage": {
-                "weekly": await db_service.get_weekly_usage(validated_phone),
-                "daily": await db_service.get_daily_usage(validated_phone)
-            },
-            "conversation_history": await db_service.get_conversation_history(validated_phone, days=7)
-        }
-        
-        return user_data
-        
-    except HTTPException:
-        raise
+        user = await db_service.get_user_by_phone(phone_number)
+        if user:
+            return user.to_dict()
+        raise HTTPException(status_code=404, detail="User not found")
     except Exception as e:
-        logger.error(f"❌ Get user profile error: {e}")
+        logger.error(f"Error getting user {phone_number}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/admin/users/stats")
+async def get_user_stats():
+    """Get user statistics"""
+    if not db_service:
+        raise HTTPException(status_code=503, detail="Database service unavailable")
+    
+    try:
+        return await db_service.get_user_stats()
+    except Exception as e:
+        logger.error(f"Error getting user stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/admin/users/{phone_number}/subscription")
 async def update_user_subscription(phone_number: str, request: Request):
-    """Update user subscription (admin function)"""
+    """Update user subscription"""
+    if not db_service:
+        raise HTTPException(status_code=503, detail="Database service unavailable")
+    
     try:
-        if not user_manager:
-            raise HTTPException(status_code=503, detail="User manager not available")
-        
-        # Validate phone number
-        try:
-            validated_phone = validate_phone_number(phone_number)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid phone number: {e}")
-        
-        # Parse request data
-        data = await request.json()
-        plan_type = data.get('plan_type')
-        
-        if plan_type not in PLAN_LIMITS:
-            raise HTTPException(status_code=400, detail=f"Invalid plan type. Must be one of: {list(PLAN_LIMITS.keys())}")
-        
-        # Update subscription
-        success = await user_manager.update_subscription(
-            validated_phone,
-            plan_type,
-            data.get('stripe_customer_id'),
-            data.get('stripe_subscription_id')
+        plan_data = await request.json()
+        success = await db_service.update_subscription(
+            phone_number,
+            plan_data.get('plan_type'),
+            plan_data.get('stripe_customer_id'),
+            plan_data.get('stripe_subscription_id')
         )
         
-        if success:
-            metrics.record_subscription_change()
-            logger.info(f"✅ Admin updated subscription for {validated_phone} to {plan_type}")
-            return {"success": True, "message": f"Subscription updated to {plan_type}"}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to update subscription")
-        
-    except HTTPException:
-        raise
+        return {"success": success}
     except Exception as e:
-        logger.error(f"❌ Update subscription error: {e}")
+        logger.error(f"Error updating subscription for {phone_number}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/admin/users/stats")
-async def get_user_statistics():
-    """Get comprehensive user statistics"""
+# ===== SCHEDULER ENDPOINTS =====
+
+@app.get("/admin/scheduler/status")
+async def get_scheduler_status():
+    """Get scheduler status"""
+    if not scheduler_task:
+        return {"status": "inactive", "message": "Scheduler not running"}
+    
     try:
-        if not user_manager:
-            raise HTTPException(status_code=503, detail="User manager not available")
-        
-        stats = await user_manager.get_user_stats()
-        return stats
-        
-    except HTTPException:
-        raise
+        if db_service and twilio_service:
+            temp_scheduler = WeeklyScheduler(db_service, twilio_service)
+            return await temp_scheduler.get_scheduler_status()
+        else:
+            return {"status": "unavailable", "message": "Required services not available"}
     except Exception as e:
-        logger.error(f"❌ User stats error: {e}")
+        logger.error(f"Error getting scheduler status: {e}")
+        return {"status": "error", "error": str(e)}
+
+@app.post("/admin/scheduler/manual-reset")
+async def manual_reset_trigger():
+    """Manually trigger reset notifications (for testing)"""
+    if not db_service or not twilio_service:
+        raise HTTPException(status_code=503, detail="Required services unavailable")
+    
+    try:
+        temp_scheduler = WeeklyScheduler(db_service, twilio_service)
+        return await temp_scheduler.manual_reset_trigger()
+    except Exception as e:
+        logger.error(f"Manual reset trigger error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ============================================================================
-# METRICS AND MONITORING ENDPOINTS
-# ============================================================================
+@app.post("/admin/scheduler/manual-reminder")
+async def manual_reminder_trigger():
+    """Manually trigger 24-hour reminders (for testing)"""
+    if not db_service or not twilio_service:
+        raise HTTPException(status_code=503, detail="Required services unavailable")
+    
+    try:
+        temp_scheduler = WeeklyScheduler(db_service, twilio_service)
+        return await temp_scheduler.manual_reminder_trigger()
+    except Exception as e:
+        logger.error(f"Manual reminder trigger error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===== METRICS ENDPOINTS =====
 
 @app.get("/metrics")
-async def get_system_metrics():
-    """Get comprehensive system metrics for monitoring"""
+async def get_metrics():
+    """Get comprehensive service metrics"""
     try:
-        system_metrics = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "service": {
-                "name": "SMS Trading Bot",
-                "version": "3.0.0",
-                "environment": settings.environment
-            },
-            "performance": metrics.get_stats(),
-            "health": {}
+        system_metrics = metrics.get_metrics()
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "service": system_metrics,
+            "system": {
+                "version": "1.0.0",
+                "environment": settings.environment,
+                "testing_mode": settings.testing_mode
+            }
         }
-        
-        # Add health status for each service
-        system_metrics["health"] = {
-            "database": "healthy" if db_service and db_service.db else "unhealthy",
-            "redis": "healthy" if db_service and db_service.redis else "unhealthy",
-            "openai": "configured" if openai_service and openai_service.client else "not_configured",
-            "twilio": "configured" if twilio_service else "not_configured",
-            "stripe": "configured" if stripe_service else "not_configured",
-            "technical_analysis": "healthy" if ta_service else "unhealthy"
-        }
-        
-        # Add cache statistics if available
-        if ta_service:
-            cache_stats = await ta_service.get_cache_stats()
-            system_metrics["cache"] = cache_stats
-        
-        # Add user statistics if available
-        if user_manager:
-            user_stats = await user_manager.get_user_stats()
-            system_metrics["users"] = user_stats
-        
-        return system_metrics
-        
     except Exception as e:
-        logger.error(f"❌ Metrics error: {e}")
-        return {"error": str(e), "timestamp": datetime.utcnow().isoformat()}
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
-# ============================================================================
-# DEBUG AND TESTING ENDPOINTS (Development only)
-# ============================================================================
+# ===== DEBUG ENDPOINTS =====
 
-if settings.environment == "development":
+@app.get("/debug/database")
+async def debug_database():
+    """Debug database connections and collections"""
+    if not db_service:
+        return {"error": "Database service not available"}
     
-    @app.post("/debug/test-sms")
-    async def test_sms_processing(request: Request):
-        """Test SMS processing without Twilio (development only)"""
-        try:
-            data = await request.json()
-            phone_number = data.get('phone_number', '+1234567890')
-            message = data.get('message', 'How is AAPL?')
-            
-            # Validate phone
-            validated_phone = validate_phone_number(phone_number)
-            
-            # Process message
-            if message_handler:
-                success = await message_handler.process_incoming_message(validated_phone, message)
-                return {"success": success, "phone": validated_phone, "message": message}
-            else:
-                return {"error": "Message handler not available"}
-                
-        except Exception as e:
-            return {"error": str(e)}
+    try:
+        # Test connection
+        user_count = await db_service.db.users.count_documents({})
+        collections = await db_service.db.list_collection_names()
+        
+        # Test user retrieval
+        sample_user = await db_service.db.users.find_one()
+        
+        return {
+            "database_name": db_service.db.name,
+            "collections": collections,
+            "users_count": user_count,
+            "sample_user_phone": sample_user.get("phone_number") if sample_user else None,
+            "sample_user_fields": list(sample_user.keys()) if sample_user else [],
+            "connection_status": "connected"
+        }
+    except Exception as e:
+        logger.error(f"Database debug error: {e}")
+        return {"error": str(e), "connection_status": "failed"}
+
+@app.get("/debug/config")
+async def debug_config():
+    """Debug configuration settings"""
+    return {
+        "environment": settings.environment,
+        "testing_mode": settings.testing_mode,
+        "capabilities": settings.get_capability_summary(),
+        "security": settings.get_security_config(),
+        "scheduler": settings.get_scheduler_config(),
+        "validation": settings.validate_runtime_requirements(),
+        "plan_limits": PLAN_LIMITS,
+        "popular_tickers_count": len(POPULAR_TICKERS)
+    }
+
+@app.post("/debug/test-activity/{phone_number}")
+async def test_user_activity(phone_number: str):
+    """Test user activity update"""
+    if not db_service:
+        raise HTTPException(status_code=503, detail="Database service unavailable")
     
-    @app.get("/debug/create-test-user/{phone_number}")
-    async def create_test_user(phone_number: str):
-        """Create a test user (development only)"""
-        try:
-            validated_phone = validate_phone_number(phone_number)
+    try:
+        # Ensure user exists
+        user = await db_service.get_or_create_user(phone_number)
+        
+        # Test activity update
+        success = await db_service.update_user_activity(phone_number, "received")
+        
+        # Get updated user
+        updated_user = await db_service.get_user_by_phone(phone_number)
+        
+        return {
+            "update_success": success,
+            "user_data": updated_user.to_dict() if updated_user else None
+        }
+    except Exception as e:
+        logger.error(f"Test activity error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/debug/limits/{phone_number}")
+async def debug_limits(phone_number: str):
+    """Debug user limits"""
+    if not db_service:
+        raise HTTPException(status_code=503, detail="Database service unavailable")
+    
+    try:
+        limit_check = await db_service.check_message_limits(phone_number)
+        return limit_check
+    except Exception as e:
+        logger.error(f"Debug limits error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/debug/analyze-intent")
+async def debug_analyze_intent(request: Request):
+    """Debug intent analysis"""
+    try:
+        data = await request.json()
+        message = data.get('message', '')
+        
+        # Simple intent classification (since we don't have the full analyzer)
+        intent = "general"
+        symbols = []
+        
+        if any(word in message.lower() for word in ['price', 'cost', 'trading']):
+            intent = 'price'
+        elif any(word in message.lower() for word in ['analyze', 'analysis', 'check']):
+            intent = 'analyze'
+        elif any(word in message.lower() for word in ['find', 'search', 'recommend']):
+            intent = 'screener'
+        
+        # Extract potential symbols
+        import re
+        potential_symbols = re.findall(r'\b[A-Z]{1,5}\b', message.upper())
+        symbols = [s for s in potential_symbols if s in POPULAR_TICKERS]
+        
+        return {
+            "message": message,
+            "intent": intent,
+            "symbols": symbols,
+            "confidence": 0.8 if symbols else 0.5
+        }
+    except Exception as e:
+        logger.error(f"Intent analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===== COMPREHENSIVE TEST INTERFACE =====
+
+@app.get("/test", response_class=HTMLResponse)
+async def test_interface():
+    """Comprehensive test interface"""
+    return '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMS Trading Bot - Comprehensive Test Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .card h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.3rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .emoji {
+            font-size: 1.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .form-group input, 
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin: 5px 5px 5px 0;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 12px;
+        }
+
+        .btn-full {
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .result-box {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .result-box.success {
+            background: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+
+        .result-box.error {
+            background: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+
+        .quick-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .metric {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .metric-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .metric-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-online { background: #28a745; }
+        .status-offline { background: #dc3545; }
+        .status-warning { background: #ffc107; }
+
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
             
-            if user_manager:
-                user = await user_manager.get_or_create_user(validated_phone)
-                metrics.record_signup()
-                return {"success": True, "user": user}
-            else:
-                return {"error": "User manager not available"}
+            .two-column {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+
+        .info-box {
+            background: #e7f3ff;
+            border: 1px solid #b3d9ff;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .info-box h4 {
+            color: #0066cc;
+            margin-bottom: 10px;
+        }
+
+        .info-box ul {
+            margin-left: 20px;
+        }
+
+        .info-box li {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📱 SMS Trading Bot Test Dashboard</h1>
+            <p>Comprehensive testing interface for all microservice endpoints</p>
+        </div>
+
+        <div class="dashboard-grid">
+            <!-- SMS Message Testing -->
+            <div class="card">
+                <h3><span class="emoji">💬</span>SMS Message Testing</h3>
+                <div class="form-group">
+                    <label>From Phone:</label>
+                    <input type="text" id="sms-phone" value="+13012466712">
+                </div>
+                <div class="form-group">
+                    <label>Message Body:</label>
+                    <textarea id="sms-body" rows="3" placeholder="How is AAPL doing?">How is AAPL doing?</textarea>
+                </div>
+                <div class="quick-actions">
+                    <button class="btn btn-small" onclick="testSMS('START')">START</button>
+                    <button class="btn btn-small" onclick="testSMS('How is AAPL?')">Stock Query</button>
+                    <button class="btn btn-small" onclick="testSMS('Find me good stocks')">Screener</button>
+                    <button class="btn btn-small" onclick="testSMS('UPGRADE')">Upgrade</button>
+                </div>
+                <button class="btn btn-full" onclick="sendCustomSMS()">Send Custom Message</button>
+                <div id="sms-result" class="result-box"></div>
+            </div>
+
+            <!-- System Health -->
+            <div class="card">
+                <h3><span class="emoji">🏥</span>System Health</h3>
+                <div class="quick-actions">
+                    <button class="btn btn-small" onclick="checkHealth()">Health Check</button>
+                    <button class="btn btn-small" onclick="checkDatabase()">Database Info</button>
+                    <button class="btn btn-small" onclick="getMetrics()">Get Metrics</button>
+                    <button class="btn btn-small" onclick="debugConfig()">Debug Config</button>
+                </div>
+                <div id="health-result" class="result-box"></div>
+            </div>
+
+            <!-- User Management -->
+            <div class="card">
+                <h3><span class="emoji">👤</span>User Management</h3>
+                <div class="form-group">
+                    <label>Phone Number:</label>
+                    <input type="text" id="user-phone" value="+13012466712">
+                </div>
+                <div class="quick-actions">
+                    <button class="btn btn-small" onclick="getUser()">Get User</button>
+                    <button class="btn btn-small" onclick="testActivity()">Test Activity</button>
+                    <button class="btn btn-small" onclick="getUserStats()">User Stats</button>
+                    <button class="btn btn-small" onclick="checkLimits()">Check Limits</button>
+                </div>
+                <div id="user-result" class="result-box"></div>
+            </div>
+
+            <!-- Intent Analysis -->
+            <div class="card">
+                <h3><span class="emoji">🧠</span>Intent Analysis</h3>
+                <div class="form-group">
+                    <label>Message to Analyze:</label>
+                    <textarea id="intent-message" rows="2" placeholder="What's the RSI for TSLA and NVDA?">What's the RSI for TSLA and NVDA?</textarea>
+                </div>
+                <button class="btn btn-full" onclick="analyzeIntent()">Analyze Intent</button>
+                <div id="intent-result" class="result-box"></div>
+            </div>
+
+            <!-- Subscription Testing -->
+            <div class="card">
+                <h3><span class="emoji">💳</span>Subscription Testing</h3>
+                <div class="two-column">
+                    <div>
+                        <div class="form-group">
+                            <label>Phone:</label>
+                            <input type="text" id="sub-phone" value="+13012466712">
+                        </div>
+                        <div class="form-group">
+                            <label>Plan Type:</label>
+                            <select id="sub-plan">
+                                <option value="free">Free</option>
+                                <option value="paid">Paid ($29/month)</option>
+                                <option value="pro">Pro ($99/month)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="form-group">
+                            <label>Stripe Customer ID:</label>
+                            <input type="text" id="stripe-customer" placeholder="cus_test123">
+                        </div>
+                        <div class="form-group">
+                            <label>Stripe Subscription ID:</label>
+                            <input type="text" id="stripe-subscription" placeholder="sub_test123">
+                        </div>
+                    </div>
+                </div>
+                <button class="btn btn-full" onclick="updateSubscription()">Update Subscription</button>
+                <div id="subscription-result" class="result-box"></div>
+            </div>
+
+            <!-- Scheduler Management -->
+            <div class="card">
+                <h3><span class="emoji">📅</span>Scheduler Management</h3>
+                <div class="quick-actions">
+                    <button class="btn btn-small" onclick="schedulerStatus()">Status</button>
+                    <button class="btn btn-small" onclick="manualReset()">Manual Reset</button>
+                    <button class="btn btn-small" onclick="manualReminder()">Manual Reminder</button>
+                </div>
+                <div id="scheduler-result" class="result-box"></div>
+            </div>
+
+            <!-- Live Metrics -->
+            <div class="card full-width">
+                <h3><span class="emoji">📊</span>Live System Metrics</h3>
+                <div class="metrics-grid" id="metrics-grid">
+                    <div class="metric">
+                        <div class="metric-value" id="uptime">--</div>
+                        <div class="metric-label">Service Status</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="total-users">--</div>
+                        <div class="metric-label">Total Users</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="cache-hits">--</div>
+                        <div class="metric-label">Cache Performance</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="active-users">--</div>
+                        <div class="metric-label">Active Today</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="total-requests">--</div>
+                        <div class="metric-label">Total Requests</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="response-time">--</div>
+                        <div class="metric-label">Avg Response Time</div>
+                    </div>
+                </div>
+                <button class="btn btn-full" onclick="refreshMetrics()">Refresh All Metrics</button>
+            </div>
+
+            <!-- Plan Information -->
+            <div class="card full-width">
+                <h3><span class="emoji">📋</span>Plan Information & Limits</h3>
+                <div class="info-box">
+                    <h4>Current Plan Structure:</h4>
+                    <ul>
+                        <li><strong>Free Plan:</strong> 10 messages/week</li>
+                        <li><strong>Paid Plan ($29/month):</strong> 100 messages/month</li>
+                        <li><strong>Pro Plan ($99/month):</strong> Unlimited (with 50 msg/day cooloff)</li>
+                    </ul>
+                </div>
+                <div class="info-box">
+                    <h4>Smart Warning System:</h4>
+                    <ul>
+                        <li>75% usage: Warning message sent</li>
+                        <li>90% usage: Urgent warning with upgrade prompt</li>
+                        <li>100% usage: Limit exceeded, upgrade required</li>
+                        <li>Pro users: Daily cooloff after 50 messages</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const BASE_URL = window.location.origin;
+
+        function showResult(elementId, data, isError = false) {
+            const element = document.getElementById(elementId);
+            if (typeof data === 'object') {
+                element.textContent = JSON.stringify(data, null, 2);
+            } else {
+                element.textContent = data;
+            }
+            element.className = `result-box ${isError ? 'error' : 'success'}`;
+        }
+
+        function showLoading(elementId) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = '<span class="spinner"></span>Loading...';
+            element.className = 'result-box';
+        }
+
+        async function apiCall(endpoint, method = 'GET', body = null, isFormData = false) {
+            try {
+                const options = {
+                    method,
+                    headers: {},
+                };
                 
-        except Exception as e:
-            return {"error": str(e)}
+                if (body && !isFormData) {
+                    options.headers['Content-Type'] = 'application/json';
+                    options.body = JSON.stringify(body);
+                } else if (body && isFormData) {
+                    options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+                    options.body = body;
+                }
 
-# ============================================================================
-# ERROR HANDLERS
-# ============================================================================
-
-@app.exception_handler(404)
-async def not_found_handler(request: Request, exc: HTTPException):
-    """Custom 404 handler"""
-    return JSONResponse(
-        status_code=404,
-        content={
-            "error": "Endpoint not found",
-            "path": str(request.url.path),
-            "message": "Check /docs for available endpoints",
-            "timestamp": datetime.utcnow().isoformat()
+                const response = await fetch(`${BASE_URL}${endpoint}`, options);
+                
+                const contentType = response.headers.get('content-type');
+                let data;
+                
+                if (contentType && contentType.includes('application/json')) {
+                    data = await response.json();
+                } else {
+                    data = await response.text();
+                }
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${typeof data === 'object' ? JSON.stringify(data) : data}`);
+                }
+                
+                return data;
+            } catch (error) {
+                throw new Error(`API Error: ${error.message}`);
+            }
         }
-    )
 
-@app.exception_handler(500)
-async def internal_error_handler(request: Request, exc: Exception):
-    """Custom 500 handler"""
-    logger.error(f"Internal server error on {request.url.path}: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "Internal server error",
-            "path": str(request.url.path),
-            "timestamp": datetime.utcnow().isoformat()
+        // SMS Testing Functions
+        async function testSMS(message) {
+            document.getElementById('sms-body').value = message;
+            await sendCustomSMS();
         }
-    )
 
-# ============================================================================
-# APPLICATION STARTUP
-# ============================================================================
+        async function sendCustomSMS() {
+            showLoading('sms-result');
+            try {
+                const phone = document.getElementById('sms-phone').value;
+                const body = document.getElementById('sms-body').value;
+                
+                const formData = `From=${encodeURIComponent(phone)}&Body=${encodeURIComponent(body)}`;
+                const data = await apiCall('/webhook/sms', 'POST', formData, true);
+                showResult('sms-result', data);
+            } catch (error) {
+                showResult('sms-result', { error: error.message }, true);
+            }
+        }
+
+        // System Health Functions
+        async function checkHealth() {
+            showLoading('health-result');
+            try {
+                const data = await apiCall('/health');
+                showResult('health-result', data);
+            } catch (error) {
+                showResult('health-result', { error: error.message }, true);
+            }
+        }
+
+        async function checkDatabase() {
+            showLoading('health-result');
+            try {
+                const data = await apiCall('/debug/database');
+                showResult('health-result', data);
+            } catch (error) {
+                showResult('health-result', { error: error.message }, true);
+            }
+        }
+
+        async function getMetrics() {
+            showLoading('health-result');
+            try {
+                const data = await apiCall('/metrics');
+                showResult('health-result', data);
+            } catch (error) {
+                showResult('health-result', { error: error.message }, true);
+            }
+        }
+
+        async function debugConfig() {
+            showLoading('health-result');
+            try {
+                const data = await apiCall('/debug/config');
+                showResult('health-result', data);
+            } catch (error) {
+                showResult('health-result', { error: error.message }, true);
+            }
+        }
+
+        // User Management Functions
+        async function getUser() {
+            showLoading('user-result');
+            try {
+                const phone = document.getElementById('user-phone').value;
+                const data = await apiCall(`/admin/users/${encodeURIComponent(phone)}`);
+                showResult('user-result', data);
+            } catch (error) {
+                showResult('user-result', { error: error.message }, true);
+            }
+        }
+
+        async function testActivity() {
+            showLoading('user-result');
+            try {
+                const phone = document.getElementById('user-phone').value;
+                const data = await apiCall(`/debug/test-activity/${encodeURIComponent(phone)}`, 'POST');
+                showResult('user-result', data);
+            } catch (error) {
+                showResult('user-result', { error: error.message }, true);
+            }
+        }
+
+        async function getUserStats() {
+            showLoading('user-result');
+            try {
+                const data = await apiCall('/admin/users/stats');
+                showResult('user-result', data);
+            } catch (error) {
+                showResult('user-result', { error: error.message }, true);
+            }
+        }
+
+        async function checkLimits() {
+            showLoading('user-result');
+            try {
+                const phone = document.getElementById('user-phone').value;
+                const data = await apiCall(`/debug/limits/${encodeURIComponent(phone)}`);
+                showResult('user-result', data);
+            } catch (error) {
+                showResult('user-result', { error: error.message }, true);
+            }
+        }
+
+        // Intent Analysis
+        async function analyzeIntent() {
+            showLoading('intent-result');
+            try {
+                const message = document.getElementById('intent-message').value;
+                const data = await apiCall('/debug/analyze-intent', 'POST', { message });
+                showResult('intent-result', data);
+            } catch (error) {
+                showResult('intent-result', { error: error.message }, true);
+            }
+        }
+
+        // Subscription Management
+        async function updateSubscription() {
+            showLoading('subscription-result');
+            try {
+                const phone = document.getElementById('sub-phone').value;
+                const planData = {
+                    plan_type: document.getElementById('sub-plan').value,
+                    stripe_customer_id: document.getElementById('stripe-customer').value,
+                    stripe_subscription_id: document.getElementById('stripe-subscription').value
+                };
+                
+                const data = await apiCall(`/admin/users/${encodeURIComponent(phone)}/subscription`, 'POST', planData);
+                showResult('subscription-result', data);
+            } catch (error) {
+                showResult('subscription-result', { error: error.message }, true);
+            }
+        }
+
+        // Scheduler Functions
+        async function schedulerStatus() {
+            showLoading('scheduler-result');
+            try {
+                const data = await apiCall('/admin/scheduler/status');
+                showResult('scheduler-result', data);
+            } catch (error) {
+                showResult('scheduler-result', { error: error.message }, true);
+            }
+        }
+
+        async function manualReset() {
+            showLoading('scheduler-result');
+            try {
+                const data = await apiCall('/admin/scheduler/manual-reset', 'POST');
+                showResult('scheduler-result', data);
+            } catch (error) {
+                showResult('scheduler-result', { error: error.message }, true);
+            }
+        }
+
+        async function manualReminder() {
+            showLoading('scheduler-result');
+            try {
+                const data = await apiCall('/admin/scheduler/manual-reminder', 'POST');
+                showResult('scheduler-result', data);
+            } catch (error) {
+                showResult('scheduler-result', { error: error.message }, true);
+            }
+        }
+
+        // Metrics and Monitoring
+        async function refreshMetrics() {
+            try {
+                const data = await apiCall('/metrics');
+                
+                if (data.service) {
+                    const service = data.service;
+                    
+                    document.getElementById('uptime').textContent = service.uptime?.formatted || '--';
+                    document.getElementById('total-requests').textContent = service.requests?.total || '0';
+                    document.getElementById('cache-hits').textContent = service.performance?.cache_hit_rate + '%' || '0%';
+                    document.getElementById('active-users').textContent = service.tickers?.unique_count || '0';
+                    document.getElementById('total-requests').textContent = service.requests?.total || '0';
+                    document.getElementById('response-time').textContent = 
+                        Object.values(service.performance?.avg_response_times_ms || {})[0] + 'ms' || '--';
+                }
+
+            } catch (error) {
+                console.error('Error refreshing metrics:', error);
+            }
+        }
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('SMS Trading Bot Test Dashboard initialized');
+            refreshMetrics();
+        });
+    </script>
+</body>
+</html>
+    '''
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    
-    logger.info(f"🚀 Starting Unified SMS Trading Bot v3.0.0")
-    logger.info(f"🌍 Environment: {settings.environment}")
-    logger.info(f"🔧 Port: {port}")
-    logger.info(f"📊 Features: Technical Analysis, User Management, Subscriptions, AI Responses")
+    logger.info(f"🚀 Starting SMS Trading Bot on port {port}")
+    logger.info(f"Environment: {settings.environment}")
+    logger.info(f"Testing mode: {settings.testing_mode}")
     
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host="0.0.0.0", 
         port=port,
         reload=settings.environment == "development",
         log_level=settings.log_level.lower()
