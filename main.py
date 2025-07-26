@@ -689,8 +689,6 @@ async def debug_analyze_intent(request: Request):
         logger.error(f"Intent analysis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-// Replace the SMS Testing section in your dashboard with this enhanced version:
-
 // Updated SMS Testing Functions with Response Capture
 async function sendCustomSMS() {
     showLoading('sms-result');
