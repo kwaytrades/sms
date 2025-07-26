@@ -1,5 +1,4 @@
-# ===== models/conversation.py - SIMPLIFIED VERSION =====
-# Add these imports to the TOP of models/conversation.py:
+# ===== models/conversation.py =====
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Optional, Any
@@ -19,20 +18,16 @@ class ChatMessage:
         if self.timestamp is None:
             self.timestamp = datetime.utcnow()
 
-# ===== models/trading.py - SIMPLIFIED VERSION =====
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Optional
-
 @dataclass
-class TradingData:
-    """Simple trading data"""
+class Conversation:
+    """Simple conversation container"""
     user_id: str
-    daily_pnl: float = 0.0
-    ytd_return: float = 0.0
-    last_updated: datetime = None
+    session_id: str
+    messages: List[Dict] = field(default_factory=list)
+    session_start: datetime = None
+    total_messages: int = 0
     _id: Optional[str] = None
     
     def __post_init__(self):
-        if self.last_updated is None:
-            self.last_updated = datetime.utcnow()
+        if self.session_start is None:
+            self.session_start = datetime.utcnow()
