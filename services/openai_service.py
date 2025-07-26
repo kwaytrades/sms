@@ -6,7 +6,27 @@ from config import settings
 
 class OpenAIService:
     def __init__(self):
-        self.client = OpenAI(api_key=settings.openai_api_key)
+        try:
+            # Try different initialization methods for compatibility
+            try:
+                # Method 1: Standard initialization
+                self.client = OpenAI(api_key=settings.openai_api_key)
+            except TypeError as e:
+                if "proxies" in str(e):
+                    # Method 2: Initialize without potentially problematic parameters
+                    import openai
+                    openai.api_key = settings.openai_api_key
+                    self.client = openai
+                    self._use_legacy_api = True
+                else:
+                    raise e
+            
+            self._use_legacy_api = False
+            logger.info("✅ OpenAI client initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize OpenAI client: {e}")
+            raise e
         
     async def generate_personalized_response(
         self, 
@@ -22,16 +42,29 @@ class OpenAIService:
                 user_query, user_profile, conversation_history, market_context
             )
             
-            # Updated to use new OpenAI v1.0+ client
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": prompt["system"]},
-                    {"role": "user", "content": prompt["user"]}
-                ],
-                max_tokens=500,
-                temperature=0.7
-            )
+            # Handle different API versions
+            if hasattr(self, '_use_legacy_api') and self._use_legacy_api:
+                # Legacy API approach
+                response = await self.client.ChatCompletion.acreate(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": prompt["system"]},
+                        {"role": "user", "content": prompt["user"]}
+                    ],
+                    max_tokens=500,
+                    temperature=0.7
+                )
+            else:
+                # New API approach
+                response = self.client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": prompt["system"]},
+                        {"role": "user", "content": prompt["user"]}
+                    ],
+                    max_tokens=500,
+                    temperature=0.7
+                )
             
             # Updated response access for v1.0+
             return response.choices[0].message.content.strip()
