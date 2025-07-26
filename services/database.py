@@ -573,3 +573,60 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"❌ Error getting user stats: {e}")
             return {}
+    
+    # ===== CONVERSATION MANAGEMENT =====
+    
+    async def save_message(self, message: ChatMessage) -> str:
+        """Save chat message - ASYNC VERSION"""
+        try:
+            message_dict = message.__dict__.copy()
+            result = await self.db.conversations.update_one(
+                {"session_id": message.session_id},
+                {
+                    "$push": {"messages": message_dict},
+                    "$inc": {"total_messages": 1},
+                    "$setOnInsert": {
+                        "user_id": message.user_id,
+                        "session_start": datetime.now(timezone.utc)
+                    }
+                },
+                upsert=True
+            )
+            return str(result.upserted_id) if result.upserted_id else "updated"
+        except Exception as e:
+            logger.error(f"❌ Error saving message: {e}")
+            raise
+    
+    # ===== REDIS OPERATIONS =====
+    
+    async def get_usage_count(self, user_id: str, period: str) -> int:
+        """Get user's message usage for period - ASYNC VERSION"""
+        try:
+            if not self.redis:
+                return 0
+            
+            key = f"usage:{user_id}:{period}"
+            count = await self.redis.get(key)
+            return int(count) if count else 0
+        except Exception as e:
+            logger.error(f"❌ Error getting usage count: {e}")
+            return 0
+    
+    async def increment_usage(self, user_id: str, period: str, ttl: int):
+        """Increment usage counter with TTL - ASYNC VERSION"""
+        try:
+            if not self.redis:
+                return
+            
+            key = f"usage:{user_id}:{period}"
+            await self.redis.incr(key)
+            await self.redis.expire(key, ttl)
+        except Exception as e:
+            logger.error(f"❌ Error incrementing usage: {e}")
+    
+    async def close(self):
+        """Close database connections"""
+        if self.mongo_client:
+            self.mongo_client.close()
+        if self.redis:
+            await self.redis.close()
