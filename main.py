@@ -689,6 +689,199 @@ async def debug_analyze_intent(request: Request):
         logger.error(f"Intent analysis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+// Replace the SMS Testing section in your dashboard with this enhanced version:
+
+// Updated SMS Testing Functions with Response Capture
+async function sendCustomSMS() {
+    showLoading('sms-result');
+    try {
+        const phone = document.getElementById('sms-phone').value;
+        const body = document.getElementById('sms-body').value;
+        
+        const formData = `From=${encodeURIComponent(phone)}&Body=${encodeURIComponent(body)}`;
+        
+        // Use the new endpoint that captures responses
+        const response = await fetch(`${BASE_URL}/api/test/sms-with-response`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: formData
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            
+            // Format the complete conversation flow
+            const conversationFlow = {
+                "📱 USER MESSAGE": {
+                    "from": data.user_message.from,
+                    "content": data.user_message.body,
+                    "timestamp": new Date(data.user_message.timestamp).toLocaleString()
+                },
+                "⚙️ PROCESSING": {
+                    "status": data.processing_status,
+                    "handler_available": data.processing_status !== "handler_unavailable"
+                }
+            };
+            
+            // Add bot response if available
+            if (data.bot_response) {
+                conversationFlow["🤖 BOT RESPONSE"] = {
+                    "content": data.bot_response.content,
+                    "message_type": data.bot_response.message_type,
+                    "timestamp": new Date(data.bot_response.timestamp).toLocaleString(),
+                    "session_id": data.bot_response.session_id
+                };
+            } else {
+                conversationFlow["🤖 BOT RESPONSE"] = {
+                    "status": "No response captured",
+                    "note": "Response may be async or not yet processed"
+                };
+            }
+            
+            // Add processing error if any
+            if (data.processing_error) {
+                conversationFlow["❌ ERROR"] = data.processing_error;
+            }
+            
+            showResult('sms-result', conversationFlow);
+            showToast('SMS conversation flow captured!');
+            
+            // Auto-refresh conversation history
+            setTimeout(() => loadConversationHistory(phone), 2000);
+            
+        } else {
+            const errorText = await response.text();
+            showResult('sms-result', {
+                "❌ ERROR": `HTTP ${response.status}`,
+                "details": errorText
+            }, true);
+            showToast(`SMS failed: HTTP ${response.status}`, 'error');
+        }
+        
+    } catch (error) {
+        showResult('sms-result', {
+            "❌ NETWORK ERROR": error.message,
+            "timestamp": new Date().toLocaleString()
+        }, true);
+        showToast('SMS failed to send', 'error');
+    }
+}
+
+// New function to load conversation history
+async function loadConversationHistory(phone = null) {
+    const phoneToCheck = phone || document.getElementById('sms-phone').value;
+    
+    try {
+        const cleanPhone = encodeURIComponent(phoneToCheck);
+        const response = await fetch(`${BASE_URL}/api/conversations/${cleanPhone}?limit=5`);
+        
+        if (response.ok) {
+            const data = await response.json();
+            
+            if (data.conversations && data.conversations.length > 0) {
+                const historyDisplay = {
+                    "📱 USER": phoneToCheck,
+                    "💬 CONVERSATION SESSIONS": data.total_sessions,
+                    "🕒 RECENT MESSAGES": []
+                };
+                
+                // Show recent messages from all sessions
+                data.conversations.forEach((session, sessionIndex) => {
+                    session.messages.forEach((message, msgIndex) => {
+                        const messageIcon = message.direction === 'inbound' ? '📥' : '📤';
+                        const messageType = message.direction === 'inbound' ? 'User' : 'Bot';
+                        
+                        historyDisplay["🕒 RECENT MESSAGES"].push({
+                            "type": `${messageIcon} ${messageType}`,
+                            "content": message.content.substring(0, 100) + (message.content.length > 100 ? '...' : ''),
+                            "time": new Date(message.timestamp).toLocaleString(),
+                            "session": sessionIndex + 1
+                        });
+                    });
+                });
+                
+                // Update the conversation history display
+                const historyElement = document.getElementById('conversation-history');
+                if (historyElement) {
+                    historyElement.innerHTML = '<h4>📱 Conversation History</h4>';
+                    const resultBox = document.createElement('div');
+                    resultBox.className = 'result-box success';
+                    resultBox.textContent = JSON.stringify(historyDisplay, null, 2);
+                    historyElement.appendChild(resultBox);
+                }
+                
+                showToast(`Loaded ${data.conversations.length} conversation sessions`);
+            } else {
+                showToast('No conversation history found', 'warning');
+            }
+        }
+    } catch (error) {
+        console.error('Error loading conversation history:', error);
+        showToast('Failed to load conversation history', 'error');
+    }
+}
+
+// New function to load recent system conversations
+async function loadRecentSystemConversations() {
+    try {
+        const response = await fetch(`${BASE_URL}/api/conversations/recent?limit=10`);
+        
+        if (response.ok) {
+            const data = await response.json();
+            
+            const recentActivity = document.getElementById('recent-activity');
+            if (recentActivity && data.recent_conversations) {
+                recentActivity.innerHTML = '';
+                
+                data.recent_conversations.forEach(conversation => {
+                    const activityItem = document.createElement('div');
+                    activityItem.className = 'activity-item';
+                    
+                    const userBadge = conversation.user_id.includes('+') ? 
+                        `<span class="ticker-badge">${conversation.user_id.substring(0, 8)}...</span>` :
+                        `<span class="ticker-badge">${conversation.user_id}</span>`;
+                    
+                    const directionIcon = conversation.latest_message.direction === 'inbound' ? '📥' : '📤';
+                    
+                    activityItem.innerHTML = `
+                        <div>
+                            ${userBadge}
+                            ${directionIcon} ${conversation.latest_message.content}
+                        </div>
+                        <div>
+                            ${new Date(conversation.latest_message.timestamp).toLocaleTimeString()}
+                        </div>
+                    `;
+                    recentActivity.appendChild(activityItem);
+                });
+                
+                showToast(`Loaded ${data.recent_conversations.length} recent conversations`);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading recent conversations:', error);
+    }
+}
+
+// New function to debug database
+async function debugDatabase() {
+    showLoading('health-result');
+    try {
+        const data = await apiCall('/api/debug/database');
+        showResult('health-result', data);
+        showToast('Database debug completed');
+    } catch (error) {
+        showResult('health-result', { error: error.message }, true);
+        showToast('Database debug failed', 'error');
+    }
+}
+
+
+
+
+
 # ===== COMPREHENSIVE TEST INTERFACE =====
 
 # Add this endpoint to your main.py file
@@ -1249,12 +1442,44 @@ async def comprehensive_dashboard():
         <div id="testing-tab" class="tab-content active">
             <div class="dashboard-grid">
                 <!-- SMS Testing -->
-                <div class="card">
-                    <h3><i class="fas fa-sms card-icon"></i>SMS Message Testing</h3>
-                    <div class="form-group">
-                        <label>From Phone:</label>
-                        <input type="text" id="sms-phone" value="+13012466712" placeholder="+1234567890">
-                    </div>
+               // Add this to the SMS Testing card HTML - replace the existing SMS card with:
+/*
+<div class="card">
+    <h3><i class="fas fa-sms card-icon"></i>SMS Message Testing</h3>
+    <div class="form-group">
+        <label>From Phone:</label>
+        <input type="text" id="sms-phone" value="+13012466712" placeholder="+1234567890">
+    </div>
+    <div class="form-group">
+        <label>Message Body:</label>
+        <textarea id="sms-body" rows="3" placeholder="How is AAPL doing?">How is AAPL doing?</textarea>
+    </div>
+    <div class="quick-actions">
+        <button class="btn btn-small" onclick="testSMS('START')">
+            <i class="fas fa-play"></i> START
+        </button>
+        <button class="btn btn-small" onclick="testSMS('How is AAPL?')">
+            <i class="fas fa-chart-line"></i> Stock Query
+        </button>
+        <button class="btn btn-small" onclick="testSMS('Find me good stocks')">
+            <i class="fas fa-search"></i> Screener
+        </button>
+        <button class="btn btn-small" onclick="testSMS('/upgrade')">
+            <i class="fas fa-arrow-up"></i> Upgrade
+        </button>
+    </div>
+    <div class="two-column">
+        <button class="btn" onclick="sendCustomSMS()">
+            <i class="fas fa-paper-plane"></i> Send & Capture Response
+        </button>
+        <button class="btn btn-success" onclick="loadConversationHistory()">
+            <i class="fas fa-history"></i> Load History
+        </button>
+    </div>
+    <div id="sms-result" class="result-box"></div>
+    <div id="conversation-history"></div>
+</div>
+*/
                     <div class="form-group">
                         <label>Message Body:</label>
                         <textarea id="sms-body" rows="3" placeholder="How is AAPL doing?">How is AAPL doing?</textarea>
@@ -1283,6 +1508,16 @@ async def comprehensive_dashboard():
                 <div class="card">
                     <h3><i class="fas fa-heartbeat card-icon"></i>System Health</h3>
                     <div class="quick-actions">
+
+// Add this to your system health quick actions:
+/*
+<button class="btn btn-small" onclick="debugDatabase()">
+    <i class="fas fa-database"></i> Debug DB
+</button>
+<button class="btn btn-small" onclick="loadRecentSystemConversations()">
+    <i class="fas fa-comments"></i> Recent Chats
+</button>
+*/
                         <button class="btn btn-small btn-success" onclick="checkHealth()">
                             <i class="fas fa-stethoscope"></i> Health Check
                         </button>
