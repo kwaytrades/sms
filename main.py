@@ -1540,33 +1540,56 @@ async def comprehensive_dashboard():
             element.className = 'result-box loading';
         }
 
-        async function apiCall(endpoint, method = 'GET', body = null, isFormData = false) {
-            try {
-                const options = {
-                    method,
-                    headers: {},
-                };
-                
-                if (body && !isFormData) {
-                    options.headers['Content-Type'] = 'application/json';
-                    options.body = JSON.stringify(body);
-                } else if (body && isFormData) {
-                    options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
-                    options.body = body;
-                }
-
-                const response = await fetch(`${BASE_URL}${endpoint}`, options);
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${data.message || JSON.stringify(data)}`);
-                }
-                
-                return data;
-            } catch (error) {
-                throw new Error(`API Error: ${error.message}`);
-            }
+       async function apiCall(endpoint, method = 'GET', body = null, isFormData = false) {
+    try {
+        const options = {
+            method,
+            headers: {},
+        };
+        
+        if (body && !isFormData) {
+            options.headers['Content-Type'] = 'application/json';
+            options.body = JSON.stringify(body);
+        } else if (body && isFormData) {
+            options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+            options.body = body;
         }
+
+        const response = await fetch(`${BASE_URL}${endpoint}`, options);
+        
+        // Check content type before parsing
+        const contentType = response.headers.get('content-type');
+        let data;
+        
+        if (contentType && contentType.includes('application/json')) {
+            data = await response.json();
+        } else if (contentType && contentType.includes('application/xml')) {
+            // Handle XML responses
+            const xmlText = await response.text();
+            data = {
+                response_type: 'xml',
+                content: xmlText,
+                status: response.ok ? 'success' : 'error'
+            };
+        } else {
+            // Handle plain text responses
+            const textContent = await response.text();
+            data = {
+                response_type: 'text',
+                content: textContent,
+                status: response.ok ? 'success' : 'error'
+            };
+        }
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${data.message || data.content || 'Unknown error'}`);
+        }
+        
+        return data;
+    } catch (error) {
+        throw new Error(`API Error: ${error.message}`);
+    }
+}
 
         // SMS Testing Functions
         async function testSMS(message) {
@@ -1574,21 +1597,77 @@ async def comprehensive_dashboard():
             await sendCustomSMS();
         }
 
-        async function sendCustomSMS() {
-            showLoading('sms-result');
-            try {
-                const phone = document.getElementById('sms-phone').value;
-                const body = document.getElementById('sms-body').value;
-                
-                const formData = `From=${encodeURIComponent(phone)}&Body=${encodeURIComponent(body)}`;
-                const data = await apiCall('/webhook/sms', 'POST', formData, true);
+    // Replace the sendCustomSMS function in your dashboard with this fixed version:
+
+async function sendCustomSMS() {
+    showLoading('sms-result');
+    try {
+        const phone = document.getElementById('sms-phone').value;
+        const body = document.getElementById('sms-body').value;
+        
+        const formData = `From=${encodeURIComponent(phone)}&Body=${encodeURIComponent(body)}`;
+        
+        // Updated to handle XML response from Twilio webhook
+        const response = await fetch(`${BASE_URL}/webhook/sms`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: formData
+        });
+        
+        // Check if response is successful
+        if (response.ok) {
+            const contentType = response.headers.get('content-type');
+            
+            if (contentType && contentType.includes('application/xml')) {
+                // Handle XML response (TwiML)
+                const xmlText = await response.text();
+                const result = {
+                    status: 'success',
+                    message: 'SMS webhook processed successfully',
+                    response_type: 'TwiML',
+                    twiml_response: xmlText,
+                    phone: phone,
+                    message_body: body,
+                    timestamp: new Date().toISOString()
+                };
+                showResult('sms-result', result);
+                showToast('SMS webhook executed successfully!');
+            } else {
+                // Handle JSON response
+                const data = await response.json();
                 showResult('sms-result', data);
                 showToast('SMS sent successfully!');
-            } catch (error) {
-                showResult('sms-result', { error: error.message }, true);
-                showToast('SMS failed to send', 'error');
             }
+        } else {
+            // Handle error response
+            const errorText = await response.text();
+            const errorResult = {
+                status: 'error',
+                http_status: response.status,
+                error_message: errorText,
+                phone: phone,
+                message_body: body,
+                timestamp: new Date().toISOString()
+            };
+            showResult('sms-result', errorResult, true);
+            showToast(`SMS failed: HTTP ${response.status}`, 'error');
         }
+        
+    } catch (error) {
+        const errorResult = {
+            status: 'error',
+            error_type: 'network_error',
+            error_message: error.message,
+            phone: document.getElementById('sms-phone').value,
+            message_body: document.getElementById('sms-body').value,
+            timestamp: new Date().toISOString()
+        };
+        showResult('sms-result', errorResult, true);
+        showToast('SMS failed to send', 'error');
+    }
+}
 
         // System Health Functions
         async function checkHealth() {
