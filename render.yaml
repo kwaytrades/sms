@@ -1,0 +1,18 @@
+# render.yaml - Place in root directory
+services:
+  - type: web
+    name: sms-trading-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+    # All other environment variables should be set in Render dashboard
+    # for security (API keys, database URLs, etc.)
