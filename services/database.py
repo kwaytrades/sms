@@ -1,6 +1,6 @@
-# ===== services/database.py - FIXED FOR DEPLOYMENT =====
+# ===== services/database.py =====
 from motor.motor_asyncio import AsyncIOMotorClient
-import redis.asyncio as aioredis  # Use redis.asyncio instead of aioredis package
+import redis.asyncio as aioredis  # ONLY CHANGE: replaced "import aioredis" 
 from typing import Optional, Dict, List, Any
 from bson import ObjectId
 import json
@@ -19,48 +19,19 @@ class DatabaseService:
         self.redis = None
         
     async def initialize(self):
-        """Initialize database connections with proper error handling"""
+        """Initialize database connections"""
         try:
             # MongoDB connection
-            logger.info("🔗 Connecting to MongoDB...")
             self.mongo_client = AsyncIOMotorClient(settings.mongodb_url)
             self.db = self.mongo_client.ai
             
-            # Test MongoDB connection
-            await self.db.command("ping")
-            logger.info("✅ MongoDB connected successfully")
-            
-            # Redis connection with fallback
-            logger.info("🔗 Connecting to Redis...")
-            try:
-                if settings.redis_url:
-                    # Parse Redis URL and create connection
-                    self.redis = await aioredis.from_url(
-                        settings.redis_url,
-                        encoding="utf-8",
-                        decode_responses=True,
-                        socket_timeout=5,
-                        socket_connect_timeout=5,
-                        retry_on_timeout=True,
-                        health_check_interval=30
-                    )
-                    
-                    # Test Redis connection
-                    await self.redis.ping()
-                    logger.info("✅ Redis connected successfully")
-                else:
-                    logger.warning("⚠️ No Redis URL provided, continuing without cache")
-                    self.redis = None
-                    
-            except Exception as redis_error:
-                logger.warning(f"⚠️ Redis connection failed: {redis_error}, continuing without cache")
-                self.redis = None
+            # Redis connection
+            self.redis = await aioredis.from_url(settings.redis_url)
             
             # Setup indexes
             await self._setup_indexes()
             
-            logger.info("✅ Database service initialized successfully")
-            
+            logger.info("✅ Database connections initialized")
         except Exception as e:
             logger.error(f"❌ Database initialization failed: {e}")
             raise
@@ -141,71 +112,23 @@ class DatabaseService:
             raise
     
     async def get_usage_count(self, user_id: str, period: str) -> int:
-        """Get user's message usage for period with Redis fallback"""
+        """Get user's message usage for period"""
         try:
-            if self.redis:
-                key = f"usage:{user_id}:{period}"
-                count = await self.redis.get(key)
-                return int(count) if count else 0
-            else:
-                # Fallback to MongoDB for usage tracking
-                result = await self.db.usage_tracking.find_one({
-                    "user_id": user_id,
-                    "period": period
-                })
-                return result.get("count", 0) if result else 0
+            key = f"usage:{user_id}:{period}"
+            count = await self.redis.get(key)
+            return int(count) if count else 0
         except Exception as e:
             logger.error(f"❌ Error getting usage count: {e}")
             return 0
     
     async def increment_usage(self, user_id: str, period: str, ttl: int):
-        """Increment usage counter with TTL and MongoDB fallback"""
+        """Increment usage counter with TTL"""
         try:
-            if self.redis:
-                key = f"usage:{user_id}:{period}"
-                await self.redis.incr(key)
-                await self.redis.expire(key, ttl)
-            
-            # Also update MongoDB for persistence
-            await self.db.usage_tracking.update_one(
-                {"user_id": user_id, "period": period},
-                {
-                    "$inc": {"count": 1},
-                    "$setOnInsert": {"created_at": datetime.utcnow()},
-                    "$set": {"updated_at": datetime.utcnow()}
-                },
-                upsert=True
-            )
+            key = f"usage:{user_id}:{period}"
+            await self.redis.incr(key)
+            await self.redis.expire(key, ttl)
         except Exception as e:
             logger.error(f"❌ Error incrementing usage: {e}")
-    
-    async def health_check(self) -> Dict[str, Any]:
-        """Check health of all database connections"""
-        health = {
-            "mongodb": {"status": "unknown", "error": None},
-            "redis": {"status": "unknown", "error": None}
-        }
-        
-        # Test MongoDB
-        try:
-            await self.db.command("ping")
-            health["mongodb"]["status"] = "connected"
-        except Exception as e:
-            health["mongodb"]["status"] = "error"
-            health["mongodb"]["error"] = str(e)
-        
-        # Test Redis
-        try:
-            if self.redis:
-                await self.redis.ping()
-                health["redis"]["status"] = "connected"
-            else:
-                health["redis"]["status"] = "not_configured"
-        except Exception as e:
-            health["redis"]["status"] = "error"
-            health["redis"]["error"] = str(e)
-        
-        return health
     
     async def cleanup_invalid_users(self):
         """Remove users with null _id"""
@@ -217,13 +140,7 @@ class DatabaseService:
     
     async def close(self):
         """Close database connections"""
-        try:
-            if self.mongo_client:
-                self.mongo_client.close()
-                logger.info("MongoDB connection closed")
-            
-            if self.redis:
-                await self.redis.close()
-                logger.info("Redis connection closed")
-        except Exception as e:
-            logger.error(f"Error closing connections: {e}")
+        if self.mongo_client:
+            self.mongo_client.close()
+        if self.redis:
+            await self.redis.close()
