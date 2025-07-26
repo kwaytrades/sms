@@ -1,35 +1,43 @@
-# ===== .env (NEVER COMMIT - ADD TO .gitignore) =====
-# MongoDB
-MONGODB_URL=mongodb+srv://kcoffie90:Kway8890@cluster0.xxxxx.mongodb.net/ai
+# .env.example - Environment Variables Template
+# Copy this to .env and fill in your actual values
 
-# Redis
-REDIS_URL=redis://localhost:6379
-
-# OpenAI
-OPENAI_API_KEY=sk-...
-
-# Stripe
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-STRIPE_PAID_PRICE_ID=price_...
-STRIPE_PRO_PRICE_ID=price_...
-
-# Twilio
-TWILIO_ACCOUNT_SID=AC...
-TWILIO_AUTH_TOKEN=...
-TWILIO_PHONE_NUMBER=+1...
-
-# Plaid
-PLAID_CLIENT_ID=...
-PLAID_SECRET=...
-PLAID_ENV=sandbox
-
-# EODHD
-EODHD_API_KEY=...
-
-# TA Service
-TA_SERVICE_URL=https://your-ta-service.onrender.com
-
-# App Settings
+# Environment
 ENVIRONMENT=development
 LOG_LEVEL=INFO
+
+# Database (Required)
+MONGODB_URL=mongodb+srv://username:password@cluster.mongodb.net/sms_trading_bot
+REDIS_URL=redis://localhost:6379
+
+# OpenAI API (Required for AI responses)
+OPENAI_API_KEY=sk-your-openai-api-key-here
+
+# EODHD API (Required for market data)
+# SECURITY FIX: No hardcoded keys!
+EODHD_API_KEY=your-eodhd-api-key-here
+
+# Stripe (Required for payments)
+STRIPE_SECRET_KEY=sk_test_your-stripe-secret-key
+STRIPE_WEBHOOK_SECRET=whsec_your-webhook-secret
+STRIPE_PAID_PRICE_ID=price_your-paid-plan-price-id
+STRIPE_PRO_PRICE_ID=price_your-pro-plan-price-id
+
+# Twilio (Required for SMS)
+TWILIO_ACCOUNT_SID=AC-your-twilio-account-sid
+TWILIO_AUTH_TOKEN=your-twilio-auth-token
+TWILIO_PHONE_NUMBER=+1234567890
+
+# Plaid (Future feature)
+PLAID_CLIENT_ID=your-plaid-client-id
+PLAID_SECRET=your-plaid-secret
+PLAID_ENV=sandbox
+
+# Cache Settings (Optional - defaults provided)
+CACHE_POPULAR_TTL=1800
+CACHE_ONDEMAND_TTL=300
+CACHE_AFTERHOURS_TTL=3600
+
+# Rate Limiting (Optional - defaults provided)
+FREE_PLAN_WEEKLY_LIMIT=4
+PAID_PLAN_WEEKLY_LIMIT=40
+PRO_PLAN_WEEKLY_LIMIT=120
