@@ -1,5 +1,4 @@
-# Fix your UserManager to use the correct database
-# Update models/user.py
+# models/user.py - ONLY the UserManager class, no FastAPI endpoints
 
 from pymongo import MongoClient
 from datetime import datetime, timezone
@@ -14,8 +13,8 @@ class UserManager:
         mongodb_url = os.getenv('MONGODB_URL')
         self.client = MongoClient(mongodb_url)
         
-        # IMPORTANT: Use the 'ai' database where your existing users are!
-        self.db = self.client.ai  # Changed from 'sms_trading_bot' to 'ai'
+        # Use the 'ai' database where your existing users are!
+        self.db = self.client.ai
         self.users = self.db.users
         
         # Also set up usage tracking collection
@@ -283,6 +282,73 @@ class UserManager:
             logger.error(f"❌ Error updating activity for {phone_number}: {e}")
             return False
     
+    def check_message_limits(self, phone_number: str) -> Dict[str, Any]:
+        """Check if user can send more messages"""
+        user = self.get_user_by_phone(phone_number)
+        if not user:
+            return {"can_send": False, "reason": "User not found"}
+        
+        plan_type = user.get('plan_type', 'free')
+        messages_this_period = user.get('messages_this_period', 0)
+        
+        limits = {
+            'free': 10,
+            'paid': 100,
+            'pro': 999999  # Effectively unlimited
+        }
+        
+        limit = limits.get(plan_type, 10)
+        
+        # Special handling for pro users (cooloff after 50/day)
+        if plan_type == 'pro':
+            # Check daily usage
+            last_message = user.get('last_message_at')
+            if last_message:
+                hours_since_last = (datetime.now(timezone.utc) - last_message).total_seconds() / 3600
+                if hours_since_last < 24:
+                    # Count messages in last 24 hours
+                    daily_count = self.get_daily_message_count(phone_number)
+                    if daily_count >= 50:
+                        return {
+                            "can_send": False,
+                            "reason": "Daily limit reached. Pro users get cooloff after 50 messages/day.",
+                            "limit": 50,
+                            "used": daily_count,
+                            "resets_in_hours": 24 - hours_since_last
+                        }
+        
+        can_send = messages_this_period < limit
+        
+        return {
+            "can_send": can_send,
+            "reason": "Limit exceeded" if not can_send else "OK",
+            "limit": limit,
+            "used": messages_this_period,
+            "remaining": max(0, limit - messages_this_period),
+            "plan": plan_type
+        }
+    
+    def get_daily_message_count(self, phone_number: str) -> int:
+        """Get message count in last 24 hours"""
+        try:
+            user = self.get_user_by_phone(phone_number)
+            if not user:
+                return 0
+                
+            last_message = user.get('last_message_at')
+            if not last_message:
+                return 0
+                
+            hours_ago = (datetime.now(timezone.utc) - last_message).total_seconds() / 3600
+            if hours_ago > 24:
+                return 0
+            
+            # Estimate based on recent activity (you'd improve this with proper message logging)
+            return min(user.get('messages_this_period', 0), 50)
+        except Exception as e:
+            logger.error(f"Error getting daily count for {phone_number}: {e}")
+            return 0
+    
     def log_usage(self, phone_number: str, action: str, metadata: Dict[str, Any] = None):
         """Log usage to usage_tracking collection"""
         try:
@@ -393,70 +459,56 @@ class UserManager:
         except Exception as e:
             logger.error(f"❌ Error learning from interaction for {phone_number}: {e}")
             return False
-
-# Add this debug endpoint to your main app.py to test the connection
-
-@app.get("/debug/database")
-async def debug_database():
-    """Debug database connections and collections"""
-    try:
-        # Test connection
-        user_count_ai = user_manager.db.users.count_documents({})
-        collections = user_manager.db.list_collection_names()
-        
-        # Test user retrieval
-        sample_user = user_manager.db.users.find_one()
-        
-        return {
-            "database_name": user_manager.db.name,
-            "collections": collections,
-            "users_count": user_count_ai,
-            "sample_user_phone": sample_user.get("phone_number") if sample_user else None,
-            "sample_user_fields": list(sample_user.keys()) if sample_user else [],
-            "connection_status": "connected"
-        }
-    except Exception as e:
-        return {"error": str(e), "connection_status": "failed"}
-
-@app.get("/debug/user/{phone_number}")
-async def debug_user(phone_number: str):
-    """Debug specific user data"""
-    try:
-        user = user_manager.get_user_by_phone(phone_number)
-        if user:
-            user["_id"] = str(user["_id"])  # Convert ObjectId to string
-            return {
-                "found": True,
-                "user": user,
-                "fields_count": len(user.keys()),
-                "has_message_tracking": all(field in user for field in ["total_messages_sent", "total_messages_received"]),
-                "has_communication_style": "communication_style" in user and isinstance(user["communication_style"], dict)
+    
+    def update_subscription(self, phone_number: str, plan_type: str, stripe_customer_id: str = None, stripe_subscription_id: str = None) -> bool:
+        """Update user subscription status"""
+        try:
+            updates = {
+                "plan_type": plan_type,
+                "subscription_status": "active" if plan_type in ['paid', 'pro'] else "trialing",
+                "updated_at": datetime.now(timezone.utc)
             }
-        else:
-            return {"found": False, "phone_number": phone_number}
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.post("/debug/test-activity/{phone_number}")
-async def test_user_activity(phone_number: str):
-    """Test user activity update"""
-    try:
-        # Ensure user exists
-        user = user_manager.get_or_create_user(phone_number)
-        
-        # Test activity update
-        success = user_manager.update_user_activity(phone_number, "received")
-        
-        # Get updated user
-        updated_user = user_manager.get_user_by_phone(phone_number)
-        
-        return {
-            "update_success": success,
-            "total_messages_received": updated_user.get("total_messages_received"),
-            "total_messages_sent": updated_user.get("total_messages_sent"),
-            "messages_this_period": updated_user.get("messages_this_period"),
-            "last_active_at": updated_user.get("last_active_at"),
-            "updated_at": updated_user.get("updated_at")
-        }
-    except Exception as e:
-        return {"error": str(e)}
+            
+            if stripe_customer_id:
+                updates["stripe_customer_id"] = stripe_customer_id
+            if stripe_subscription_id:
+                updates["stripe_subscription_id"] = stripe_subscription_id
+            
+            # Reset usage counters when upgrading
+            if plan_type in ['paid', 'pro']:
+                updates["messages_this_period"] = 0
+                updates["period_start"] = datetime.now(timezone.utc)
+            
+            result = self.users.update_one(
+                {"phone_number": phone_number},
+                {"$set": updates}
+            )
+            
+            logger.info(f"💳 Updated subscription for {phone_number}: {plan_type}")
+            return result.modified_count > 0
+            
+        except Exception as e:
+            logger.error(f"❌ Error updating subscription for {phone_number}: {e}")
+            return False
+    
+    def get_user_stats(self) -> Dict[str, Any]:
+        """Get overall user statistics"""
+        try:
+            total_users = self.users.count_documents({})
+            
+            plan_breakdown = list(self.users.aggregate([
+                {"$group": {"_id": "$plan_type", "count": {"$sum": 1}}}
+            ]))
+            
+            active_users = self.users.count_documents({
+                "last_active_at": {"$gte": datetime.now(timezone.utc).replace(hour=0, minute=0, second=0)}
+            })
+            
+            return {
+                "total_users": total_users,
+                "active_today": active_users,
+                "plan_breakdown": {item["_id"]: item["count"] for item in plan_breakdown}
+            }
+        except Exception as e:
+            logger.error(f"❌ Error getting user stats: {e}")
+            return {}
