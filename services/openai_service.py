@@ -1,12 +1,12 @@
 # ===== services/openai_service.py =====
-import openai
+from openai import OpenAI
 from typing import Dict, List
 from loguru import logger
 from config import settings
 
 class OpenAIService:
     def __init__(self):
-        openai.api_key = settings.openai_api_key
+        self.client = OpenAI(api_key=settings.openai_api_key)
         
     async def generate_personalized_response(
         self, 
@@ -22,7 +22,8 @@ class OpenAIService:
                 user_query, user_profile, conversation_history, market_context
             )
             
-            response = await openai.ChatCompletion.acreate(
+            # Updated to use new OpenAI v1.0+ client
+            response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": prompt["system"]},
@@ -32,6 +33,7 @@ class OpenAIService:
                 temperature=0.7
             )
             
+            # Updated response access for v1.0+
             return response.choices[0].message.content.strip()
             
         except Exception as e:
@@ -78,6 +80,7 @@ Always:
 - Provide actionable insights
 - Include appropriate risk warnings
 - Use their preferred level of technical detail
+- Keep responses under 1500 characters for SMS compatibility
 """
         
         user_prompt = f"User query: {user_query}"
