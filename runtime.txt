@@ -1,0 +1,2 @@
+# runtime.txt - Place in root directory (for Heroku/some platforms)
+python-3.11.9
