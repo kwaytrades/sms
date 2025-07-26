@@ -265,33 +265,17 @@ Reactivate now to continue getting AI trading insights:
             
         elif reason == "weekly_limit_reached":
             reset_date = usage_info["reset_date"]
-            plan_limits = self._get_plan_limits(user.plan_type)
             
             # Format reset date
             reset_str = reset_date.strftime("%A %I:%M %p EST")
             
+            # Short message for cost control (1 SMS segment)
             if user.plan_type == "free":
-                message = f"""⚡ Weekly limit reached!
-
-Your AI trading insights reset {reset_str}.
-
-Can't wait? Upgrade now for {plan_limits['multiplier']} more daily analysis:
-
-📈 Standard: 40 msgs/week  
-💎 VIP: 120 msgs/week + priority alerts
-
-[Upgrade Now] [View Plans]"""
-            
-            else:  # Standard or VIP users
-                message = f"""⚡ Weekly limit reached!
-
-Your {user.plan_type.title()} plan resets {reset_str}.
-
-Need more insights? Upgrade to VIP for {plan_limits['multiplier']} analysis:
-
-💎 VIP: 120 msgs/week + priority features
-
-[Upgrade to VIP] [View Plans]"""
+                message = f"⚡ Weekly limit hit! Resets {reset_str} or upgrade for 10x more: [Upgrade Now]"
+            elif user.plan_type == "standard":
+                message = f"⚡ Weekly limit hit! Resets {reset_str} or upgrade to VIP for 3x more: [Upgrade]"
+            else:  # VIP
+                message = f"⚡ Weekly limit hit! Resets {reset_str}. You're on our highest tier."
         
         await self.twilio.send_sms(user.phone_number, message)
     
