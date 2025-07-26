@@ -1,14 +1,9 @@
-# .gitignore - Place in root directory
-
-# Byte-compiled / optimized / DLL files
+# ===== .gitignore - CORRECTED WITH PROPER DOT PREFIX =====
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -28,88 +23,14 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
-
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-Pipfile.lock
-
-# poetry
-poetry.lock
-
-# pdm
-.pdm.toml
-
-# PEP 582
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
+# Environment Variables (CRITICAL SECURITY)
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Virtual Environments
 .venv
 env/
 venv/
@@ -117,140 +38,66 @@ ENV/
 env.bak/
 venv.bak/
 
-# Spyder project settings
+# IDE
 .spyderproject
 .spyproject
-
-# Rope project settings
 .ropeproject
-
-# mkdocs documentation
 /site
-
-# mypy
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Pyre type checker
 .pyre/
-
-# pytype static type analyzer
 .pytype/
+cov.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
 
-# Cython debug symbols
-cython_debug/
+# Logs
+*.log
+logs/
 
-# PyCharm
+# OS
+.DS_Store
+.vscode/
 .idea/
 
-# VSCode
-.vscode/
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-*.code-workspace
-
-# Local History for Visual Studio Code
-.history/
-
-# Built Visual Studio Code Extensions
-*.vsix
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Windows
-Thumbs.db
-Thumbs.db:encryptable
-ehthumbs.db
-ehthumbs_vista.db
-*.stackdump
-[Dd]esktop.ini
-$RECYCLE.BIN/
-*.cab
-*.msi
-*.msix
-*.msm
-*.msp
-*.lnk
-
-# Linux
-*~
+# Database dumps
+*.sql
+*.sqlite
+*.db
 
 # Temporary files
 *.tmp
 *.temp
-*.swp
-*.swo
-
-# Logs
-logs/
-*.log
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Backup files
-*.bak
-*.backup
-
-# Editor backups
 *~
-.#*
-#*#
 
-# Node modules (if any JS tools)
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# API Keys and Secrets (Extra protection)
+*key*
+*secret*
+*token*
+credentials.json
+config.json
 
-# SSL certificates
-*.pem
-*.key
-*.crt
-
-# Local configuration files
-config/local.py
-local_config.py
-
-# Test files
-test_*.py
-*_test.py
-tests/local/
-
-# Docker
+# Deployment
+.deploy/
 docker-compose.override.yml
 
-# Terraform
-*.tfstate
-*.tfstate.*
-.terraform/
-
-# Kubernetes
-k8s-local/
-
-# Application specific
-data/
-uploads/
-downloads/
-cache/
-sessions/
-
-# API Documentation
-api_docs/
-
-# Coverage reports
+# Testing
+.coverage
 htmlcov/
+.tox/
+.nox/
 
-# Profiling
-*.prof
+# Documentation builds
+docs/_build/
+.readthedocs.yml
 
-# Memory dumps
-*.hprof
+# Git Commands to Fix the Naming Issue:
+# 1. Delete the incorrectly named file: rm gitignore
+# 2. Create this file as .gitignore: cp this_file .gitignore  
+# 3. If .env was already tracked: git rm --cached .env
+# 4. Add the corrected .gitignore: git add .gitignore
+# 5. Commit: git commit -m "Fix: Rename gitignore to .gitignore and secure environment files"
