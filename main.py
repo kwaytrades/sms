@@ -1,7 +1,8 @@
-# main.py - Minimal working version
+# main.py - Updated with Weekly Scheduler
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, HTMLResponse
 import uvicorn
+import asyncio
 from contextlib import asynccontextmanager
 from loguru import logger
 import sys
@@ -10,6 +11,7 @@ from config import settings
 from services.database import DatabaseService
 from services.openai_service import OpenAIService
 from services.twilio_service import TwilioService
+from services.weekly_scheduler import WeeklyScheduler
 from core.message_handler import MessageHandler
 
 # Configure logging
@@ -21,11 +23,12 @@ db_service = None
 openai_service = None
 twilio_service = None
 message_handler = None
+scheduler_task = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    global db_service, openai_service, twilio_service, message_handler
+    global db_service, openai_service, twilio_service, message_handler, scheduler_task
     
     logger.info("🚀 Starting SMS Trading Bot...")
     
@@ -38,6 +41,11 @@ async def lifespan(app: FastAPI):
         twilio_service = TwilioService()
         message_handler = MessageHandler(db_service, openai_service, twilio_service)
         
+        # Start weekly scheduler
+        scheduler = WeeklyScheduler(db_service, twilio_service)
+        scheduler_task = asyncio.create_task(scheduler.start_scheduler())
+        logger.info("📅 Weekly scheduler started")
+        
         logger.info("✅ SMS Trading Bot started successfully")
         
     except Exception as e:
@@ -48,6 +56,9 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("🛑 Shutting down SMS Trading Bot...")
+    if scheduler_task:
+        scheduler_task.cancel()
+        logger.info("📅 Weekly scheduler stopped")
     if db_service:
         await db_service.close()
 
@@ -76,7 +87,8 @@ async def health_check():
             "services": {
                 "database": "connected" if db_service and db_service.db else "disconnected",
                 "redis": "connected" if db_service and db_service.redis else "disconnected",
-                "message_handler": "active" if message_handler else "inactive"
+                "message_handler": "active" if message_handler else "inactive",
+                "weekly_scheduler": "active" if scheduler_task and not scheduler_task.done() else "inactive"
             }
         }
     except Exception as e:
@@ -86,7 +98,9 @@ async def health_check():
             "error": str(e),
             "services": {
                 "database": "unknown",
-                "redis": "unknown"
+                "redis": "unknown",
+                "message_handler": "unknown",
+                "weekly_scheduler": "unknown"
             }
         }
 
@@ -140,24 +154,20 @@ async def admin_dashboard():
         "status": "running",
         "services": {
             "database": "connected" if db_service else "disconnected",
-            "message_handler": "active" if message_handler else "inactive"
+            "message_handler": "active" if message_handler else "inactive",
+            "weekly_scheduler": "active" if scheduler_task and not scheduler_task.done() else "inactive"
         },
         "stats": {
             "total_users": "N/A - implement with real DB queries",
             "messages_today": "N/A - implement with analytics"
+        },
+        "weekly_limits": {
+            "free": "4 messages/week",
+            "standard": "40 messages/week",
+            "vip": "120 messages/week",
+            "reset_time": "Monday 9:30 AM EST"
         }
     }
-
-if __name__ == "__main__":
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=settings.environment == "development"
-    )
-
-
-from fastapi.responses import HTMLResponse
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_page():
@@ -181,7 +191,9 @@ async def test_page():
         <h3>Quick Tests:</h3>
         <button onclick="testCommand('START')">Test START</button>
         <button onclick="testCommand('/help')">Test /help</button>
+        <button onclick="testCommand('/usage')">Test /usage</button>
         <button onclick="testCommand('/upgrade')">Test /upgrade</button>
+        <button onclick="testCommand('What stocks should I buy?')">Test AI Query</button>
         
         <div id="results"></div>
         
@@ -199,6 +211,30 @@ async def test_page():
             });
         }
         </script>
+        
+        <hr>
+        <h3>Weekly Limits Info:</h3>
+        <ul>
+            <li><strong>Free:</strong> 4 messages/week</li>
+            <li><strong>Standard ($29/mo):</strong> 40 messages/week</li>
+            <li><strong>VIP ($99/mo):</strong> 120 messages/week</li>
+            <li><strong>Reset:</strong> Every Monday 9:30 AM EST</li>
+        </ul>
+        
+        <h3>Smart Warnings:</h3>
+        <ul>
+            <li>75% usage: Warning message</li>
+            <li>90% usage: Urgent warning</li>
+            <li>Final message: Last chance alert</li>
+        </ul>
     </body>
     </html>
     """
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.environment == "development"
+    )
