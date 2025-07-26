@@ -508,104 +508,171 @@ async def generate_real_response(user_message: str, phone_number: str) -> str:
     try:
         # Extract intent and symbols from message
         intent_result = analyze_message_intent(user_message)
+        logger.info(f"🎯 Intent analysis: {intent_result}")
         
         # If we have symbols and it's a stock query, get real technical analysis
         if intent_result["symbols"] and intent_result["intent"] in ["analyze", "price", "technical"]:
             symbol = intent_result["symbols"][0]
+            logger.info(f"📊 Fetching TA data for symbol: {symbol}")
             
             # Call your technical analysis service
             ta_data = await fetch_technical_analysis(symbol)
             
             if ta_data:
+                logger.info(f"✅ Got TA data for {symbol}, attempting OpenAI generation")
                 # Generate AI response using OpenAI with real data
                 if openai_service:
-                    ai_response = await openai_service.generate_personalized_response(
-                        user_query=user_message,
-                        user_profile={"phone_number": phone_number, "plan_type": "free"},
-                        conversation_history=[],
-                        market_context=ta_data
-                    )
-                    return ai_response
+                    try:
+                        ai_response = await openai_service.generate_personalized_response(
+                            user_query=user_message,
+                            user_profile={"phone_number": phone_number, "plan_type": "free"},
+                            conversation_history=[],
+                            market_context=ta_data
+                        )
+                        logger.info(f"✅ OpenAI generated response for {symbol}")
+                        return ai_response
+                    except Exception as e:
+                        logger.error(f"❌ OpenAI failed for {symbol}: {e}")
+                        # Fallback: Format the technical data nicely
+                        formatted_response = format_technical_analysis_response(symbol, ta_data)
+                        logger.info(f"✅ Using formatted TA response for {symbol}")
+                        return formatted_response
                 else:
+                    logger.warning(f"⚠️ OpenAI service not available, using formatted response for {symbol}")
                     # Fallback: Format the technical data nicely
                     return format_technical_analysis_response(symbol, ta_data)
+            else:
+                logger.warning(f"⚠️ No TA data received for {symbol}")
         
         # Handle other intents with OpenAI if available
         elif openai_service:
             try:
+                logger.info("🤖 Using OpenAI for general query")
                 ai_response = await openai_service.generate_personalized_response(
                     user_query=user_message,
                     user_profile={"phone_number": phone_number, "plan_type": "free"},
                     conversation_history=[]
                 )
+                logger.info("✅ OpenAI generated response for general query")
                 return ai_response
             except Exception as e:
-                logger.error(f"OpenAI generation failed: {e}")
+                logger.error(f"❌ OpenAI generation failed for general query: {e}")
                 return generate_mock_response(user_message)
         
+        # Log the fallback reason
+        logger.warning(f"⚠️ Falling back to mock response. OpenAI available: {openai_service is not None}, Symbols: {intent_result['symbols']}, Intent: {intent_result['intent']}")
         # Fallback to mock response if no services available
         return generate_mock_response(user_message)
         
     except Exception as e:
-        logger.error(f"Error generating real response: {e}")
+        logger.error(f"❌ Error generating real response: {e}")
         return generate_mock_response(user_message)
 
 async def fetch_technical_analysis(symbol: str) -> dict:
     """Fetch real technical analysis from your TA service"""
     try:
-        # Try to call your technical analysis service
-        ta_service_url = os.getenv('TA_SERVICE_URL', 'https://your-ta-service.onrender.com')
+        # Get TA service URL from environment
+        ta_service_url = os.getenv('TA_SERVICE_URL')
         
+        if not ta_service_url:
+            logger.warning("❌ TA_SERVICE_URL not set in environment variables")
+            return None
+        
+        logger.info(f"🌐 Calling TA service: {ta_service_url}/analysis/{symbol}")
+        
+        # Try to call your technical analysis service
         import httpx
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(f"{ta_service_url}/analysis/{symbol}")
             
             if response.status_code == 200:
                 data = response.json()
-                logger.info(f"✅ Got real TA data for {symbol}")
+                logger.info(f"✅ Got real TA data for {symbol} from {data.get('data_source', 'unknown')}")
+                logger.debug(f"TA data keys: {list(data.keys())}")
                 return data
             else:
-                logger.warning(f"TA service returned {response.status_code} for {symbol}")
+                logger.error(f"❌ TA service returned {response.status_code} for {symbol}: {response.text}")
                 return None
                 
+    except httpx.TimeoutException:
+        logger.error(f"⏰ TA service timeout for {symbol}")
+        return None
+    except httpx.ConnectError:
+        logger.error(f"🔌 Cannot connect to TA service for {symbol}")
+        return None
     except Exception as e:
-        logger.error(f"Failed to fetch TA data for {symbol}: {e}")
+        logger.error(f"💥 Failed to fetch TA data for {symbol}: {type(e).__name__}: {e}")
         return None
 
 def analyze_message_intent(message: str) -> dict:
-    """Analyze message intent and extract symbols"""
+    """Analyze message intent and extract symbols - IMPROVED VERSION"""
     message_lower = message.lower()
     symbols = []
     intent = "general"
     
-    # Extract stock symbols (1-5 letter uppercase words)
+    # Enhanced symbol extraction
     import re
+    
+    # Look for common stock symbol patterns
+    # Pattern 1: Explicit stock mentions like "PLUG", "AAPL", etc.
     potential_symbols = re.findall(r'\b[A-Z]{1,5}\b', message.upper())
-    # Filter common words that aren't symbols
-    exclude_words = {'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'HER', 'WAS', 'ONE', 'OUR', 'HAD', 'BY', 'DO', 'GET', 'MAY', 'NEW', 'NOW', 'OLD', 'SEE', 'WAY', 'WHO', 'BOY', 'DID', 'ITS', 'LET', 'PUT', 'SAY', 'SHE', 'TOO', 'USE', 'HOW', 'WHAT', 'WHEN', 'WHERE', 'WHY'}
+    
+    # Pattern 2: Company names to symbols mapping
+    company_mappings = {
+        'plug power': 'PLUG',
+        'apple': 'AAPL', 
+        'tesla': 'TSLA',
+        'microsoft': 'MSFT',
+        'amazon': 'AMZN',
+        'google': 'GOOGL',
+        'facebook': 'META',
+        'meta': 'META',
+        'nvidia': 'NVDA',
+        'amd': 'AMD',
+        'netflix': 'NFLX'
+    }
+    
+    # Check for company names in the message
+    for company, symbol in company_mappings.items():
+        if company in message_lower:
+            potential_symbols.append(symbol)
+    
+    # Filter out common words that aren't symbols
+    exclude_words = {
+        'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'HER', 'WAS', 'ONE', 
+        'OUR', 'HAD', 'BY', 'DO', 'GET', 'MAY', 'NEW', 'NOW', 'OLD', 'SEE', 'WAY', 'WHO', 
+        'BOY', 'DID', 'ITS', 'LET', 'PUT', 'SAY', 'SHE', 'TOO', 'USE', 'HOW', 'WHAT', 
+        'WHEN', 'WHERE', 'WHY', 'WILL', 'WITH', 'HAS', 'HIS', 'HIM', 'HER', 'SHE', 'HAS'
+    }
     symbols = [s for s in potential_symbols if s not in exclude_words and len(s) >= 2]
     
-    # Determine intent
-    if any(word in message_lower for word in ['price', 'cost', 'trading at', 'current', 'quote']):
+    # Remove duplicates while preserving order
+    symbols = list(dict.fromkeys(symbols))
+    
+    # Determine intent based on keywords
+    if any(word in message_lower for word in ['price', 'cost', 'trading at', 'current', 'quote', 'worth']):
         intent = 'price'
-    elif any(word in message_lower for word in ['analyze', 'analysis', 'look at', 'check', 'how is', 'what about']):
+    elif any(word in message_lower for word in ['analyze', 'analysis', 'look at', 'check', 'how is', 'what about', 'doing', 'performing']):
         intent = 'analyze'
-    elif any(word in message_lower for word in ['rsi', 'macd', 'support', 'resistance', 'technical', 'indicators']):
+    elif any(word in message_lower for word in ['rsi', 'macd', 'support', 'resistance', 'technical', 'indicators', 'chart']):
         intent = 'technical'
-    elif any(word in message_lower for word in ['find', 'search', 'screen', 'discover', 'recommend', 'good stocks']):
+    elif any(word in message_lower for word in ['find', 'search', 'screen', 'discover', 'recommend', 'good stocks', 'best stocks']):
         intent = 'screener'
-    elif any(word in message_lower for word in ['news', 'updates', 'happened', 'events', 'earnings']):
+    elif any(word in message_lower for word in ['news', 'updates', 'happened', 'events', 'earnings', 'latest']):
         intent = 'news'
-    elif any(word in message_lower for word in ['help', 'commands', 'start', 'hello']):
+    elif any(word in message_lower for word in ['help', 'commands', 'start', 'hello', 'hi']):
         intent = 'help'
-    elif any(word in message_lower for word in ['upgrade', 'plans', 'subscription']):
+    elif any(word in message_lower for word in ['upgrade', 'plans', 'subscription', 'pricing']):
         intent = 'upgrade'
     
-    return {
+    result = {
         "intent": intent,
         "symbols": symbols,
-        "confidence": 0.8 if symbols else 0.6
+        "confidence": 0.9 if symbols else 0.6,
+        "original_message": message
     }
+    
+    return result
 
 def format_technical_analysis_response(symbol: str, ta_data: dict) -> str:
     """Format technical analysis data into a readable SMS response"""
@@ -1036,37 +1103,134 @@ async def test_technical_analysis(symbol: str):
             "fallback_used": True
         }
 
-@app.get("/debug/test-openai")
-async def test_openai_integration():
-    """Test OpenAI service integration"""
-    try:
-        if not openai_service:
-            return {
-                "openai_available": False,
-                "error": "OpenAI service not initialized",
-                "reason": "Missing OpenAI API key or service not loaded"
+@app.get("/debug/diagnose-services")
+async def diagnose_services():
+    """Comprehensive service diagnosis"""
+    diagnosis = {
+        "timestamp": datetime.now().isoformat(),
+        "environment_variables": {},
+        "service_availability": {},
+        "connection_tests": {},
+        "recommendations": []
+    }
+    
+    # Check environment variables
+    env_vars = {
+        "TA_SERVICE_URL": os.getenv('TA_SERVICE_URL'),
+        "OPENAI_API_KEY": "Set" if os.getenv('OPENAI_API_KEY') else None,
+        "MONGODB_URL": "Set" if os.getenv('MONGODB_URL') else None,
+        "EODHD_API_KEY": "Set" if os.getenv('EODHD_API_KEY') else None
+    }
+    diagnosis["environment_variables"] = env_vars
+    
+    # Check service initialization
+    diagnosis["service_availability"] = {
+        "openai_service": openai_service is not None,
+        "db_service": db_service is not None,
+        "message_handler": message_handler is not None,
+        "twilio_service": twilio_service is not None
+    }
+    
+    # Test TA Service connection
+    ta_url = env_vars["TA_SERVICE_URL"]
+    if ta_url:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{ta_url}/health")
+                diagnosis["connection_tests"]["ta_service"] = {
+                    "url": ta_url,
+                    "status": response.status_code,
+                    "reachable": True,
+                    "response_preview": response.text[:200]
+                }
+        except Exception as e:
+            diagnosis["connection_tests"]["ta_service"] = {
+                "url": ta_url,
+                "reachable": False,
+                "error": str(e)
             }
+    else:
+        diagnosis["connection_tests"]["ta_service"] = {
+            "url": None,
+            "reachable": False,
+            "error": "TA_SERVICE_URL not set"
+        }
+    
+    # Test OpenAI if available
+    if openai_service:
+        try:
+            # Simple test
+            test_response = await openai_service.generate_personalized_response(
+                user_query="Test",
+                user_profile={"plan_type": "free"},
+                conversation_history=[]
+            )
+            diagnosis["connection_tests"]["openai"] = {
+                "available": True,
+                "test_successful": True,
+                "response_length": len(test_response)
+            }
+        except Exception as e:
+            diagnosis["connection_tests"]["openai"] = {
+                "available": True,
+                "test_successful": False,
+                "error": str(e)
+            }
+    else:
+        diagnosis["connection_tests"]["openai"] = {
+            "available": False,
+            "error": "OpenAI service not initialized"
+        }
+    
+    # Generate recommendations
+    if not env_vars["TA_SERVICE_URL"]:
+        diagnosis["recommendations"].append("❌ Set TA_SERVICE_URL environment variable to your technical analysis service")
+    elif not diagnosis["connection_tests"]["ta_service"]["reachable"]:
+        diagnosis["recommendations"].append("❌ TA service unreachable - check if your TA microservice is running")
+    
+    if not env_vars["OPENAI_API_KEY"]:
+        diagnosis["recommendations"].append("❌ Set OPENAI_API_KEY environment variable")
+    elif not openai_service:
+        diagnosis["recommendations"].append("❌ OpenAI service failed to initialize - check API key validity")
+    
+    if not diagnosis["recommendations"]:
+        diagnosis["recommendations"].append("✅ All services appear to be configured correctly")
+    
+    return diagnosis
+
+@app.post("/debug/test-message")
+async def test_message_processing(request: Request):
+    """Test message processing with detailed logging"""
+    try:
+        data = await request.json()
+        message = data.get('message', 'How is AAPL doing?')
+        phone = data.get('phone', '+1234567890')
         
-        # Test a simple query
-        test_response = await openai_service.generate_personalized_response(
-            user_query="How is AAPL doing?",
-            user_profile={"plan_type": "free", "trading_experience": "intermediate"},
-            conversation_history=[]
-        )
+        logger.info(f"🧪 Testing message processing: '{message}' from {phone}")
+        
+        # Step 1: Intent analysis
+        intent_result = analyze_message_intent(message)
+        logger.info(f"🎯 Intent result: {intent_result}")
+        
+        # Step 2: Generate response
+        response = await generate_real_response(message, phone)
+        logger.info(f"🤖 Generated response: {response[:100]}...")
         
         return {
-            "openai_available": True,
-            "test_query": "How is AAPL doing?",
-            "ai_response": test_response,
-            "response_length": len(test_response),
-            "service_working": True
+            "test_message": message,
+            "intent_analysis": intent_result,
+            "generated_response": response,
+            "response_length": len(response),
+            "using_real_services": "demo mode" not in response.lower(),
+            "timestamp": datetime.now().isoformat()
         }
         
     except Exception as e:
+        logger.error(f"❌ Test message processing failed: {e}")
         return {
-            "openai_available": False,
             "error": str(e),
-            "service_working": False
+            "timestamp": datetime.now().isoformat()
         }
 
 @app.get("/debug/test-full-flow/{symbol}")
@@ -1744,8 +1908,11 @@ async def comprehensive_dashboard():
                         <button class="btn btn-small btn-success" onclick="testFullIntegration()">
                             <i class="fas fa-cogs"></i> Test Full Flow
                         </button>
-                        <button class="btn btn-small btn-warning" onclick="checkServiceStatus()">
-                            <i class="fas fa-heartbeat"></i> Service Status
+                        <button class="btn btn-small btn-warning" onclick="diagnoseServices()">
+                            <i class="fas fa-stethoscope"></i> Diagnose Issues
+                        </button>
+                        <button class="btn btn-small" onclick="testMessageProcessing()">
+                            <i class="fas fa-comment"></i> Test Message
                         </button>
                     </div>
                     <div id="integration-result" class="result-box"></div>
@@ -2229,6 +2396,53 @@ async def comprehensive_dashboard():
             } catch (error) {
                 showResult('integration-result', { error: error.message }, true);
                 showToast('Full integration test failed', 'error');
+            }
+        }
+
+        async function diagnoseServices() {
+            showLoading('integration-result');
+            try {
+                const data = await apiCall('/debug/diagnose-services');
+                showResult('integration-result', data);
+                
+                // Show specific recommendations as toasts
+                if (data.recommendations) {
+                    data.recommendations.forEach((rec, index) => {
+                        setTimeout(() => {
+                            const isError = rec.includes('❌');
+                            showToast(rec, isError ? 'error' : 'success');
+                        }, index * 2000);
+                    });
+                }
+                
+                showToast('Service diagnosis completed');
+            } catch (error) {
+                showResult('integration-result', { error: error.message }, true);
+                showToast('Service diagnosis failed', 'error');
+            }
+        }
+
+        async function testMessageProcessing() {
+            showLoading('integration-result');
+            try {
+                const testMessage = document.getElementById('sms-body')?.value || 'how is plug power stock doing';
+                const testPhone = document.getElementById('sms-phone')?.value || '+1234567890';
+                
+                const data = await apiCall('/debug/test-message', 'POST', {
+                    message: testMessage,
+                    phone: testPhone
+                });
+                
+                showResult('integration-result', data);
+                
+                if (data.using_real_services) {
+                    showToast('✅ Real services are working!');
+                } else {
+                    showToast('⚠️ Still using demo/mock responses', 'warning');
+                }
+            } catch (error) {
+                showResult('integration-result', { error: error.message }, true);
+                showToast('Message processing test failed', 'error');
             }
         }
 
