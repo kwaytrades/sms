@@ -346,6 +346,36 @@ async def metrics_middleware(request: Request, call_next):
     
     return response
 
+# ===== CONVERSATION STORAGE (Simple In-Memory for Demo) =====
+# In production, this would be stored in your database
+
+conversation_history = defaultdict(list)  # phone_number -> list of messages
+
+def store_conversation(phone_number: str, user_message: str, bot_response: str = None):
+    """Store conversation in memory for dashboard viewing"""
+    timestamp = datetime.now().isoformat()
+    
+    # Store user message
+    conversation_history[phone_number].append({
+        "timestamp": timestamp,
+        "direction": "inbound",
+        "content": user_message,
+        "type": "user_message"
+    })
+    
+    # Store bot response if provided
+    if bot_response:
+        conversation_history[phone_number].append({
+            "timestamp": timestamp,
+            "direction": "outbound", 
+            "content": bot_response,
+            "type": "bot_response"
+        })
+    
+    # Keep only last 50 messages per user
+    if len(conversation_history[phone_number]) > 50:
+        conversation_history[phone_number] = conversation_history[phone_number][-50:]
+
 # ===== MAIN ENDPOINTS =====
 
 @app.get("/")
@@ -444,6 +474,15 @@ async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
         if not from_number or not message_body:
             return PlainTextResponse("Missing required fields", status_code=400)
         
+        # Store the incoming message immediately
+        store_conversation(from_number, message_body)
+        
+        # Generate a mock bot response for demo purposes
+        bot_response = generate_mock_response(message_body)
+        
+        # Store the bot response
+        store_conversation(from_number, message_body, bot_response)
+        
         # Process message in background if handler available
         if message_handler:
             background_tasks.add_task(
@@ -452,7 +491,7 @@ async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
                 message_body
             )
         else:
-            logger.warning("Message handler not available - testing mode")
+            logger.warning("Message handler not available - using mock response")
         
         # Return empty TwiML response
         return PlainTextResponse(
@@ -463,6 +502,44 @@ async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
     except Exception as e:
         logger.error(f"❌ SMS webhook error: {e}")
         return PlainTextResponse("Internal error", status_code=500)
+
+def generate_mock_response(user_message: str) -> str:
+    """Generate a mock bot response for testing"""
+    message_lower = user_message.lower()
+    
+    if any(word in message_lower for word in ['start', 'hello', 'hi']):
+        return "🚀 Welcome to AI Trading Insights! I'm your personal trading assistant. Try asking about a stock like 'How is AAPL doing?' or 'Find me tech stocks'. Reply /help for commands."
+    
+    elif any(word in message_lower for word in ['help', 'commands']):
+        return "💡 Commands: /upgrade (see plans), /watchlist (manage stocks), /portfolio (account summary), /status (usage info). Or just ask naturally about any stock!"
+    
+    elif any(word in message_lower for word in ['upgrade', 'plans']):
+        return "💎 Upgrade Plans:\n\n📈 PAID - $29/month: 100 messages + personalized insights\n🏆 PRO - $99/month: Unlimited messages + real-time alerts\n\nReply plan name for details!"
+    
+    elif any(symbol in message_lower for symbol in ['aapl', 'apple']):
+        return "📊 AAPL Analysis:\n\nPrice: $185.50 ↑2.1%\nRSI: 65 (Neutral)\nMACD: Bullish crossover\nSupport: $182 | Resistance: $190\n\n✅ Technical outlook positive. Good entry point below $183."
+    
+    elif any(symbol in message_lower for symbol in ['tsla', 'tesla']):
+        return "⚡ TSLA Analysis:\n\nPrice: $242.80 ↓1.2%\nRSI: 45 (Neutral)\nMACD: Bearish trend\nSupport: $235 | Resistance: $250\n\n⚠️ Consolidating. Wait for break above $250 or support test."
+    
+    elif any(word in message_lower for word in ['find', 'search', 'recommend', 'good stocks']):
+        return "🔍 Top Stock Picks Today:\n\n1. ROKU - $67.45 (Oversold, high volume)\n2. SQ - $89.23 (Breaking resistance) \n3. SHOP - $72.11 (Earnings beat expected)\n\n📈 All show bullish momentum. Which interests you?"
+    
+    elif any(word in message_lower for word in ['portfolio', 'account']):
+        return "📊 Portfolio Summary:\n\nTotal Value: $47,293 (+$987 today)\nDay Change: +2.1% 📈\n\nTop Performers:\n• NVDA: +$523 (+4.2%)\n• AAPL: +$287 (+1.8%)\n\nConnect brokerage for live data!"
+    
+    elif any(word in message_lower for word in ['status', 'usage']):
+        return "📊 Account Status:\n\nPlan: FREE (0/10 messages this week)\nStatus: ✅ Active\nNext reset: Monday 9:30 AM EST\n\nUpgrade for more insights: /upgrade"
+    
+    else:
+        # Extract potential stock symbols
+        import re
+        symbols = re.findall(r'\b[A-Z]{2,5}\b', user_message.upper())
+        if symbols:
+            symbol = symbols[0]
+            return f"📈 {symbol} - I'd analyze this stock for you! Currently in demo mode. The full system would provide real-time technical analysis, support/resistance levels, and trading signals.\n\nTry: 'How is AAPL?' for a sample response!"
+        else:
+            return "🤖 I'm your AI trading assistant! Ask me about:\n\n• Stock analysis: 'How is AAPL?'\n• Stock screening: 'Find good tech stocks'\n• Commands: /help\n• Upgrade: /upgrade\n\nWhat can I help you with?"
 
 @app.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
@@ -578,6 +655,116 @@ async def update_user_subscription(phone_number: str, request: Request):
     except Exception as e:
         logger.error(f"Error updating subscription for {phone_number}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ===== CONVERSATION ENDPOINTS =====
+
+@app.get("/api/conversations/{phone_number}")
+async def get_user_conversations(phone_number: str, limit: int = 20):
+    """Get conversation history for a specific user"""
+    try:
+        # Clean phone number format
+        clean_phone = phone_number.replace('%2B', '+').replace('%20', '')
+        
+        messages = conversation_history.get(clean_phone, [])
+        
+        # Get recent messages (limit)
+        recent_messages = messages[-limit:] if messages else []
+        
+        # Group messages into conversations
+        conversations = []
+        if recent_messages:
+            conversations.append({
+                "session_id": f"session_{clean_phone}_{datetime.now().strftime('%Y%m%d')}",
+                "messages": recent_messages,
+                "total_messages": len(recent_messages)
+            })
+        
+        return {
+            "phone_number": clean_phone,
+            "total_sessions": len(conversations),
+            "conversations": conversations,
+            "total_messages": len(messages)
+        }
+    except Exception as e:
+        logger.error(f"Error getting conversations for {phone_number}: {e}")
+        return {"error": str(e)}
+
+@app.get("/api/conversations/recent")
+async def get_recent_conversations(limit: int = 10):
+    """Get recent conversations across all users"""
+    try:
+        all_conversations = []
+        
+        for phone, messages in conversation_history.items():
+            if messages:
+                latest_message = messages[-1]
+                all_conversations.append({
+                    "user_id": phone,
+                    "latest_message": latest_message,
+                    "total_messages": len(messages)
+                })
+        
+        # Sort by latest message timestamp
+        all_conversations.sort(
+            key=lambda x: x["latest_message"]["timestamp"], 
+            reverse=True
+        )
+        
+        return {
+            "recent_conversations": all_conversations[:limit],
+            "total_active_users": len(conversation_history)
+        }
+    except Exception as e:
+        logger.error(f"Error getting recent conversations: {e}")
+        return {"error": str(e)}
+
+@app.post("/api/test/sms-with-response")
+async def test_sms_with_response(request: Request):
+    """Enhanced SMS testing endpoint that captures both user message and bot response"""
+    try:
+        # Parse form data (same as Twilio webhook)
+        form_data = await request.form()
+        from_number = form_data.get('From')
+        message_body = form_data.get('Body', '').strip()
+        
+        if not from_number or not message_body:
+            return {"error": "Missing required fields"}
+        
+        # Store user message
+        user_message_timestamp = datetime.now().isoformat()
+        store_conversation(from_number, message_body)
+        
+        # Generate bot response
+        bot_response = generate_mock_response(message_body)
+        
+        # Store bot response
+        store_conversation(from_number, message_body, bot_response)
+        
+        # Format response for dashboard
+        return {
+            "status": "success",
+            "user_message": {
+                "from": from_number,
+                "body": message_body,
+                "timestamp": user_message_timestamp
+            },
+            "bot_response": {
+                "content": bot_response,
+                "message_type": "bot_response",
+                "timestamp": datetime.now().isoformat(),
+                "session_id": f"test_session_{from_number}"
+            },
+            "processing_status": "completed",
+            "conversation_stored": True
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in SMS test with response: {e}")
+        return {
+            "status": "error", 
+            "processing_error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
 
 # ===== SCHEDULER ENDPOINTS =====
 
@@ -1182,6 +1369,9 @@ async def comprehensive_dashboard():
             <button class="tab" onclick="switchTab('monitoring')">
                 <i class="fas fa-chart-area"></i> Monitoring
             </button>
+            <button class="tab" onclick="switchTab('conversations')">
+                <i class="fas fa-comments"></i> Conversations
+            </button>
             <button class="tab" onclick="switchTab('logs')">
                 <i class="fas fa-terminal"></i> Logs
             </button>
@@ -1215,10 +1405,16 @@ async def comprehensive_dashboard():
                             <i class="fas fa-arrow-up"></i> Upgrade
                         </button>
                     </div>
-                    <button class="btn btn-full" onclick="sendCustomSMS()">
-                        <i class="fas fa-paper-plane"></i> Send Custom Message
-                    </button>
+                    <div class="two-column">
+                        <button class="btn" onclick="sendCustomSMS()">
+                            <i class="fas fa-paper-plane"></i> Send & Capture Response
+                        </button>
+                        <button class="btn btn-success" onclick="loadConversationHistory()">
+                            <i class="fas fa-history"></i> Load History
+                        </button>
+                    </div>
                     <div id="sms-result" class="result-box"></div>
+                    <div id="conversation-history"></div>
                 </div>
 
                 <!-- System Health -->
@@ -1338,6 +1534,75 @@ async def comprehensive_dashboard():
             </div>
         </div>
 
+        <!-- Conversations Tab -->
+        <div id="conversations-tab" class="tab-content">
+            <div class="dashboard-grid">
+                <div class="card">
+                    <h3><i class="fas fa-user card-icon"></i>User Conversations</h3>
+                    <div class="form-group">
+                        <label>Phone Number:</label>
+                        <input type="text" id="conv-phone" value="+13012466712" placeholder="+1234567890">
+                    </div>
+                    <div class="quick-actions">
+                        <button class="btn btn-small" onclick="loadUserConversations()">
+                            <i class="fas fa-comments"></i> Load User Chat
+                        </button>
+                        <button class="btn btn-small" onclick="loadRecentSystemConversations()">
+                            <i class="fas fa-globe"></i> Recent System Chats
+                        </button>
+                        <button class="btn btn-small" onclick="clearConversationHistory()">
+                            <i class="fas fa-trash"></i> Clear History
+                        </button>
+                    </div>
+                    <div id="conversation-details" class="result-box"></div>
+                </div>
+                
+                <div class="card">
+                    <h3><i class="fas fa-chart-line card-icon"></i>Conversation Analytics</h3>
+                    <div class="metrics-grid">
+                        <div class="metric">
+                            <div class="metric-value" id="total-conversations">--</div>
+                            <div class="metric-label">Total Conversations</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value" id="active-users-conv">--</div>
+                            <div class="metric-label">Active Users</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value" id="avg-messages">--</div>
+                            <div class="metric-label">Avg Messages/User</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value" id="response-rate">--</div>
+                            <div class="metric-label">Bot Response Rate</div>
+                        </div>
+                    </div>
+                    <div id="recent-activity" class="activity-timeline" style="margin-top: 20px; max-height: 300px; overflow-y: auto;">
+                        <div>No recent conversations</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Full-width conversation viewer -->
+            <div class="card full-width">
+                <h3><i class="fas fa-history card-icon"></i>Live Conversation Viewer</h3>
+                <div id="live-conversations" style="max-height: 400px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 15px;">
+                    <div class="conversation-placeholder" style="text-align: center; color: #718096; padding: 40px;">
+                        <i class="fas fa-comments" style="font-size: 3rem; margin-bottom: 15px; opacity: 0.5;"></i>
+                        <p>No conversations yet. Send a test SMS to see the conversation flow here!</p>
+                    </div>
+                </div>
+                <div style="margin-top: 15px; text-align: center;">
+                    <button class="btn" onclick="refreshConversations()">
+                        <i class="fas fa-sync"></i> Refresh Conversations
+                    </button>
+                    <button class="btn btn-success" onclick="enableAutoRefreshConversations()">
+                        <i class="fas fa-play"></i> <span id="auto-conv-text">Enable Auto-refresh</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Logs Tab -->
         <div id="logs-tab" class="tab-content">
             <div class="card full-width">
@@ -1398,6 +1663,9 @@ async def comprehensive_dashboard():
             
             if (tabName === 'monitoring') {
                 refreshMetrics();
+            } else if (tabName === 'conversations') {
+                refreshConversations();
+                loadRecentSystemConversations();
             }
         }
 
@@ -1501,7 +1769,8 @@ async def comprehensive_dashboard():
                 
                 const formData = `From=${encodeURIComponent(phone)}&Body=${encodeURIComponent(body)}`;
                 
-                const response = await fetch(`${BASE_URL}/webhook/sms`, {
+                // Use the new endpoint that captures responses
+                const response = await fetch(`${BASE_URL}/api/test/sms-with-response`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
@@ -1510,50 +1779,55 @@ async def comprehensive_dashboard():
                 });
                 
                 if (response.ok) {
-                    const contentType = response.headers.get('content-type');
+                    const data = await response.json();
                     
-                    if (contentType && contentType.includes('application/xml')) {
-                        const xmlText = await response.text();
-                        const result = {
-                            status: 'success',
-                            message: 'SMS webhook processed successfully',
-                            response_type: 'TwiML',
-                            twiml_response: xmlText,
-                            phone: phone,
-                            message_body: body,
-                            timestamp: new Date().toISOString()
-                        };
-                        showResult('sms-result', result);
-                        showToast('SMS webhook executed successfully!');
-                    } else {
-                        const data = await response.json();
-                        showResult('sms-result', data);
-                        showToast('SMS sent successfully!');
+                    // Format the complete conversation flow
+                    const conversationFlow = {
+                        "📱 USER MESSAGE": {
+                            "from": data.user_message.from,
+                            "content": data.user_message.body,
+                            "timestamp": new Date(data.user_message.timestamp).toLocaleString()
+                        },
+                        "🤖 BOT RESPONSE": {
+                            "content": data.bot_response.content,
+                            "message_type": data.bot_response.message_type,
+                            "timestamp": new Date(data.bot_response.timestamp).toLocaleString(),
+                            "session_id": data.bot_response.session_id
+                        },
+                        "⚙️ PROCESSING": {
+                            "status": data.processing_status,
+                            "conversation_stored": data.conversation_stored
+                        }
+                    };
+                    
+                    // Add processing error if any
+                    if (data.processing_error) {
+                        conversationFlow["❌ ERROR"] = data.processing_error;
                     }
+                    
+                    showResult('sms-result', conversationFlow);
+                    showToast('SMS conversation captured successfully!');
+                    
+                    // Auto-refresh conversation history
+                    setTimeout(() => {
+                        loadConversationHistory();
+                        refreshConversations();
+                    }, 1000);
+                    
                 } else {
                     const errorText = await response.text();
-                    const errorResult = {
-                        status: 'error',
-                        http_status: response.status,
-                        error_message: errorText,
-                        phone: phone,
-                        message_body: body,
-                        timestamp: new Date().toISOString()
-                    };
-                    showResult('sms-result', errorResult, true);
+                    showResult('sms-result', {
+                        "❌ ERROR": `HTTP ${response.status}`,
+                        "details": errorText
+                    }, true);
                     showToast(`SMS failed: HTTP ${response.status}`, 'error');
                 }
                 
             } catch (error) {
-                const errorResult = {
-                    status: 'error',
-                    error_type: 'network_error',
-                    error_message: error.message,
-                    phone: document.getElementById('sms-phone').value,
-                    message_body: document.getElementById('sms-body').value,
-                    timestamp: new Date().toISOString()
-                };
-                showResult('sms-result', errorResult, true);
+                showResult('sms-result', {
+                    "❌ NETWORK ERROR": error.message,
+                    "timestamp": new Date().toLocaleString()
+                }, true);
                 showToast('SMS failed to send', 'error');
             }
         }
@@ -1723,6 +1997,228 @@ async def comprehensive_dashboard():
             document.getElementById('sms-info').textContent = health.services?.twilio || 'Unknown';
             document.getElementById('ai-info').textContent = health.services?.openai || 'Unknown';
             document.getElementById('payment-info').textContent = admin.configuration?.payments_enabled ? 'Enabled' : 'Disabled';
+        }
+
+        // Conversation Management Functions
+        async function loadConversationHistory(phone = null) {
+            const phoneToCheck = phone || document.getElementById('sms-phone').value;
+            
+            try {
+                const cleanPhone = encodeURIComponent(phoneToCheck);
+                const response = await fetch(`${BASE_URL}/api/conversations/${cleanPhone}?limit=10`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    if (data.conversations && data.conversations.length > 0) {
+                        const historyDisplay = {
+                            "📱 USER": phoneToCheck,
+                            "💬 TOTAL MESSAGES": data.total_messages,
+                            "🕒 RECENT CONVERSATION": []
+                        };
+                        
+                        // Show recent messages
+                        data.conversations[0].messages.forEach((message) => {
+                            const messageIcon = message.direction === 'inbound' ? '📥' : '📤';
+                            const messageType = message.direction === 'inbound' ? 'User' : 'Bot';
+                            
+                            historyDisplay["🕒 RECENT CONVERSATION"].push({
+                                "type": `${messageIcon} ${messageType}`,
+                                "content": message.content.length > 100 ? 
+                                    message.content.substring(0, 100) + '...' : 
+                                    message.content,
+                                "time": new Date(message.timestamp).toLocaleString()
+                            });
+                        });
+                        
+                        // Update the conversation history display
+                        const historyElement = document.getElementById('conversation-history');
+                        if (historyElement) {
+                            historyElement.innerHTML = '<h4>📱 Conversation History</h4>';
+                            const resultBox = document.createElement('div');
+                            resultBox.className = 'result-box success';
+                            resultBox.textContent = JSON.stringify(historyDisplay, null, 2);
+                            historyElement.appendChild(resultBox);
+                        }
+                        
+                        showToast(`Loaded conversation with ${data.total_messages} messages`);
+                    } else {
+                        showToast('No conversation history found', 'warning');
+                        const historyElement = document.getElementById('conversation-history');
+                        if (historyElement) {
+                            historyElement.innerHTML = '<div class="result-box">No conversation history found</div>';
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading conversation history:', error);
+                showToast('Failed to load conversation history', 'error');
+            }
+        }
+
+        async function loadUserConversations() {
+            const phone = document.getElementById('conv-phone').value;
+            showLoading('conversation-details');
+            
+            try {
+                const cleanPhone = encodeURIComponent(phone);
+                const data = await apiCall(`/api/conversations/${cleanPhone}?limit=20`);
+                showResult('conversation-details', data);
+                showToast('User conversations loaded');
+            } catch (error) {
+                showResult('conversation-details', { error: error.message }, true);
+                showToast('Failed to load user conversations', 'error');
+            }
+        }
+
+        async function loadRecentSystemConversations() {
+            showLoading('conversation-details');
+            
+            try {
+                const data = await apiCall('/api/conversations/recent?limit=10');
+                
+                // Also update the recent activity display
+                const recentActivity = document.getElementById('recent-activity');
+                if (recentActivity && data.recent_conversations) {
+                    recentActivity.innerHTML = '';
+                    
+                    data.recent_conversations.forEach(conversation => {
+                        const activityItem = document.createElement('div');
+                        activityItem.className = 'activity-item';
+                        activityItem.style.cssText = 'padding: 10px; border-bottom: 1px solid #eee; font-size: 12px;';
+                        
+                        const userBadge = conversation.user_id.includes('+') ? 
+                            conversation.user_id.substring(0, 12) + '...' :
+                            conversation.user_id;
+                        
+                        const directionIcon = conversation.latest_message.direction === 'inbound' ? '📥' : '📤';
+                        const messagePreview = conversation.latest_message.content.length > 50 ?
+                            conversation.latest_message.content.substring(0, 50) + '...' :
+                            conversation.latest_message.content;
+                        
+                        activityItem.innerHTML = `
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <strong>${userBadge}</strong><br>
+                                    ${directionIcon} ${messagePreview}
+                                </div>
+                                <div style="text-align: right; font-size: 10px; color: #666;">
+                                    ${new Date(conversation.latest_message.timestamp).toLocaleTimeString()}<br>
+                                    ${conversation.total_messages} msgs
+                                </div>
+                            </div>
+                        `;
+                        recentActivity.appendChild(activityItem);
+                    });
+                    
+                    // Update analytics
+                    document.getElementById('active-users-conv').textContent = data.total_active_users || 0;
+                    document.getElementById('total-conversations').textContent = data.recent_conversations.length;
+                }
+                
+                showResult('conversation-details', data);
+                showToast(`Loaded ${data.recent_conversations?.length || 0} recent conversations`);
+            } catch (error) {
+                showResult('conversation-details', { error: error.message }, true);
+                showToast('Failed to load recent conversations', 'error');
+            }
+        }
+
+        async function refreshConversations() {
+            try {
+                const data = await apiCall('/api/conversations/recent?limit=15');
+                const liveConversations = document.getElementById('live-conversations');
+                
+                if (data.recent_conversations && data.recent_conversations.length > 0) {
+                    liveConversations.innerHTML = '';
+                    
+                    data.recent_conversations.forEach((conversation, index) => {
+                        const convDiv = document.createElement('div');
+                        convDiv.style.cssText = `
+                            border: 1px solid #e2e8f0; 
+                            border-radius: 8px; 
+                            padding: 15px; 
+                            margin-bottom: 10px; 
+                            background: ${index % 2 === 0 ? '#f8f9fa' : 'white'};
+                        `;
+                        
+                        const directionIcon = conversation.latest_message.direction === 'inbound' ? '📥 User' : '📤 Bot';
+                        const messageType = conversation.latest_message.type || 'message';
+                        
+                        convDiv.innerHTML = `
+                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
+                                <div style="font-weight: bold; color: #4a5568;">
+                                    📱 ${conversation.user_id}
+                                </div>
+                                <div style="font-size: 12px; color: #718096;">
+                                    ${new Date(conversation.latest_message.timestamp).toLocaleString()}
+                                </div>
+                            </div>
+                            <div style="margin-bottom: 8px;">
+                                <span style="background: #e2e8f0; padding: 2px 8px; border-radius: 12px; font-size: 11px; color: #4a5568;">
+                                    ${directionIcon}
+                                </span>
+                            </div>
+                            <div style="background: white; padding: 10px; border-radius: 6px; border-left: 3px solid ${conversation.latest_message.direction === 'inbound' ? '#4299e1' : '#48bb78'};">
+                                ${conversation.latest_message.content}
+                            </div>
+                            <div style="margin-top: 8px; font-size: 11px; color: #718096;">
+                                Total messages: ${conversation.total_messages} | Type: ${messageType}
+                            </div>
+                        `;
+                        
+                        liveConversations.appendChild(convDiv);
+                    });
+                } else {
+                    liveConversations.innerHTML = `
+                        <div class="conversation-placeholder" style="text-align: center; color: #718096; padding: 40px;">
+                            <i class="fas fa-comments" style="font-size: 3rem; margin-bottom: 15px; opacity: 0.5;"></i>
+                            <p>No conversations yet. Send a test SMS to see the conversation flow here!</p>
+                        </div>
+                    `;
+                }
+                
+                // Update metrics
+                document.getElementById('total-conversations').textContent = data.recent_conversations?.length || 0;
+                document.getElementById('active-users-conv').textContent = data.total_active_users || 0;
+                
+            } catch (error) {
+                console.error('Error refreshing conversations:', error);
+            }
+        }
+
+        function clearConversationHistory() {
+            if (confirm('Are you sure you want to clear all conversation history? This cannot be undone.')) {
+                // In a real implementation, this would call an API endpoint
+                showToast('Conversation history cleared (demo mode)', 'warning');
+                
+                // Clear the displays
+                document.getElementById('conversation-details').innerHTML = '';
+                document.getElementById('live-conversations').innerHTML = `
+                    <div class="conversation-placeholder" style="text-align: center; color: #718096; padding: 40px;">
+                        <i class="fas fa-comments" style="font-size: 3rem; margin-bottom: 15px; opacity: 0.5;"></i>
+                        <p>Conversation history cleared. Send a test SMS to start new conversations!</p>
+                    </div>
+                `;
+            }
+        }
+
+        let autoConvRefresh = false;
+        let convRefreshInterval;
+
+        function enableAutoRefreshConversations() {
+            autoConvRefresh = !autoConvRefresh;
+            const btn = document.getElementById('auto-conv-text');
+            
+            if (autoConvRefresh) {
+                convRefreshInterval = setInterval(refreshConversations, 5000); // Every 5 seconds
+                btn.textContent = 'Disable Auto-refresh';
+                showToast('Auto-refresh enabled for conversations (5s interval)');
+            } else {
+                clearInterval(convRefreshInterval);
+                btn.textContent = 'Enable Auto-refresh';
+                showToast('Auto-refresh disabled for conversations');
+            }
         }
 
         // Utility Functions
