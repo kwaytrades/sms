@@ -61,86 +61,83 @@ class OpenAIService:
                 response = self.client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=messages,
-                    max_tokens=500,
+                    max_tokens=120,  # ~450 characters = 3 SMS segments
                     temperature=0.7
                 )
-                return response.choices[0].message.content.strip()
+                ai_response = response.choices[0].message.content.strip()
             else:
                 # Legacy OpenAI API
                 response = await self.client.ChatCompletion.acreate(
                     model="gpt-4o-mini",
                     messages=messages,
-                    max_tokens=500,
+                    max_tokens=120,  # ~450 characters = 3 SMS segments
                     temperature=0.7
                 )
-                return response.choices[0].message.content.strip()
+                ai_response = response.choices[0].message.content.strip()
+            
+            # Enforce cost-optimized limits
+            if len(ai_response) > 450:
+                ai_response = ai_response[:447] + "..."
+            
+            # Smart emoji optimization for SMS costs
+            ai_response = self._optimize_sms_cost(ai_response)
+            
+            return ai_response
             
         except Exception as e:
             logger.error(f"❌ OpenAI generation failed: {e}")
             return self._get_smart_fallback_response(user_query)
     
+    def _optimize_sms_cost(self, message: str) -> str:
+        """Optimize message for SMS cost efficiency"""
+        import re
+        
+        # If message is short enough, allow minimal emoji for engagement
+        if len(message) <= 65:  # Leave room for one emoji
+            # Only allow one emoji at the end for short messages
+            if not re.search(r'[^\x00-\x7F]', message):  # No emojis present
+                # Add single emoji for engagement on short messages
+                if any(word in message.lower() for word in ['buy', 'bullish', 'strong', 'growth']):
+                    return message + " 📈"
+                elif any(word in message.lower() for word in ['sell', 'bearish', 'weak', 'decline']):
+                    return message + " 📉"
+                elif any(word in message.lower() for word in ['watch', 'monitor', 'alert']):
+                    return message + " 👀"
+                else:
+                    return message + " 💡"
+            return message
+        
+        # For longer messages, remove all emojis to use cheaper encoding
+        # Remove all emoji/unicode characters
+        message_clean = re.sub(r'[^\x00-\x7F]+', '', message)
+        # Clean up extra spaces
+        message_clean = ' '.join(message_clean.split())
+        
+        return message_clean
+    
     def _get_smart_fallback_response(self, user_query: str) -> str:
-        """Generate intelligent fallback responses when OpenAI fails"""
+        """Generate intelligent fallback responses when OpenAI fails - cost optimized"""
         query_lower = user_query.lower()
         
-        # Stock/trading related queries
+        # Stock/trading related queries - no emojis for longer responses
         if any(word in query_lower for word in ["buy", "sell", "stock", "ticker", "price"]):
-            return """📈 AI temporarily unavailable. Quick trading tips:
-
-• Research before buying/selling
-• Use stop-losses to limit risk
-• Don't invest more than you can lose
-• Check multiple sources for stock info
-
-Try your question again in a few minutes! 🚀"""
+            return """AI offline. Key trading tips: Research thoroughly before buying/selling, use stop-losses to limit downside risk, never invest more than you can afford to lose, check multiple sources for stock data. Try your question again in a few minutes!"""
         
         # Market analysis queries
         elif any(word in query_lower for word in ["market", "analysis", "trend", "outlook"]):
-            return """📊 Market analysis temporarily offline.
-
-General guidance:
-• Focus on long-term trends over daily noise
-• Diversify your portfolio across sectors
-• Stay updated with financial news
-• Consider your risk tolerance
-
-I'll be back with full analysis soon! 💪"""
+            return """Market analysis temporarily down. Focus on long-term trends over daily noise, diversify your portfolio across sectors, stay updated with financial news, consider your personal risk tolerance. Full analysis returning soon!"""
         
         # Crypto queries
         elif any(word in query_lower for word in ["bitcoin", "crypto", "btc", "eth", "ethereum"]):
-            return """₿ Crypto insights temporarily down.
-
-Remember:
-• Crypto is highly volatile
-• Only invest what you can afford to lose
-• Do your own research (DYOR)
-• Consider dollar-cost averaging
-
-Full crypto analysis returning soon! ⚡"""
+            return """Crypto insights offline. Remember: crypto is highly volatile, only invest what you can afford to lose, do your own research (DYOR), consider dollar-cost averaging for major coins. Full crypto analysis back soon!"""
         
         # Portfolio queries
         elif any(word in query_lower for word in ["portfolio", "allocation", "diversification"]):
-            return """💼 Portfolio analysis temporarily unavailable.
-
-Basic principles:
-• Diversify across asset classes
-• Rebalance regularly
-• Match investments to your goals
-• Review and adjust quarterly
-
-Detailed portfolio help coming back online! 📋"""
+            return """Portfolio analysis offline. Key principles: diversify across asset classes & geographies, rebalance quarterly, match investments to your goals & timeline, review performance regularly. Detailed help returning!"""
         
-        # General trading questions
+        # Short general response - can use emoji
         else:
-            return """🤖 AI trading assistant temporarily offline.
-
-While I recover:
-• Use /help for available commands
-• Check reputable financial news sites
-• Consult with licensed financial advisors
-• Practice good risk management
-
-I'll be back with smart insights soon! 🔧"""
+            return """AI temporarily offline. Use /help for commands. Back soon! 🔧"""
     
     def _build_personalized_prompt(
         self, 
@@ -164,25 +161,28 @@ I'll be back with smart insights soon! 🔧"""
         else:
             style = "balanced between technical accuracy and accessibility"
         
-        # Determine response length
-        length = "concise (under 160 characters)" if message_length < 50 else "detailed but focused"
+        # Determine response length - optimize for SMS cost efficiency
+        length = "detailed but concise (under 450 characters - max 3 SMS segments)" if message_length < 50 else "comprehensive but focused (under 450 characters - max 3 SMS segments)"
         
         system_prompt = f"""You are a personalized trading assistant. Your communication style should be {style} and {length}.
+
+IMPORTANT SMS COST RULES:
+- Keep responses under 450 characters for cost efficiency
+- AVOID emojis unless response is under 70 characters (saves 50% SMS costs)
+- Use clear, professional language without emoji decoration
+- Focus on valuable trading insights and context
 
 User Profile:
 - Plan: {user_profile.get('plan_type', 'free')}
 - Experience: {user_profile.get('trading_experience', 'intermediate')}
 - Risk tolerance: {user_profile.get('risk_tolerance', 'medium')}
-- Preferred sectors: {', '.join(user_profile.get('preferred_sectors', []))}
-- Trading style: {user_profile.get('trading_style', 'swing')}
 
 Always:
-- Match their communication style preferences
-- Reference their portfolio/watchlist when relevant
-- Provide actionable insights
-- Include appropriate risk warnings
-- Use their preferred level of technical detail
-- Keep responses under 1500 characters for SMS compatibility
+- Give actionable trading insights with context
+- Include relevant risk warnings
+- Use efficient but professional language
+- NO emojis unless message is very short (under 70 chars)
+- Prioritize value and clarity
 """
         
         user_prompt = f"User query: {user_query}"
