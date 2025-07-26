@@ -306,24 +306,49 @@ async def root():
 
 @app.get("/health")
 async def health_check():
+    """Comprehensive health check - FIXED VERSION"""
     try:
-        # Get runtime requirements validation
-        validation = settings.validate_runtime_requirements()
-        
-        return {
-            "status": "healthy" if validation["ready_for_production"] or settings.testing_mode else "degraded",
+        health_status = {
+            "status": "healthy",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "environment": settings.environment,
-            "testing_mode": settings.testing_mode,
-            "services": {
-                "database": "connected" if db_service and db_service.db else "disconnected",
-                "redis": "connected" if db_service and db_service.redis else "disconnected",
-                "message_handler": "active" if message_handler else "inactive",
-                "weekly_scheduler": "active" if scheduler_task and not scheduler_task.done() else "inactive"
-            },
-            "capabilities": settings.get_capability_summary(),
-            "validation": validation,
-            "uptime": metrics.get_metrics()["uptime"]
+            "version": "1.0.0"
         }
+        
+        # Check database health - FIXED
+        if db_service is not None:
+            try:
+                # Test actual database connection
+                await db_service.db.command("ping")
+                health_status["database"] = {
+                    "mongodb": {"status": "connected"},
+                    "redis": {"status": "connected" if db_service.redis is not None else "not_configured"}
+                }
+            except Exception as e:
+                health_status["database"] = {
+                    "mongodb": {"status": "error", "error": str(e)},
+                    "redis": {"status": "unknown"}
+                }
+        else:
+            health_status["database"] = {
+                "mongodb": {"status": "not_initialized"},
+                "redis": {"status": "not_initialized"}
+            }
+        
+        # Check service availability - FIXED
+        health_status["services"] = {
+            "database": "available" if db_service is not None else "unavailable",
+            "openai": "available" if openai_service is not None else "unavailable", 
+            "twilio": "available" if twilio_service is not None else "unavailable",
+            "message_handler": "available" if message_handler is not None else "unavailable"
+        }
+        
+        # Overall health determination
+        critical_services_ok = db_service is not None
+        health_status["overall_status"] = "healthy" if critical_services_ok else "degraded"
+        
+        return health_status
+        
     except Exception as e:
         logger.error(f"Health check error: {e}")
         return JSONResponse(
@@ -331,15 +356,15 @@ async def health_check():
             content={
                 "status": "error",
                 "error": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "services": {
                     "database": "unknown",
-                    "redis": "unknown",
+                    "redis": "unknown", 
                     "message_handler": "unknown",
                     "weekly_scheduler": "unknown"
                 }
             }
         )
-
 # ===== SMS WEBHOOK ENDPOINTS =====
 
 @app.post("/webhook/sms")
