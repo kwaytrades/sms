@@ -477,8 +477,8 @@ async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
         # Store the incoming message immediately
         store_conversation(from_number, message_body)
         
-        # Generate a mock bot response for demo purposes
-        bot_response = generate_mock_response(message_body)
+        # Generate real bot response using your services
+        bot_response = await generate_real_response(message_body, from_number)
         
         # Store the bot response
         store_conversation(from_number, message_body, bot_response)
@@ -491,7 +491,7 @@ async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
                 message_body
             )
         else:
-            logger.warning("Message handler not available - using mock response")
+            logger.info("Message handler not available - used direct response generation")
         
         # Return empty TwiML response
         return PlainTextResponse(
@@ -502,6 +502,180 @@ async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
     except Exception as e:
         logger.error(f"❌ SMS webhook error: {e}")
         return PlainTextResponse("Internal error", status_code=500)
+
+async def generate_real_response(user_message: str, phone_number: str) -> str:
+    """Generate real bot response using EODHD + OpenAI integration"""
+    try:
+        # Extract intent and symbols from message
+        intent_result = analyze_message_intent(user_message)
+        
+        # If we have symbols and it's a stock query, get real technical analysis
+        if intent_result["symbols"] and intent_result["intent"] in ["analyze", "price", "technical"]:
+            symbol = intent_result["symbols"][0]
+            
+            # Call your technical analysis service
+            ta_data = await fetch_technical_analysis(symbol)
+            
+            if ta_data:
+                # Generate AI response using OpenAI with real data
+                if openai_service:
+                    ai_response = await openai_service.generate_personalized_response(
+                        user_query=user_message,
+                        user_profile={"phone_number": phone_number, "plan_type": "free"},
+                        conversation_history=[],
+                        market_context=ta_data
+                    )
+                    return ai_response
+                else:
+                    # Fallback: Format the technical data nicely
+                    return format_technical_analysis_response(symbol, ta_data)
+        
+        # Handle other intents with OpenAI if available
+        elif openai_service:
+            try:
+                ai_response = await openai_service.generate_personalized_response(
+                    user_query=user_message,
+                    user_profile={"phone_number": phone_number, "plan_type": "free"},
+                    conversation_history=[]
+                )
+                return ai_response
+            except Exception as e:
+                logger.error(f"OpenAI generation failed: {e}")
+                return generate_mock_response(user_message)
+        
+        # Fallback to mock response if no services available
+        return generate_mock_response(user_message)
+        
+    except Exception as e:
+        logger.error(f"Error generating real response: {e}")
+        return generate_mock_response(user_message)
+
+async def fetch_technical_analysis(symbol: str) -> dict:
+    """Fetch real technical analysis from your TA service"""
+    try:
+        # Try to call your technical analysis service
+        ta_service_url = os.getenv('TA_SERVICE_URL', 'https://your-ta-service.onrender.com')
+        
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{ta_service_url}/analysis/{symbol}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                logger.info(f"✅ Got real TA data for {symbol}")
+                return data
+            else:
+                logger.warning(f"TA service returned {response.status_code} for {symbol}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Failed to fetch TA data for {symbol}: {e}")
+        return None
+
+def analyze_message_intent(message: str) -> dict:
+    """Analyze message intent and extract symbols"""
+    message_lower = message.lower()
+    symbols = []
+    intent = "general"
+    
+    # Extract stock symbols (1-5 letter uppercase words)
+    import re
+    potential_symbols = re.findall(r'\b[A-Z]{1,5}\b', message.upper())
+    # Filter common words that aren't symbols
+    exclude_words = {'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'HER', 'WAS', 'ONE', 'OUR', 'HAD', 'BY', 'DO', 'GET', 'MAY', 'NEW', 'NOW', 'OLD', 'SEE', 'WAY', 'WHO', 'BOY', 'DID', 'ITS', 'LET', 'PUT', 'SAY', 'SHE', 'TOO', 'USE', 'HOW', 'WHAT', 'WHEN', 'WHERE', 'WHY'}
+    symbols = [s for s in potential_symbols if s not in exclude_words and len(s) >= 2]
+    
+    # Determine intent
+    if any(word in message_lower for word in ['price', 'cost', 'trading at', 'current', 'quote']):
+        intent = 'price'
+    elif any(word in message_lower for word in ['analyze', 'analysis', 'look at', 'check', 'how is', 'what about']):
+        intent = 'analyze'
+    elif any(word in message_lower for word in ['rsi', 'macd', 'support', 'resistance', 'technical', 'indicators']):
+        intent = 'technical'
+    elif any(word in message_lower for word in ['find', 'search', 'screen', 'discover', 'recommend', 'good stocks']):
+        intent = 'screener'
+    elif any(word in message_lower for word in ['news', 'updates', 'happened', 'events', 'earnings']):
+        intent = 'news'
+    elif any(word in message_lower for word in ['help', 'commands', 'start', 'hello']):
+        intent = 'help'
+    elif any(word in message_lower for word in ['upgrade', 'plans', 'subscription']):
+        intent = 'upgrade'
+    
+    return {
+        "intent": intent,
+        "symbols": symbols,
+        "confidence": 0.8 if symbols else 0.6
+    }
+
+def format_technical_analysis_response(symbol: str, ta_data: dict) -> str:
+    """Format technical analysis data into a readable SMS response"""
+    try:
+        # Extract key data points
+        price_info = ta_data.get('last_price', 'N/A')
+        change_info = ta_data.get('price_change', {})
+        technical = ta_data.get('technical_indicators', {})
+        support_levels = ta_data.get('support_levels', [])
+        resistance_levels = ta_data.get('resistance_levels', [])
+        signals = ta_data.get('signals', [])
+        
+        # Build response
+        response_parts = []
+        
+        # Price header
+        if price_info != 'N/A':
+            change_pct = change_info.get('percent', 0)
+            direction = "↑" if change_pct > 0 else "↓" if change_pct < 0 else "→"
+            response_parts.append(f"📊 {symbol}: ${price_info} {direction}{abs(change_pct):.1f}%")
+        else:
+            response_parts.append(f"📊 {symbol} Analysis:")
+        
+        # Technical indicators
+        rsi_data = technical.get('rsi', {})
+        if rsi_data:
+            rsi_val = rsi_data.get('value', 0)
+            rsi_signal = rsi_data.get('signal', 'neutral')
+            response_parts.append(f"RSI: {rsi_val:.0f} ({rsi_signal.title()})")
+        
+        macd_data = technical.get('macd', {})
+        if macd_data:
+            macd_trend = macd_data.get('trend', 'neutral')
+            response_parts.append(f"MACD: {macd_trend.title()}")
+        
+        # Support/Resistance
+        if support_levels and resistance_levels:
+            support = support_levels[0] if support_levels else 'N/A'
+            resistance = resistance_levels[0] if resistance_levels else 'N/A'
+            response_parts.append(f"Support: ${support:.2f} | Resistance: ${resistance:.2f}")
+        
+        # Trading signals
+        if signals:
+            bullish_signals = [s for s in signals if s.get('type') in ['bullish', 'opportunity']]
+            bearish_signals = [s for s in signals if s.get('type') in ['bearish', 'warning']]
+            
+            if bullish_signals:
+                response_parts.append(f"✅ {bullish_signals[0].get('message', 'Bullish signal detected')}")
+            elif bearish_signals:
+                response_parts.append(f"⚠️ {bearish_signals[0].get('message', 'Bearish signal detected')}")
+        
+        # Data source indicator
+        data_source = ta_data.get('data_source', 'live')
+        cache_status = ta_data.get('cache_status', 'fresh')
+        source_indicator = "⚡" if cache_status == 'hit' else "📡"
+        
+        response = "\n".join(response_parts)
+        if len(response) > 140:  # Keep under SMS limit
+            # Truncate to most important info
+            response = response_parts[0]
+            if len(response_parts) > 1:
+                response += f"\n{response_parts[1]}"
+            if len(response_parts) > 2 and len(response) < 100:
+                response += f"\n{response_parts[2]}"
+        
+        return f"{response} {source_indicator}"
+        
+    except Exception as e:
+        logger.error(f"Error formatting TA response: {e}")
+        return f"📊 {symbol} - Technical analysis available. Data formatting error occurred."
 
 def generate_mock_response(user_message: str) -> str:
     """Generate a mock bot response for testing"""
@@ -734,8 +908,8 @@ async def test_sms_with_response(request: Request):
         user_message_timestamp = datetime.now().isoformat()
         store_conversation(from_number, message_body)
         
-        # Generate bot response
-        bot_response = generate_mock_response(message_body)
+        # Generate bot response using real services
+        bot_response = await generate_real_response(message_body, from_number)
         
         # Store bot response
         store_conversation(from_number, message_body, bot_response)
@@ -825,6 +999,142 @@ async def get_metrics():
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+# ===== EODHD INTEGRATION ENDPOINTS FOR TESTING =====
+
+@app.get("/debug/test-ta/{symbol}")
+async def test_technical_analysis(symbol: str):
+    """Test the technical analysis integration"""
+    try:
+        ta_data = await fetch_technical_analysis(symbol.upper())
+        
+        if ta_data:
+            # Test formatting the response
+            formatted_response = format_technical_analysis_response(symbol.upper(), ta_data)
+            
+            return {
+                "symbol": symbol.upper(),
+                "ta_service_connected": True,
+                "raw_ta_data": ta_data,
+                "formatted_sms_response": formatted_response,
+                "data_source": ta_data.get('data_source', 'unknown'),
+                "cache_status": ta_data.get('cache_status', 'unknown')
+            }
+        else:
+            return {
+                "symbol": symbol.upper(),
+                "ta_service_connected": False,
+                "error": "No data received from TA service",
+                "fallback_used": True
+            }
+            
+    except Exception as e:
+        return {
+            "symbol": symbol.upper(),
+            "ta_service_connected": False,
+            "error": str(e),
+            "fallback_used": True
+        }
+
+@app.get("/debug/test-openai")
+async def test_openai_integration():
+    """Test OpenAI service integration"""
+    try:
+        if not openai_service:
+            return {
+                "openai_available": False,
+                "error": "OpenAI service not initialized",
+                "reason": "Missing OpenAI API key or service not loaded"
+            }
+        
+        # Test a simple query
+        test_response = await openai_service.generate_personalized_response(
+            user_query="How is AAPL doing?",
+            user_profile={"plan_type": "free", "trading_experience": "intermediate"},
+            conversation_history=[]
+        )
+        
+        return {
+            "openai_available": True,
+            "test_query": "How is AAPL doing?",
+            "ai_response": test_response,
+            "response_length": len(test_response),
+            "service_working": True
+        }
+        
+    except Exception as e:
+        return {
+            "openai_available": False,
+            "error": str(e),
+            "service_working": False
+        }
+
+@app.get("/debug/test-full-flow/{symbol}")
+async def test_full_integration_flow(symbol: str):
+    """Test the complete integration flow: TA + OpenAI"""
+    try:
+        # Step 1: Test TA service
+        ta_data = await fetch_technical_analysis(symbol.upper())
+        ta_working = ta_data is not None
+        
+        # Step 2: Test OpenAI with TA data
+        if openai_service and ta_data:
+            ai_response = await openai_service.generate_personalized_response(
+                user_query=f"How is {symbol.upper()} doing?",
+                user_profile={"plan_type": "free", "trading_experience": "intermediate"},
+                conversation_history=[],
+                market_context=ta_data
+            )
+            ai_working = True
+        else:
+            ai_response = "OpenAI service not available or no TA data"
+            ai_working = False
+        
+        # Step 3: Test fallback formatting
+        fallback_response = format_technical_analysis_response(symbol.upper(), ta_data) if ta_data else "No TA data for fallback"
+        
+        return {
+            "symbol": symbol.upper(),
+            "integration_test": {
+                "ta_service": {
+                    "working": ta_working,
+                    "data_points": len(ta_data) if ta_data else 0,
+                    "has_price": 'last_price' in (ta_data or {}),
+                    "has_indicators": 'technical_indicators' in (ta_data or {}),
+                    "has_signals": 'signals' in (ta_data or {})
+                },
+                "openai_service": {
+                    "working": ai_working,
+                    "response_length": len(ai_response) if ai_response else 0,
+                    "has_api_key": bool(openai_service)
+                }
+            },
+            "responses": {
+                "ai_enhanced": ai_response if ai_working else None,
+                "formatted_fallback": fallback_response,
+                "raw_ta_data": ta_data
+            },
+            "recommendation": self._get_integration_recommendation(ta_working, ai_working)
+        }
+        
+    except Exception as e:
+        return {
+            "symbol": symbol.upper(),
+            "integration_test": "failed",
+            "error": str(e),
+            "recommendation": "Check your environment variables and service connections"
+        }
+
+def _get_integration_recommendation(ta_working: bool, ai_working: bool) -> str:
+    """Get recommendation based on integration test results"""
+    if ta_working and ai_working:
+        return "✅ Full integration working! Real-time TA data + AI analysis active."
+    elif ta_working and not ai_working:
+        return "⚠️ TA service working but OpenAI unavailable. Check OPENAI_API_KEY environment variable."
+    elif not ta_working and ai_working:
+        return "⚠️ OpenAI working but TA service unavailable. Check TA_SERVICE_URL environment variable."
+    else:
+        return "❌ Both services unavailable. Using mock responses. Check environment variables."
 
 # ===== DEBUG ENDPOINTS =====
 
@@ -1417,6 +1727,30 @@ async def comprehensive_dashboard():
                     <div id="conversation-history"></div>
                 </div>
 
+                <!-- Integration Testing -->
+                <div class="card">
+                    <h3><i class="fas fa-link card-icon"></i>Service Integration Testing</h3>
+                    <div class="form-group">
+                        <label>Stock Symbol:</label>
+                        <input type="text" id="integration-symbol" value="AAPL" placeholder="AAPL">
+                    </div>
+                    <div class="quick-actions">
+                        <button class="btn btn-small" onclick="testTechnicalAnalysis()">
+                            <i class="fas fa-chart-line"></i> Test TA Service
+                        </button>
+                        <button class="btn btn-small" onclick="testOpenAI()">
+                            <i class="fas fa-robot"></i> Test OpenAI
+                        </button>
+                        <button class="btn btn-small btn-success" onclick="testFullIntegration()">
+                            <i class="fas fa-cogs"></i> Test Full Flow
+                        </button>
+                        <button class="btn btn-small btn-warning" onclick="checkServiceStatus()">
+                            <i class="fas fa-heartbeat"></i> Service Status
+                        </button>
+                    </div>
+                    <div id="integration-result" class="result-box"></div>
+                </div>
+
                 <!-- System Health -->
                 <div class="card">
                     <h3><i class="fas fa-heartbeat card-icon"></i>System Health</h3>
@@ -1829,6 +2163,113 @@ async def comprehensive_dashboard():
                     "timestamp": new Date().toLocaleString()
                 }, true);
                 showToast('SMS failed to send', 'error');
+            }
+        }
+
+        // Integration Testing Functions
+        async function testTechnicalAnalysis() {
+            showLoading('integration-result');
+            try {
+                const symbol = document.getElementById('integration-symbol').value || 'AAPL';
+                const data = await apiCall(`/debug/test-ta/${symbol}`);
+                showResult('integration-result', data);
+                
+                if (data.ta_service_connected) {
+                    showToast(`✅ TA Service working for ${symbol}!`);
+                } else {
+                    showToast(`❌ TA Service failed for ${symbol}`, 'error');
+                }
+            } catch (error) {
+                showResult('integration-result', { error: error.message }, true);
+                showToast('TA Service test failed', 'error');
+            }
+        }
+
+        async function testOpenAI() {
+            showLoading('integration-result');
+            try {
+                const data = await apiCall('/debug/test-openai');
+                showResult('integration-result', data);
+                
+                if (data.openai_available) {
+                    showToast('✅ OpenAI Service working!');
+                } else {
+                    showToast('❌ OpenAI Service unavailable', 'error');
+                }
+            } catch (error) {
+                showResult('integration-result', { error: error.message }, true);
+                showToast('OpenAI test failed', 'error');
+            }
+        }
+
+        async function testFullIntegration() {
+            showLoading('integration-result');
+            try {
+                const symbol = document.getElementById('integration-symbol').value || 'AAPL';
+                const data = await apiCall(`/debug/test-full-flow/${symbol}`);
+                showResult('integration-result', data);
+                
+                const taWorking = data.integration_test?.ta_service?.working;
+                const aiWorking = data.integration_test?.openai_service?.working;
+                
+                if (taWorking && aiWorking) {
+                    showToast('🚀 Full integration working perfectly!');
+                } else if (taWorking || aiWorking) {
+                    showToast('⚠️ Partial integration working', 'warning');
+                } else {
+                    showToast('❌ Integration not working', 'error');
+                }
+                
+                // Update status in the recommendation
+                if (data.recommendation) {
+                    setTimeout(() => {
+                        showToast(data.recommendation, taWorking && aiWorking ? 'success' : 'warning');
+                    }, 2000);
+                }
+            } catch (error) {
+                showResult('integration-result', { error: error.message }, true);
+                showToast('Full integration test failed', 'error');
+            }
+        }
+
+        async function checkServiceStatus() {
+            showLoading('integration-result');
+            try {
+                // Check multiple service endpoints
+                const [health, config, taTest] = await Promise.all([
+                    apiCall('/health').catch(e => ({error: e.message})),
+                    apiCall('/debug/config').catch(e => ({error: e.message})),
+                    apiCall('/debug/test-ta/AAPL').catch(e => ({error: e.message}))
+                ]);
+                
+                const serviceStatus = {
+                    "🏥 HEALTH CHECK": {
+                        "status": health.status || "error",
+                        "services": health.services || {},
+                        "environment": health.environment || "unknown"
+                    },
+                    "⚙️ CONFIGURATION": {
+                        "testing_mode": config.testing_mode,
+                        "capabilities": config.capabilities || {},
+                        "validation": config.validation || {}
+                    },
+                    "📊 TA SERVICE": {
+                        "connected": taTest.ta_service_connected || false,
+                        "url": process.env.TA_SERVICE_URL || "not_set",
+                        "error": taTest.error || null
+                    },
+                    "🔑 ENVIRONMENT VARS": {
+                        "OPENAI_API_KEY": "Set" if health.services?.openai === 'available' else "Missing",
+                        "TA_SERVICE_URL": "Set" if config.capabilities?.ta_enabled else "Missing",
+                        "MONGODB_URL": "Set" if health.services?.database === 'available' else "Missing"
+                    }
+                };
+                
+                showResult('integration-result', serviceStatus);
+                showToast('Service status check completed');
+            } catch (error) {
+                showResult('integration-result', { error: error.message }, true);
+                showToast('Service status check failed', 'error');
             }
         }
 
