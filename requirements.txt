@@ -27,6 +27,7 @@ numpy==1.25.2
 
 # Missing dependency that caused your deployment error
 pydantic-settings==2.1.0
+aioredis==2.0.1
 
 # Optional development tools
 pytest==7.4.3
