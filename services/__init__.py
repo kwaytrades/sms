@@ -1,16 +1,15 @@
-# ===== services/__init__.py =====
+# services/__init__.py
 from .database import DatabaseService
 from .openai_service import OpenAIService
-from .stripe_service import StripeService
+from .technical_analysis import TechnicalAnalysisService
 from .twilio_service import TwilioService
-from .plaid_service import PlaidService
-from .eodhd_service import EODHDService
+from .llm_agent import TradingAgent, ToolExecutor
 
 __all__ = [
     "DatabaseService",
     "OpenAIService", 
-    "StripeService",
+    "TechnicalAnalysisService",
     "TwilioService",
-    "PlaidService",
-    "EODHDService"
+    "TradingAgent",
+    "ToolExecutor"
 ]
