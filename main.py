@@ -529,76 +529,103 @@ ta_service = None  # Integrated TA service
 trading_agent = None  # Hybrid LLM agent
 tool_executor = None  # Tool execution engine
 
+# Add this to your lifespan function in main.py
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    global db_service, openai_service, twilio_service, message_handler, scheduler_task, ta_service
-    global trading_agent, tool_executor
+    """Application lifespan - startup and shutdown"""
+    global db_service, openai_service, twilio_service, message_handler, ta_service, trading_agent, tool_executor
     
     logger.info("🚀 Starting SMS Trading Bot with Hybrid LLM Agent...")
     
     try:
-        # Initialize services
+        # Initialize Database Service
         if DatabaseService:
-            db_service = DatabaseService()
-            await db_service.initialize()
+            try:
+                db_service = DatabaseService()
+                await db_service.initialize()
+                logger.info("✅ Database service initialized")
+            except Exception as e:
+                logger.error(f"❌ Database service failed: {e}")
+                db_service = None
         
+        # Initialize OpenAI Service
         if OpenAIService:
-            openai_service = OpenAIService()
+            try:
+                openai_service = OpenAIService()
+                logger.info("✅ OpenAI service initialized")
+            except Exception as e:
+                logger.error(f"❌ OpenAI service failed: {e}")
+                openai_service = None
         
+        # Initialize Twilio Service
         if TwilioService:
-            twilio_service = TwilioService()
+            try:
+                twilio_service = TwilioService()
+                logger.info("✅ Twilio service initialized")
+            except Exception as e:
+                logger.error(f"❌ Twilio service failed: {e}")
+                twilio_service = None
         
-        # Initialize integrated TA service
+        # Initialize Technical Analysis Service
         if TechnicalAnalysisService:
-            ta_service = TechnicalAnalysisService()
-            await ta_service.initialize(cache_manager=db_service)
-            logger.info("✅ Integrated Technical Analysis Service initialized")
+            try:
+                ta_service = TechnicalAnalysisService()
+                logger.info("✅ Technical Analysis service initialized")
+            except Exception as e:
+                logger.error(f"❌ Technical Analysis service failed: {e}")
+                ta_service = None
         
-        # Initialize hybrid LLM agent system
+        # Initialize Message Handler
+        if MessageHandler:
+            try:
+                message_handler = MessageHandler(
+                    db_service=db_service,
+                    openai_service=openai_service,
+                    ta_service=ta_service,
+                    personality_engine=personality_engine
+                )
+                logger.info("✅ Message handler initialized")
+            except Exception as e:
+                logger.error(f"❌ Message handler failed: {e}")
+                message_handler = None
+        
+        # Initialize Trading Agent (if OpenAI available)
         if TradingAgent and openai_service:
-            trading_agent = TradingAgent(
-                openai_client=openai_service.client,
-                personality_engine=personality_engine
-            )
-            
-            tool_executor = ToolExecutor(
-                ta_service=ta_service,
-                portfolio_service=None,  # Add when implemented
-                screener_service=None    # Add when implemented
-            )
-            
-            logger.info("✅ Hybrid LLM Agent initialized successfully")
-        else:
-            logger.warning("❌ Hybrid LLM Agent not available - falling back to regex parsing")
+            try:
+                trading_agent = TradingAgent(openai_service)
+                logger.info("✅ Trading agent initialized")
+            except Exception as e:
+                logger.error(f"❌ Trading agent failed: {e}")
+                trading_agent = None
         
-        if MessageHandler and db_service and openai_service and twilio_service:
-            message_handler = MessageHandler(db_service, openai_service, twilio_service)
+        # Initialize Tool Executor
+        if ToolExecutor and ta_service:
+            try:
+                tool_executor = ToolExecutor(ta_service)
+                logger.info("✅ Tool executor initialized")
+            except Exception as e:
+                logger.error(f"❌ Tool executor failed: {e}")
+                tool_executor = None
         
-        # Start weekly scheduler
-        if WeeklyScheduler and db_service and twilio_service:
-            scheduler = WeeklyScheduler(db_service, twilio_service)
-            scheduler_task = asyncio.create_task(scheduler.start_scheduler())
-            logger.info("📅 Weekly scheduler started")
+        logger.info("✅ SMS Trading Bot startup completed")
         
-        logger.info("✅ SMS Trading Bot with Hybrid LLM Agent started successfully")
+        yield  # Application runs here
         
     except Exception as e:
         logger.error(f"❌ Startup failed: {e}")
-        if not settings.testing_mode:
-            raise
+        yield  # Still yield even if startup fails
     
-    yield
-    
-    # Shutdown
-    logger.info("🛑 Shutting down SMS Trading Bot...")
-    if scheduler_task:
-        scheduler_task.cancel()
-        logger.info("📅 Weekly scheduler stopped")
-    if ta_service:
-        await ta_service.close()
-    if db_service:
-        await db_service.close()
+    finally:
+        # Shutdown
+        logger.info("🛑 Shutting down SMS Trading Bot...")
+        
+        # Close database connections
+        if db_service and hasattr(db_service, 'mongo_client'):
+            if db_service.mongo_client:
+                db_service.mongo_client.close()
+        
+        logger.info("✅ Shutdown complete")
     
     # Clear global agents
     trading_agent = None
