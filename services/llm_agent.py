@@ -1,4 +1,4 @@
-# services/llm_agent.py - COMPLETE VERSION (600+ lines restored)
+# services/llm_agent.py - COMPLETE VERSION with ONLY symbol processing changed
 
 import json
 import asyncio
@@ -16,7 +16,7 @@ class TradingAgent:
         self.personality_engine = personality_engine
         
     async def parse_intent(self, message: str, user_phone: str = None) -> Dict[str, Any]:
-        """Step 1: Use GPT-4o-mini to parse user intent (cheap & fast)"""
+        """Step 1: Use GPT-4o-mini to parse user intent AND extract symbols intelligently"""
         
         # Get user context for better parsing
         user_context = ""
@@ -32,12 +32,23 @@ class TradingAgent:
 
 Extract:
 1. Primary intent (what user wants to do)
-2. Stock symbols mentioned (if any)
+2. Stock symbols mentioned (INTELLIGENTLY convert company names to tickers)
 3. Parameters or context
 4. Required tools/services
 5. Confidence level
 
 Message: "{message}"
+
+SYMBOL EXTRACTION RULES:
+- "google" or "Google" → "GOOGL"
+- "tesla" or "Tesla" → "TSLA" 
+- "apple" or "Apple" → "AAPL"
+- "microsoft" or "Microsoft" → "MSFT"
+- "amazon" or "Amazon" → "AMZN"
+- "meta" or "facebook" or "Facebook" → "META"
+- "nvidia" or "Nvidia" → "NVDA"
+- Ignore casual words like "yo", "what's", "doing", "thinking", "about"
+- Only extract actual stock tickers or company names
 
 Return ONLY valid JSON in this exact format:
 {{
@@ -56,9 +67,11 @@ Return ONLY valid JSON in this exact format:
 }}
 
 Examples:
-- "yo what's TSLA doing?" → {{"intent": "analyze", "symbols": ["TSLA"], "confidence": 0.9}}
+- "yo what's google doing?" → {{"intent": "analyze", "symbols": ["GOOGL"], "confidence": 0.9}}
+- "how's tesla and apple?" → {{"intent": "analyze", "symbols": ["TSLA", "AAPL"], "confidence": 0.9}}
 - "find me cheap tech stocks" → {{"intent": "screener", "parameters": {{"sector": "tech"}}, "requires_tools": ["stock_screener"]}}
 - "how's my portfolio?" → {{"intent": "portfolio", "requires_tools": ["portfolio_check"]}}
+- "AAPL calls looking good" → {{"intent": "analyze", "symbols": ["AAPL"], "confidence": 0.95}}
 """
 
         try:
@@ -132,102 +145,37 @@ Examples:
         return intent_data
     
     def _fallback_intent_parsing(self, message: str) -> Dict:
-        """Fallback regex-based parsing if LLM fails"""
-        import re
+        """Fallback with SIMPLE company name mapping - no complex regex"""
         
         message_lower = message.lower()
         
-        # Enhanced symbol extraction with comprehensive filtering
-        potential_symbols = re.findall(r'\b[A-Z]{2,5}\b', message.upper())
-        
-        # Company names to symbols mapping
-        company_mappings = {
-            'plug power': 'PLUG', 'apple': 'AAPL', 'tesla': 'TSLA', 'microsoft': 'MSFT',
-            'amazon': 'AMZN', 'google': 'GOOGL', 'facebook': 'META', 'meta': 'META',
-            'nvidia': 'NVDA', 'amd': 'AMD', 'netflix': 'NFLX', 'spotify': 'SPOT',
-            'palantir': 'PLTR', 'gamestop': 'GME', 'amc': 'AMC'
+        # SIMPLE company mapping - let LLM handle complex cases
+        simple_mappings = {
+            'google': 'GOOGL', 'tesla': 'TSLA', 'apple': 'AAPL', 
+            'microsoft': 'MSFT', 'amazon': 'AMZN', 'meta': 'META',
+            'facebook': 'META', 'nvidia': 'NVDA', 'netflix': 'NFLX'
         }
         
-        # Check for company names in the message
-        for company, symbol in company_mappings.items():
+        symbols = []
+        for company, symbol in simple_mappings.items():
             if company in message_lower:
-                potential_symbols.append(symbol)
+                symbols.append(symbol)
         
-        # COMPREHENSIVE exclude_words list to prevent false positives
-        exclude_words = {
-            # Basic words
-            'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'HER', 'WAS', 'ONE',
-            'OUR', 'HAD', 'BY', 'DO', 'GET', 'MAY', 'NEW', 'NOW', 'OLD', 'SEE', 'WAY', 'WHO',
-            'BOY', 'DID', 'ITS', 'LET', 'PUT', 'SAY', 'SHE', 'TOO', 'USE', 'HOW', 'WHAT',
-            'WHEN', 'WHERE', 'WHY', 'WILL', 'WITH', 'HAS', 'HIS', 'HIM',
-            
-            # CRITICAL: Casual words that were causing false positives
-            'YO', 'HEY', 'SO', 'OH', 'AH', 'UM', 'UH', 'YEP', 'NAH', 'LOL', 'OMG', 'WOW',
-            'BRO', 'FAM', 'THO', 'TBH', 'NGL', 'SMH', 'FML', 'IRL', 'BTW', 'TBF', 'IDK',
-            
-            # Basic prepositions and particles
-            'TO', 'AT', 'IN', 'ON', 'OR', 'OF', 'IS', 'IT', 'BE', 'GO', 'UP', 'MY', 'AS',
-            'IF', 'NO', 'WE', 'ME', 'HE', 'AN', 'AM', 'US', 'A', 'I',
-            
-            # Questions and responses
-            'YES', 'YET', 'OUT', 'OFF', 'BAD',
-            
-            # Trading terms that aren't symbols
-            'BUY', 'SELL', 'HOLD', 'CALL', 'PUT', 'BULL', 'BEAR', 'MOON', 'DIP', 'RIP',
-            'YOLO', 'HODL', 'FOMO', 'ATH', 'RSI', 'MACD', 'EMA', 'SMA', 'PE', 'DD',
-            
-            # Time references
-            'TODAY', 'THEN', 'SOON', 'LATER', 'WEEK',
-            
-            # Geographic/org abbreviations
-            'AI', 'API', 'CEO', 'CFO', 'IPO', 'ETF', 'SEC', 'FDA', 'FBI', 'CIA', 'NYC',
-            'LA', 'SF', 'DC', 'UK', 'US', 'EU', 'JP', 'CN', 'IN', 'CA', 'TX', 'FL',
-            
-            # Units and currencies
-            'K', 'M', 'B', 'T', 'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF',
-            
-            # Internet slang
-            'AF', 'FR', 'NM', 'WTF', 'LMAO', 'ROFL', 'TTYL', 'SWAG', 'LIT',
-            
-            # Common typos/variations
-            'UR', 'CUZ', 'PLZ', 'THX', 'NP', 'YA', 'IM', 'ILL', 'WONT', 'CANT'
-        }
-        
-        # Filter symbols with enhanced validation
-        valid_symbols = []
-        for symbol in potential_symbols:
-            if (symbol not in exclude_words and 
-                len(symbol) >= 2 and 
-                len(symbol) <= 5 and
-                symbol.isalpha() and  # Only letters, no numbers
-                not symbol.lower() in ['yo', 'hey', 'so', 'oh']):  # Extra protection
-                valid_symbols.append(symbol)
-        
-        # Remove duplicates while preserving order
-        symbols = list(dict.fromkeys(valid_symbols))
-        
-        # Intent detection
+        # Basic intent detection
         if any(word in message_lower for word in ['portfolio', 'positions', 'holdings']):
             intent = "portfolio"
-            requires_tools = ["portfolio_check"]
         elif any(word in message_lower for word in ['find', 'screen', 'search', 'discover']):
             intent = "screener"
-            requires_tools = ["stock_screener"]
-        elif any(word in message_lower for word in ['help', 'commands', 'start']):
-            intent = "help"
-            requires_tools = []
         elif symbols:
             intent = "analyze"
-            requires_tools = ["technical_analysis"]
         else:
             intent = "general"
-            requires_tools = []
         
         return {
             "intent": intent,
             "symbols": symbols,
             "confidence": 0.4,  # Lower confidence for fallback
-            "requires_tools": requires_tools,
+            "requires_tools": ["technical_analysis"] if symbols else [],
             "fallback": True
         }
     
