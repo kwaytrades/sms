@@ -1,4 +1,5 @@
-# ===== services/twilio_service.py - MINIMAL VERSION =====
+# services/twilio_service.py
+from twilio.rest import Client
 from loguru import logger
 from config import settings
 
@@ -7,20 +8,22 @@ class TwilioService:
         self.account_sid = settings.twilio_account_sid
         self.auth_token = settings.twilio_auth_token
         self.from_number = settings.twilio_phone_number
-        logger.info("✅ Twilio service initialized")
+        
+        if self.account_sid and self.auth_token:
+            self.client = Client(self.account_sid, self.auth_token)
+            logger.info("✅ Twilio service initialized")
+        else:
+            self.client = None
+            logger.warning("⚠️ Twilio credentials not configured")
     
-    async def send_sms(self, to_number: str, message: str) -> bool:
+    async def send_message(self, to_number: str, message: str) -> bool:
         """Send SMS message"""
         try:
-            if not self.account_sid or not self.auth_token:
+            if not self.client:
                 logger.warning(f"Twilio not configured - would send to {to_number}: {message}")
-                return True  # Return success in testing mode
+                return True
             
-            # TODO: Implement actual Twilio integration
-            from twilio.rest import Client
-            client = Client(self.account_sid, self.auth_token)
-            
-            message = client.messages.create(
+            message = self.client.messages.create(
                 body=message,
                 from_=self.from_number,
                 to=to_number
