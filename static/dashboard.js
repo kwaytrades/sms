@@ -4,6 +4,7 @@ const BASE_URL = window.location.origin;
 let autoRefresh = false;
 let refreshInterval;
 
+
 // Tab Switching
 function switchTab(tabName) {
     document.querySelectorAll('.tab-content').forEach(tab => {
@@ -25,13 +26,6 @@ function switchTab(tabName) {
     } else if (tabName === 'personality') {
         loadPersonalityAnalytics();
         loadStyleExamples();
-    
-    setInterval(() => {
-        if (autoRefresh) {
-            refreshMetrics();
-        }
-    }, 60000);
-});
     }
 }
 
