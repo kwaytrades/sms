@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import json
 import re
 import random
-
+from dashboard_routes import dashboard_router, static_router, setup_static_files
 # Import configuration
 try:
     from config import settings
@@ -1975,7 +1975,77 @@ async def get_personality_insights(phone_number: str):
         return {"error": str(e)}
 
 # ===== COMPREHENSIVE DASHBOARD (keeping existing HTML) =====
+def setup_dashboard(app):
+    """Setup dashboard routes and static file serving"""
+    
+    # Setup static file serving
+    setup_static_files(app)
+    
+    # Include dashboard routes
+    app.include_router(dashboard_router)
+    app.include_router(static_router)
+    
+    # Legacy route redirects for backwards compatibility
+    @app.get("/dashboard", response_class=RedirectResponse)
+    async def redirect_to_new_dashboard():
+        """Redirect old dashboard route to new location"""
+        return RedirectResponse(url="/dashboard/", status_code=301)
 
+# Call this function after creating your app:
+# setup_dashboard(app)
+
+# Example of what your main.py structure should look like:
+
+"""
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse
+from dashboard_routes import dashboard_router, static_router, setup_static_files
+
+app = FastAPI(title="SMS Trading Bot", version="1.0.0")
+
+# Setup dashboard
+setup_dashboard(app)
+
+# Continue with your existing routes...
+@app.get("/health")
+async def health_check():
+    # Your existing health check code
+    pass
+
+# Remove the old @app.get("/dashboard") route completely
+# The dashboard is now served by dashboard_routes.py
+"""
+
+# Complete integration function to add to main.py:
+def setup_dashboard(app):
+    """
+    Setup dashboard routes and static file serving
+    Call this function after creating your FastAPI app
+    """
+    from pathlib import Path
+    
+    # Ensure directories exist
+    Path("static").mkdir(exist_ok=True)
+    Path("templates").mkdir(exist_ok=True)
+    
+    # Setup static file serving
+    setup_static_files(app)
+    
+    # Include dashboard routes
+    app.include_router(dashboard_router)
+    app.include_router(static_router)
+    
+    # Legacy route redirects for backwards compatibility
+    @app.get("/dashboard", response_class=RedirectResponse)
+    async def redirect_to_new_dashboard():
+        """Redirect old dashboard route to new location"""
+        return RedirectResponse(url="/dashboard/", status_code=301)
+    
+    print("✅ Dashboard setup completed:")
+    print("   📁 Static files: /static/")
+    print("   🎨 Templates: /templates/")
+    print("   🔗 Dashboard: /dashboard/")
+    print("   🧪 Test page: /dashboard/test")
 
 # ===== TEST INTERFACE ENDPOINT =====
 
