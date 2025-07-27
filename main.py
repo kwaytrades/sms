@@ -590,10 +590,20 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan
 )
-# Setup dashboard routes
-setup_static_files(app)
+
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+
+# Create static directory if it doesn't exist
+Path("static").mkdir(exist_ok=True)
+Path("templates").mkdir(exist_ok=True)
+
+# Mount static files BEFORE including routers
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Then setup dashboard routes
+setup_static_files(app)  # This might be redundant now
 app.include_router(dashboard_router)
-app.include_router(static_router)
 # ===== FASTAPI MIDDLEWARE FOR METRICS =====
 
 @app.middleware("http")
