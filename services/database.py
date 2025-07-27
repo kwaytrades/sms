@@ -1,6 +1,6 @@
-# ===== services/database.py =====
+# ===== services/database.py - FIXED REDIS IMPORT =====
 from motor.motor_asyncio import AsyncIOMotorClient
-import redis.asyncio as redis  
+import redis.asyncio as aioredis  # ✅ FIXED: Use correct alias
 from typing import Optional, Dict, List, Any
 from bson import ObjectId
 import json
@@ -25,7 +25,7 @@ class DatabaseService:
             self.mongo_client = AsyncIOMotorClient(settings.mongodb_url)
             self.db = self.mongo_client.ai
             
-            # Redis connection
+            # Redis connection - NOW MATCHES THE IMPORT!
             self.redis = await aioredis.from_url(settings.redis_url)
             
             # Setup indexes
@@ -35,6 +35,7 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"❌ Database initialization failed: {e}")
             raise
+    
     
     async def _setup_indexes(self):
         """Setup database indexes for performance"""
