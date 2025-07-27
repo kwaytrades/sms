@@ -17,6 +17,7 @@ import json
 import re
 import random
 from dashboard_routes import dashboard_router, static_router, setup_static_files
+from fastapi.staticfiles import StaticFiles
 # Import configuration
 try:
     from config import settings
