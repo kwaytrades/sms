@@ -571,42 +571,57 @@ async def lifespan(app: FastAPI):
         if TechnicalAnalysisService:
             try:
                 ta_service = TechnicalAnalysisService()
+                # Note: Don't call initialize() if it requires parameters you don't have
+                # await ta_service.initialize()  # Comment out if causing issues
                 logger.info("✅ Technical Analysis service initialized")
             except Exception as e:
                 logger.error(f"❌ Technical Analysis service failed: {e}")
                 ta_service = None
         
-        # Initialize Message Handler
+        # Initialize Trading Agent (FIXED CONSTRUCTOR CALL)
+        if TradingAgent and openai_service:
+            try:
+                trading_agent = TradingAgent(
+                    openai_client=openai_service.client,  # Fixed: pass the client
+                    personality_engine=personality_engine  # Fixed: pass personality_engine
+                )
+                logger.info("✅ Trading agent initialized")
+            except Exception as e:
+                logger.error(f"❌ Trading agent failed: {e}")
+                trading_agent = None
+        
+        # Initialize Tool Executor (FIXED CONSTRUCTOR CALL) 
+        if ToolExecutor and ta_service:
+            try:
+                tool_executor = ToolExecutor(
+                    ta_service=ta_service,
+                    portfolio_service=None,  # Optional for now
+                    screener_service=None    # Optional for now
+                )
+                logger.info("✅ Tool executor initialized")
+            except Exception as e:
+                logger.error(f"❌ Tool executor failed: {e}")
+                tool_executor = None
+        
+        # Initialize Message Handler (FIXED CONSTRUCTOR CALL)
         if MessageHandler:
             try:
                 message_handler = MessageHandler(
                     db_service=db_service,
-                    openai_service=openai_service,
-                    ta_service=ta_service,
-                    personality_engine=personality_engine
+                    openai_service=openai_service, 
+                    twilio_service=twilio_service
+                    # Removed ta_service parameter that was causing the error
                 )
                 logger.info("✅ Message handler initialized")
             except Exception as e:
                 logger.error(f"❌ Message handler failed: {e}")
                 message_handler = None
         
-        # Initialize Trading Agent (if OpenAI available)
-        if TradingAgent and openai_service:
-            try:
-                trading_agent = TradingAgent(openai_service)
-                logger.info("✅ Trading agent initialized")
-            except Exception as e:
-                logger.error(f"❌ Trading agent failed: {e}")
-                trading_agent = None
-        
-        # Initialize Tool Executor
-        if ToolExecutor and ta_service:
-            try:
-                tool_executor = ToolExecutor(ta_service)
-                logger.info("✅ Tool executor initialized")
-            except Exception as e:
-                logger.error(f"❌ Tool executor failed: {e}")
-                tool_executor = None
+        # Check if hybrid agent is working
+        if trading_agent and tool_executor:
+            logger.info("🎯 Hybrid LLM Agent system ready")
+        else:
+            logger.warning("⚠️ Falling back to regex parsing - hybrid agent unavailable")
         
         logger.info("✅ SMS Trading Bot startup completed")
         
@@ -620,17 +635,17 @@ async def lifespan(app: FastAPI):
         # Shutdown
         logger.info("🛑 Shutting down SMS Trading Bot...")
         
-        # Close database connections
+        # Close services gracefully
+        if hasattr(ta_service, 'close'):
+            await ta_service.close()
+        
         if db_service and hasattr(db_service, 'mongo_client'):
             if db_service.mongo_client:
                 db_service.mongo_client.close()
         
         logger.info("✅ Shutdown complete")
     
-    # Clear global agents
-    trading_agent = None
-    tool_executor = None
-
+  
 app = FastAPI(
     title="SMS Trading Bot",
     description="Hyper-personalized SMS trading insights with Hybrid LLM Agent",
