@@ -1,7 +1,8 @@
-# services/technical_analysis.py - Updated to use EODHD Python Library
+# services/technical_analysis.py - CORRECTED VERSION
 
 import pandas as pd
 import numpy as np
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from loguru import logger
@@ -46,14 +47,15 @@ class TechnicalAnalysisService:
             
             logger.info(f"📈 TA Cache MISS for {symbol} - fetching fresh data")
             
-            # Fetch data using EODHD library
-            market_data = await self._fetch_market_data_eodhd(symbol)
+            # Fetch data using EODHD library (FIXED: removed await)
+            market_data = self._fetch_market_data_eodhd(symbol)
             
             if market_data is None or market_data.empty:
                 logger.error(f"❌ No market data for {symbol}")
                 return {
                     'symbol': symbol,
                     'error': 'No market data available',
+                    'message': f'Unable to fetch data for {symbol}. Please verify the symbol.',
                     'source': 'eodhd_library',
                     'cache_status': 'miss'
                 }
@@ -75,12 +77,13 @@ class TechnicalAnalysisService:
             return {
                 'symbol': symbol,
                 'error': str(e),
+                'message': f'Analysis failed for {symbol}. Please try again.',
                 'source': 'eodhd_library',
                 'cache_status': 'error'
             }
     
-    async def _fetch_market_data_eodhd(self, symbol: str) -> Optional[pd.DataFrame]:
-        """Fetch market data using EODHD Python library"""
+    def _fetch_market_data_eodhd(self, symbol: str) -> Optional[pd.DataFrame]:
+        """Fetch market data using EODHD Python library (SYNCHRONOUS)"""
         if not self.api_client:
             logger.error("EODHD API client not available")
             return None
@@ -98,7 +101,7 @@ class TechnicalAnalysisService:
             
             logger.info(f"🔍 Fetching EODHD data for {symbol_with_exchange}")
             
-            # Use EODHD library to get historical data
+            # Use EODHD library to get historical data (SYNCHRONOUS CALL)
             data = self.api_client.get_eod_historical_stock_market_data(
                 symbol=symbol_with_exchange,
                 period='d',  # daily
@@ -114,10 +117,16 @@ class TechnicalAnalysisService:
             # Convert to pandas DataFrame
             df = pd.DataFrame(data)
             
-            # Ensure we have the required columns
+            # FIXED: Check for correct column names that EODHD actually returns
+            logger.info(f"EODHD returned columns: {df.columns.tolist()}")
+            
+            # EODHD typically returns: ['date', 'open', 'high', 'low', 'close', 'adjusted_close', 'volume']
             required_columns = ['date', 'open', 'high', 'low', 'close', 'volume']
-            if not all(col in df.columns for col in required_columns):
-                logger.error(f"Missing required columns in data for {symbol}")
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            
+            if missing_columns:
+                logger.error(f"Missing columns for {symbol}: {missing_columns}")
+                logger.info(f"Available columns: {df.columns.tolist()}")
                 return None
             
             # Set date as index and convert to datetime
@@ -130,6 +139,13 @@ class TechnicalAnalysisService:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             
             df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
+            
+            # Remove any rows with NaN values
+            df = df.dropna()
+            
+            if df.empty:
+                logger.error(f"No valid data after cleaning for {symbol}")
+                return None
             
             logger.info(f"✅ Fetched {len(df)} days of data for {symbol}")
             return df
@@ -145,6 +161,7 @@ class TechnicalAnalysisService:
                 return {
                     'symbol': symbol,
                     'error': 'Insufficient data for technical analysis',
+                    'message': f'Need at least 14 days of data for {symbol}. Got {len(df)} days.',
                     'source': 'eodhd_library'
                 }
             
@@ -166,29 +183,33 @@ class TechnicalAnalysisService:
             price_change = latest['close'] - previous['close']
             price_change_pct = (price_change / previous['close']) * 100
             
+            # Generate trading signal
+            signal = self._generate_trading_signal(rsi, macd_data, latest['close'], ma_20, ma_50)
+            
             return {
                 'symbol': symbol,
                 'price': {
-                    'current': round(latest['close'], 2),
-                    'open': round(latest['open'], 2),
-                    'high': round(latest['high'], 2),
-                    'low': round(latest['low'], 2),
-                    'volume': int(latest['volume']),
-                    'change': round(price_change, 2),
-                    'change_percent': round(price_change_pct, 2)
+                    'current': round(float(latest['close']), 2),
+                    'open': round(float(latest['open']), 2),
+                    'high': round(float(latest['high']), 2),
+                    'low': round(float(latest['low']), 2),
+                    'volume': int(latest['volume']) if not pd.isna(latest['volume']) else 0,
+                    'change': round(float(price_change), 2),
+                    'change_percent': round(float(price_change_pct), 2)
                 },
                 'technical_indicators': {
-                    'rsi': round(rsi, 2) if not pd.isna(rsi) else None,
+                    'rsi': round(float(rsi), 2) if not pd.isna(rsi) else None,
                     'macd': {
-                        'macd': round(macd_data['macd'], 2) if not pd.isna(macd_data['macd']) else None,
-                        'signal': round(macd_data['signal'], 2) if not pd.isna(macd_data['signal']) else None,
-                        'histogram': round(macd_data['histogram'], 2) if not pd.isna(macd_data['histogram']) else None
+                        'macd': round(float(macd_data['macd']), 2) if not pd.isna(macd_data['macd']) else None,
+                        'signal': round(float(macd_data['signal']), 2) if not pd.isna(macd_data['signal']) else None,
+                        'histogram': round(float(macd_data['histogram']), 2) if not pd.isna(macd_data['histogram']) else None
                     },
                     'moving_averages': {
-                        'ma_20': round(ma_20, 2) if ma_20 and not pd.isna(ma_20) else None,
-                        'ma_50': round(ma_50, 2) if ma_50 and not pd.isna(ma_50) else None
+                        'ma_20': round(float(ma_20), 2) if ma_20 and not pd.isna(ma_20) else None,
+                        'ma_50': round(float(ma_50), 2) if ma_50 and not pd.isna(ma_50) else None
                     }
                 },
+                'trading_signal': signal,
                 'source': 'eodhd_library',
                 'cache_status': 'fresh',
                 'timestamp': datetime.now().isoformat(),
@@ -234,6 +255,54 @@ class TechnicalAnalysisService:
                 'macd': np.nan,
                 'signal': np.nan,
                 'histogram': np.nan
+            }
+    
+    def _generate_trading_signal(self, rsi: float, macd: Dict, current_price: float, ma_20: float, ma_50: float) -> Dict[str, Any]:
+        """Generate basic trading signal"""
+        try:
+            signals = []
+            overall_signal = "neutral"
+            
+            # RSI signals
+            if not pd.isna(rsi):
+                if rsi > 70:
+                    signals.append("RSI overbought (>70)")
+                elif rsi < 30:
+                    signals.append("RSI oversold (<30)")
+            
+            # MACD signals
+            if not pd.isna(macd['histogram']):
+                if macd['histogram'] > 0:
+                    signals.append("MACD bullish")
+                else:
+                    signals.append("MACD bearish")
+            
+            # Moving average signals
+            if ma_20 and ma_50 and not pd.isna(ma_20) and not pd.isna(ma_50):
+                if ma_20 > ma_50:
+                    signals.append("MA bullish trend")
+                else:
+                    signals.append("MA bearish trend")
+            
+            # Determine overall signal
+            bullish_count = sum(1 for s in signals if 'bullish' in s or 'oversold' in s)
+            bearish_count = sum(1 for s in signals if 'bearish' in s or 'overbought' in s)
+            
+            if bullish_count > bearish_count:
+                overall_signal = "bullish"
+            elif bearish_count > bullish_count:
+                overall_signal = "bearish"
+            
+            return {
+                "overall": overall_signal,
+                "signals": signals,
+                "strength": abs(bullish_count - bearish_count)
+            }
+        except:
+            return {
+                "overall": "neutral",
+                "signals": ["Unable to generate signals"],
+                "strength": 0
             }
     
     async def close(self):
