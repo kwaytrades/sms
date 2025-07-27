@@ -2156,3 +2156,142 @@ if __name__ == "__main__":
         reload=settings.environment == "development",
         log_level=settings.log_level.lower()
     )
+# Add this debug endpoint to your main.py to see what's happening
+
+@app.post("/debug/trace-response-flow")
+async def trace_response_flow():
+    """Debug what's happening in the response generation"""
+    
+    test_message = "yo what's google doing? thinking about buying calls 🚀"
+    test_phone = "+13012466712"
+    
+    debug_info = {
+        "step_by_step": [],
+        "errors": [],
+        "data_flow": {}
+    }
+    
+    try:
+        # Step 1: Test intent parsing
+        debug_info["step_by_step"].append("1. Testing intent parsing...")
+        
+        if trading_agent:
+            intent_data = await trading_agent.parse_intent(test_message, test_phone)
+            debug_info["data_flow"]["intent_parsing"] = {
+                "success": True,
+                "result": intent_data
+            }
+            debug_info["step_by_step"].append(f"✅ Intent parsed: {intent_data['intent']} | Symbols: {intent_data.get('symbols', [])}")
+        else:
+            debug_info["errors"].append("❌ trading_agent not available")
+            return {"error": "trading_agent not initialized"}
+        
+        # Step 2: Test tool execution
+        debug_info["step_by_step"].append("2. Testing tool execution...")
+        
+        if tool_executor:
+            tool_results = await tool_executor.execute_tools(intent_data, test_phone)
+            debug_info["data_flow"]["tool_execution"] = {
+                "success": True,
+                "result": tool_results
+            }
+            debug_info["step_by_step"].append(f"✅ Tools executed: {list(tool_results.keys())}")
+        else:
+            debug_info["errors"].append("❌ tool_executor not available")
+        
+        # Step 3: Test TA service directly
+        debug_info["step_by_step"].append("3. Testing TA service directly...")
+        
+        if ta_service and intent_data.get("symbols"):
+            symbol = intent_data["symbols"][0]
+            ta_data = await ta_service.analyze_symbol(symbol)
+            debug_info["data_flow"]["ta_service_direct"] = {
+                "symbol": symbol,
+                "success": ta_data is not None,
+                "result": ta_data if ta_data else "No data returned"
+            }
+            
+            if ta_data:
+                debug_info["step_by_step"].append(f"✅ TA service returned data for {symbol}")
+            else:
+                debug_info["step_by_step"].append(f"❌ TA service returned no data for {symbol}")
+                debug_info["errors"].append(f"TA service failed for {symbol}")
+        
+        # Step 4: Test OpenAI client
+        debug_info["step_by_step"].append("4. Testing OpenAI client...")
+        
+        if openai_service:
+            try:
+                # Simple test call
+                test_response = await openai_service.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": "Say 'OpenAI test successful'"}],
+                    max_tokens=10
+                )
+                
+                debug_info["data_flow"]["openai_test"] = {
+                    "success": True,
+                    "result": test_response.choices[0].message.content
+                }
+                debug_info["step_by_step"].append("✅ OpenAI client working")
+                
+            except Exception as e:
+                debug_info["data_flow"]["openai_test"] = {
+                    "success": False,
+                    "error": str(e)
+                }
+                debug_info["errors"].append(f"❌ OpenAI client failed: {e}")
+        else:
+            debug_info["errors"].append("❌ openai_service not available")
+        
+        # Step 5: Test full response generation
+        debug_info["step_by_step"].append("5. Testing full response generation...")
+        
+        user_profile = personality_engine.get_user_profile(test_phone)
+        
+        try:
+            response = await trading_agent.generate_response(
+                user_message=test_message,
+                intent_data=intent_data,
+                tool_results=tool_results,
+                user_phone=test_phone,
+                user_profile=user_profile
+            )
+            
+            debug_info["data_flow"]["full_response"] = {
+                "success": True,
+                "response": response,
+                "length": len(response)
+            }
+            debug_info["step_by_step"].append(f"✅ Full response generated: '{response}'")
+            
+        except Exception as e:
+            debug_info["data_flow"]["full_response"] = {
+                "success": False,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+            debug_info["errors"].append(f"❌ Response generation failed: {e}")
+        
+        # Summary
+        debug_info["summary"] = {
+            "total_steps": 5,
+            "errors_count": len(debug_info["errors"]),
+            "likely_issue": "Unknown"
+        }
+        
+        if "TA service failed" in str(debug_info["errors"]):
+            debug_info["summary"]["likely_issue"] = "TA service not returning data"
+        elif "OpenAI client failed" in str(debug_info["errors"]):
+            debug_info["summary"]["likely_issue"] = "OpenAI API issues"
+        elif "Response generation failed" in str(debug_info["errors"]):
+            debug_info["summary"]["likely_issue"] = "Response generation logic error"
+        elif len(debug_info["errors"]) == 0:
+            debug_info["summary"]["likely_issue"] = "All systems working - check main processing flow"
+        
+        return debug_info
+        
+    except Exception as e:
+        debug_info["errors"].append(f"💥 Debug trace failed: {e}")
+        debug_info["summary"] = {"fatal_error": str(e)}
+        return debug_info
