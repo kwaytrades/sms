@@ -88,6 +88,13 @@ except ImportError:
     MessageHandler = None
     logger.warning("MessageHandler not available")
 
+# Import integrated technical analysis service
+try:
+    from services.technical_analysis import TechnicalAnalysisService
+except ImportError:
+    TechnicalAnalysisService = None
+    logger.warning("TechnicalAnalysisService not available")
+
 # Configure logging
 logger.remove()
 logger.add(sys.stdout, level=settings.log_level)
@@ -485,11 +492,12 @@ openai_service = None
 twilio_service = None
 message_handler = None
 scheduler_task = None
+ta_service = None  # Add integrated TA service
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    global db_service, openai_service, twilio_service, message_handler, scheduler_task
+    global db_service, openai_service, twilio_service, message_handler, scheduler_task, ta_service
     
     logger.info("🚀 Starting SMS Trading Bot...")
     
@@ -504,6 +512,12 @@ async def lifespan(app: FastAPI):
         
         if TwilioService:
             twilio_service = TwilioService()
+        
+        # Initialize integrated TA service
+        if TechnicalAnalysisService:
+            ta_service = TechnicalAnalysisService()
+            await ta_service.initialize(cache_manager=db_service)  # Pass cache manager
+            logger.info("✅ Integrated Technical Analysis Service initialized")
         
         if MessageHandler and db_service and openai_service and twilio_service:
             message_handler = MessageHandler(db_service, openai_service, twilio_service)
@@ -528,6 +542,8 @@ async def lifespan(app: FastAPI):
     if scheduler_task:
         scheduler_task.cancel()
         logger.info("📅 Weekly scheduler stopped")
+    if ta_service:
+        await ta_service.close()
     if db_service:
         await db_service.close()
 
@@ -657,7 +673,8 @@ async def health_check():
             "database": "available" if db_service is not None else "unavailable",
             "openai": "available" if openai_service is not None else "unavailable", 
             "twilio": "available" if twilio_service is not None else "unavailable",
-            "message_handler": "available" if message_handler is not None else "unavailable"
+            "message_handler": "available" if message_handler is not None else "unavailable",
+            "ta_service": "available" if ta_service is not None else "unavailable"
         }
         
         # Overall health determination
@@ -744,7 +761,7 @@ async def generate_hyper_personalized_response(user_message: str, phone_number: 
             symbol = intent_result["symbols"][0]
             logger.info(f"📊 Fetching TA data for symbol: {symbol}")
             
-            # Call your technical analysis service
+            # Call integrated technical analysis service
             ta_data = await fetch_technical_analysis(symbol)
             
             if ta_data:
@@ -855,15 +872,16 @@ def apply_personality_formatting(response: str, user_profile: dict) -> str:
     return response
 
 def format_personalized_ta_response(symbol: str, ta_data: dict, user_profile: dict) -> str:
-    """Format technical analysis data with user's personality"""
+    """Format technical analysis data with user's personality using new data structure"""
     try:
         style = user_profile["communication_style"]
         trading_style = user_profile["trading_personality"]
         
-        # Extract key data points
-        price_info = ta_data.get('last_price', 'N/A')
-        change_info = ta_data.get('price_change', {})
+        # Extract data from new integrated TA structure
+        price_data = ta_data.get('price', {})
         technical = ta_data.get('technical_indicators', {})
+        signals = ta_data.get('signals', {})
+        volume_data = ta_data.get('volume', {})
         
         # Build response based on user's style
         if style["formality"] == "casual":
@@ -875,36 +893,43 @@ def format_personalized_ta_response(symbol: str, ta_data: dict, user_profile: di
         response_parts = []
         
         # Price header with personality
-        if price_info != 'N/A':
-            change_pct = change_info.get('percent', 0)
+        current_price = price_data.get('current', 'N/A')
+        change_pct = price_data.get('change_percent', 0)
+        
+        if current_price != 'N/A':
             if style["energy"] == "high":
                 direction = "🚀" if change_pct > 0 else "💥" if change_pct < -2 else "📊"
             else:
                 direction = "↑" if change_pct > 0 else "↓" if change_pct < 0 else "→"
             
             if style["formality"] == "casual":
-                response_parts.append(f"{greeting}! {symbol} at ${price_info} {direction}{abs(change_pct):.1f}%")
+                response_parts.append(f"{greeting}! {symbol} at ${current_price} {direction}{abs(change_pct):.1f}%")
             else:
-                response_parts.append(f"{greeting} {symbol} analysis: ${price_info} {direction}{abs(change_pct):.1f}%")
+                response_parts.append(f"{greeting} {symbol} analysis: ${current_price} {direction}{abs(change_pct):.1f}%")
         
         # Add technical indicators based on their experience level
         if trading_style["experience_level"] == "advanced":
-            rsi_data = technical.get('rsi', {})
-            if rsi_data:
-                rsi_val = rsi_data.get('value', 0)
+            rsi_val = technical.get('rsi', 0)
+            if rsi_val:
                 response_parts.append(f"RSI: {rsi_val:.0f}")
         elif trading_style["experience_level"] == "beginner":
             # Simplify for beginners
-            signals = ta_data.get('signals', [])
-            if signals:
-                bullish_signals = [s for s in signals if s.get('type') in ['bullish', 'opportunity']]
-                if bullish_signals and style["formality"] == "casual":
-                    response_parts.append("Looking good for entry!")
-                elif bullish_signals:
-                    response_parts.append("Positive momentum detected")
+            overall_signal = signals.get('overall', 'neutral')
+            if overall_signal == 'bullish' and style["formality"] == "casual":
+                response_parts.append("Looking good for entry!")
+            elif overall_signal == 'bullish':
+                response_parts.append("Positive momentum detected")
         
         # Build final response with their style
         final_response = " | ".join(response_parts) if response_parts else f"{symbol} data analyzed"
+        
+        # Add source indicator
+        source = ta_data.get('source', 'unknown')
+        is_popular = ta_data.get('is_popular', False)
+        cache_indicator = "⚡" if source == 'cache' else "📡" if source == 'fresh' else "🔧"
+        popular_indicator = "🔥" if is_popular else ""
+        
+        final_response += f" {cache_indicator}{popular_indicator}"
         
         # Apply personality formatting
         return apply_personality_formatting(final_response, user_profile)
@@ -979,30 +1004,24 @@ def generate_personalized_mock_response(user_message: str, user_profile: dict) -
     return apply_personality_formatting(response, user_profile)
 
 async def fetch_technical_analysis(symbol: str) -> dict:
-    """Fetch real technical analysis from your TA service"""
+    """Fetch technical analysis using integrated TA service"""
     try:
-        # Get TA service URL from environment
-        ta_service_url = os.getenv('TA_SERVICE_URL')
-        
-        if not ta_service_url:
-            logger.warning("❌ TA_SERVICE_URL not set in environment variables")
+        if not ta_service:
+            logger.warning("❌ Integrated TA service not initialized")
             return None
         
-        logger.info(f"🌐 Calling TA service: {ta_service_url}/analysis/{symbol}")
+        logger.info(f"📈 Analyzing {symbol} with integrated TA service")
         
-        # Try to call your technical analysis service
-        import httpx
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(f"{ta_service_url}/analysis/{symbol}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                logger.info(f"✅ Got real TA data for {symbol} from {data.get('data_source', 'unknown')}")
-                logger.debug(f"TA data keys: {list(data.keys())}")
-                return data
-            else:
-                logger.error(f"❌ TA service returned {response.status_code} for {symbol}: {response.text}")
-                return None
+        # Use the integrated TA service
+        ta_data = await ta_service.analyze_symbol(symbol.upper())
+        
+        if ta_data:
+            logger.info(f"✅ Got TA data for {symbol} from {ta_data.get('source', 'unknown')}")
+            logger.debug(f"TA data keys: {list(ta_data.keys())}")
+            return ta_data
+        else:
+            logger.error(f"❌ Integrated TA service returned no data for {symbol}")
+            return None
                 
     except Exception as e:
         logger.error(f"💥 Failed to fetch TA data for {symbol}: {type(e).__name__}: {e}")
@@ -1100,7 +1119,8 @@ async def admin_dashboard():
             "services": {
                 "database": "connected" if db_service else "disconnected",
                 "message_handler": "active" if message_handler else "inactive",
-                "weekly_scheduler": "active" if scheduler_task and not scheduler_task.done() else "inactive"
+                "weekly_scheduler": "active" if scheduler_task and not scheduler_task.done() else "inactive",
+                "ta_service": "active" if ta_service else "inactive"
             },
             "stats": user_stats,
             "scheduler": scheduler_status,
@@ -1355,11 +1375,11 @@ async def debug_analyze_intent(request: Request):
         logger.error(f"Intent analysis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ===== MISSING TECHNICAL ANALYSIS ENDPOINTS =====
+# ===== TECHNICAL ANALYSIS ENDPOINTS =====
 
 @app.get("/debug/test-ta/{symbol}")
 async def test_technical_analysis(symbol: str):
-    """Test the technical analysis integration"""
+    """Test the integrated technical analysis"""
     try:
         ta_data = await fetch_technical_analysis(symbol.upper())
         
@@ -1383,16 +1403,19 @@ async def test_technical_analysis(symbol: str):
             return {
                 "symbol": symbol.upper(),
                 "ta_service_connected": True,
+                "integrated_ta": True,  # New flag
                 "raw_ta_data": ta_data,
                 "personalized_responses": formatted_responses,
-                "data_source": ta_data.get('data_source', 'unknown'),
-                "cache_status": ta_data.get('cache_status', 'unknown')
+                "data_source": ta_data.get('source', 'unknown'),
+                "cache_status": ta_data.get('cache_status', 'unknown'),
+                "api_used": "EODHD" if ta_data.get('source') != 'fallback' else "Mock Data"
             }
         else:
             return {
                 "symbol": symbol.upper(),
                 "ta_service_connected": False,
-                "error": "No data received from TA service",
+                "integrated_ta": True,
+                "error": "No data received from integrated TA service",
                 "fallback_used": True
             }
             
@@ -1400,6 +1423,7 @@ async def test_technical_analysis(symbol: str):
         return {
             "symbol": symbol.upper(),
             "ta_service_connected": False,
+            "integrated_ta": True,
             "error": str(e),
             "fallback_used": True
         }
@@ -1418,7 +1442,7 @@ async def diagnose_services():
     
     # Check environment variables
     env_vars = {
-        "TA_SERVICE_URL": os.getenv('TA_SERVICE_URL'),
+        "EODHD_API_KEY": "Set" if os.getenv('EODHD_API_KEY') else None,
         "OPENAI_API_KEY": "Set" if os.getenv('OPENAI_API_KEY') else None,
         "MONGODB_URL": "Set" if os.getenv('MONGODB_URL') else None,
     }
@@ -1430,6 +1454,7 @@ async def diagnose_services():
         "db_service": db_service is not None,
         "message_handler": message_handler is not None,
         "twilio_service": twilio_service is not None,
+        "ta_service": ta_service is not None,  # Updated
         "personality_engine": True
     }
     
@@ -1440,30 +1465,28 @@ async def diagnose_services():
         "features": ["communication_style", "trading_personality", "context_memory"]
     }
     
-    # Test TA Service connection
-    ta_url = env_vars["TA_SERVICE_URL"]
-    if ta_url:
+    # Test integrated TA Service
+    if ta_service:
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{ta_url}/health")
-                diagnosis["connection_tests"]["ta_service"] = {
-                    "url": ta_url,
-                    "status": response.status_code,
-                    "reachable": True,
-                    "response_preview": response.text[:200]
-                }
+            test_ta_result = await ta_service.analyze_symbol("AAPL")
+            diagnosis["connection_tests"]["ta_service"] = {
+                "type": "integrated",
+                "working": True,
+                "test_successful": test_ta_result is not None,
+                "data_source": test_ta_result.get('source', 'unknown') if test_ta_result else None,
+                "cache_status": test_ta_result.get('cache_status', 'unknown') if test_ta_result else None
+            }
         except Exception as e:
             diagnosis["connection_tests"]["ta_service"] = {
-                "url": ta_url,
-                "reachable": False,
+                "type": "integrated",
+                "working": False,
                 "error": str(e)
             }
     else:
         diagnosis["connection_tests"]["ta_service"] = {
-            "url": None,
-            "reachable": False,
-            "error": "TA_SERVICE_URL not set"
+            "type": "integrated",
+            "working": False,
+            "error": "TA service not initialized"
         }
     
     # Test OpenAI if available
@@ -1492,10 +1515,10 @@ async def diagnose_services():
         }
     
     # Generate recommendations
-    if not env_vars["TA_SERVICE_URL"]:
-        diagnosis["recommendations"].append("❌ Set TA_SERVICE_URL environment variable")
-    elif not diagnosis["connection_tests"]["ta_service"]["reachable"]:
-        diagnosis["recommendations"].append("❌ TA service unreachable - check if your TA microservice is running")
+    if not env_vars["EODHD_API_KEY"]:
+        diagnosis["recommendations"].append("⚠️ Set EODHD_API_KEY environment variable for real market data")
+    elif not diagnosis["connection_tests"]["ta_service"]["working"]:
+        diagnosis["recommendations"].append("❌ Integrated TA service not working - check EODHD API key")
     
     if not env_vars["OPENAI_API_KEY"]:
         diagnosis["recommendations"].append("❌ Set OPENAI_API_KEY environment variable")
@@ -1505,6 +1528,7 @@ async def diagnose_services():
     if not diagnosis["recommendations"]:
         diagnosis["recommendations"].append("✅ All services configured correctly")
         diagnosis["recommendations"].append("🧠 Personality engine is active and learning from users")
+        diagnosis["recommendations"].append("📈 Integrated TA service is working")
     
     return diagnosis
 
@@ -1586,7 +1610,7 @@ async def test_full_integration_flow(symbol: str):
                 "ta_service": {
                     "working": ta_working,
                     "data_points": len(ta_data) if ta_data else 0,
-                    "has_price": 'last_price' in (ta_data or {}),
+                    "has_price": 'price' in (ta_data or {}),
                     "has_indicators": 'technical_indicators' in (ta_data or {}),
                     "has_signals": 'signals' in (ta_data or {})
                 },
@@ -1625,7 +1649,7 @@ def _get_integration_recommendation(ta_working: bool, ai_working: bool, personal
     elif ta_working and personality_working and not ai_working:
         return "⚠️ TA + Personality working but OpenAI unavailable. Check OPENAI_API_KEY environment variable."
     elif ai_working and personality_working and not ta_working:
-        return "⚠️ OpenAI + Personality working but TA service unavailable. Check TA_SERVICE_URL environment variable."
+        return "⚠️ OpenAI + Personality working but TA service unavailable. Check EODHD_API_KEY environment variable."
     elif personality_working:
         return "⚠️ Personality engine working but external services unavailable. Using personalized mock responses."
     else:
@@ -3252,8 +3276,12 @@ async def comprehensive_dashboard():
                     <i class="fas fa-robot"></i>
                     <span>AI: ${healthData.services?.openai || 'Unknown'}</span>
                 </div>
-                <div class="status-item status-online">
+                <div class="status-item ${healthData.services?.ta_service === 'available' ? 'status-online' : 'status-warning'}">
                     <i class="fas fa-chart-line"></i>
+                    <span>TA: ${healthData.services?.ta_service || 'Unknown'}</span>
+                </div>
+                <div class="status-item status-online">
+                    <i class="fas fa-graduation-cap"></i>
                     <span>Learning: Active</span>
                 </div>
             `;
@@ -3369,6 +3397,7 @@ if __name__ == "__main__":
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Testing mode: {settings.testing_mode}")
     logger.info(f"🧠 Personality Engine: Active")
+    logger.info(f"📈 Integrated Technical Analysis: Active")
     
     uvicorn.run(
         "main:app",
