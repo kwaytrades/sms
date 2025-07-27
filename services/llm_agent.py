@@ -75,10 +75,10 @@ Examples:
 """
 
         try:
-            # FIXED: Properly handle AsyncOpenAI client
-            if hasattr(self.openai_client, 'chat'):
-                # Direct client
-                response = await self.openai_client.chat.completions.create(
+            # FIXED: Always use the wrapped client path for your setup
+            if hasattr(self.openai_client, 'client'):
+                # Wrapped client (your setup)
+                response = await self.openai_client.client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.1,
@@ -86,8 +86,8 @@ Examples:
                     response_format={"type": "json_object"}
                 )
             else:
-                # Wrapped client - access the actual client
-                response = await self.openai_client.client.chat.completions.create(
+                # Direct client fallback
+                response = await self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.1,
@@ -258,18 +258,18 @@ Examples of style matching:
 Generate the perfect response now:"""
 
         try:
-            # FIXED: Properly handle AsyncOpenAI client
-            if hasattr(self.openai_client, 'chat'):
-                # Direct client
-                response = await self.openai_client.chat.completions.create(
+            # FIXED: Always use the wrapped client path for your setup
+            if hasattr(self.openai_client, 'client'):
+                # Wrapped client (your setup)
+                response = await self.openai_client.client.chat.completions.create(
                     model="gpt-4o",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.7,
                     max_tokens=200
                 )
             else:
-                # Wrapped client - access the actual client
-                response = await self.openai_client.client.chat.completions.create(
+                # Direct client fallback
+                response = await self.openai_client.chat.completions.create(
                     model="gpt-4o",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.7,
