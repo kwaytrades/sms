@@ -15,8 +15,6 @@ httpx==0.25.2
 twilio==8.10.3
 stripe==7.8.0
 
-# EODHD Official Library (ADDED)
-eodhd==1.0.21
 
 # Data processing
 python-jose[cryptography]==3.3.0
