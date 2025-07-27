@@ -2158,140 +2158,103 @@ if __name__ == "__main__":
     )
 # Add this debug endpoint to your main.py to see what's happening
 
-@app.post("/debug/trace-response-flow")
-async def trace_response_flow():
-    """Debug what's happening in the response generation"""
-    
-    test_message = "yo what's google doing? thinking about buying calls 🚀"
-    test_phone = "+13012466712"
+# Add this debug endpoint to your main.py to see what's wrong with the OpenAI client
+
+@app.get("/debug/openai-client-structure")
+async def debug_openai_client_structure():
+    """Debug the actual OpenAI client structure"""
     
     debug_info = {
-        "step_by_step": [],
-        "errors": [],
-        "data_flow": {}
+        "openai_service_info": {},
+        "trading_agent_info": {},
+        "client_structure": {},
+        "test_results": {}
     }
     
     try:
-        # Step 1: Test intent parsing
-        debug_info["step_by_step"].append("1. Testing intent parsing...")
-        
-        if trading_agent:
-            intent_data = await trading_agent.parse_intent(test_message, test_phone)
-            debug_info["data_flow"]["intent_parsing"] = {
-                "success": True,
-                "result": intent_data
-            }
-            debug_info["step_by_step"].append(f"✅ Intent parsed: {intent_data['intent']} | Symbols: {intent_data.get('symbols', [])}")
-        else:
-            debug_info["errors"].append("❌ trading_agent not available")
-            return {"error": "trading_agent not initialized"}
-        
-        # Step 2: Test tool execution
-        debug_info["step_by_step"].append("2. Testing tool execution...")
-        
-        if tool_executor:
-            tool_results = await tool_executor.execute_tools(intent_data, test_phone)
-            debug_info["data_flow"]["tool_execution"] = {
-                "success": True,
-                "result": tool_results
-            }
-            debug_info["step_by_step"].append(f"✅ Tools executed: {list(tool_results.keys())}")
-        else:
-            debug_info["errors"].append("❌ tool_executor not available")
-        
-        # Step 3: Test TA service directly
-        debug_info["step_by_step"].append("3. Testing TA service directly...")
-        
-        if ta_service and intent_data.get("symbols"):
-            symbol = intent_data["symbols"][0]
-            ta_data = await ta_service.analyze_symbol(symbol)
-            debug_info["data_flow"]["ta_service_direct"] = {
-                "symbol": symbol,
-                "success": ta_data is not None,
-                "result": ta_data if ta_data else "No data returned"
-            }
-            
-            if ta_data:
-                debug_info["step_by_step"].append(f"✅ TA service returned data for {symbol}")
-            else:
-                debug_info["step_by_step"].append(f"❌ TA service returned no data for {symbol}")
-                debug_info["errors"].append(f"TA service failed for {symbol}")
-        
-        # Step 4: Test OpenAI client
-        debug_info["step_by_step"].append("4. Testing OpenAI client...")
-        
+        # Check OpenAI service
         if openai_service:
-            try:
-                # Simple test call
-                test_response = await openai_service.client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[{"role": "user", "content": "Say 'OpenAI test successful'"}],
-                    max_tokens=10
-                )
-                
-                debug_info["data_flow"]["openai_test"] = {
-                    "success": True,
-                    "result": test_response.choices[0].message.content
+            debug_info["openai_service_info"] = {
+                "available": True,
+                "type": str(type(openai_service)),
+                "has_client_attr": hasattr(openai_service, 'client'),
+                "has_chat_attr": hasattr(openai_service, 'chat'),
+                "dir_openai_service": [attr for attr in dir(openai_service) if not attr.startswith('_')]
+            }
+            
+            if hasattr(openai_service, 'client'):
+                debug_info["client_structure"] = {
+                    "client_type": str(type(openai_service.client)),
+                    "has_chat": hasattr(openai_service.client, 'chat'),
+                    "client_dir": [attr for attr in dir(openai_service.client) if not attr.startswith('_')][:10]
                 }
-                debug_info["step_by_step"].append("✅ OpenAI client working")
                 
-            except Exception as e:
-                debug_info["data_flow"]["openai_test"] = {
-                    "success": False,
-                    "error": str(e)
-                }
-                debug_info["errors"].append(f"❌ OpenAI client failed: {e}")
+                if hasattr(openai_service.client, 'chat'):
+                    debug_info["client_structure"]["chat_type"] = str(type(openai_service.client.chat))
+                    debug_info["client_structure"]["has_completions"] = hasattr(openai_service.client.chat, 'completions')
+                    
+                    if hasattr(openai_service.client.chat, 'completions'):
+                        debug_info["client_structure"]["completions_type"] = str(type(openai_service.client.chat.completions))
+                        debug_info["client_structure"]["has_create"] = hasattr(openai_service.client.chat.completions, 'create')
         else:
-            debug_info["errors"].append("❌ openai_service not available")
+            debug_info["openai_service_info"] = {"available": False}
         
-        # Step 5: Test full response generation
-        debug_info["step_by_step"].append("5. Testing full response generation...")
-        
-        user_profile = personality_engine.get_user_profile(test_phone)
-        
-        try:
-            response = await trading_agent.generate_response(
-                user_message=test_message,
-                intent_data=intent_data,
-                tool_results=tool_results,
-                user_phone=test_phone,
-                user_profile=user_profile
-            )
-            
-            debug_info["data_flow"]["full_response"] = {
-                "success": True,
-                "response": response,
-                "length": len(response)
+        # Check trading agent
+        if trading_agent:
+            debug_info["trading_agent_info"] = {
+                "available": True,
+                "openai_client_type": str(type(trading_agent.openai_client)),
+                "has_client_attr": hasattr(trading_agent.openai_client, 'client'),
+                "has_chat_attr": hasattr(trading_agent.openai_client, 'chat')
             }
-            debug_info["step_by_step"].append(f"✅ Full response generated: '{response}'")
-            
-        except Exception as e:
-            debug_info["data_flow"]["full_response"] = {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-            debug_info["errors"].append(f"❌ Response generation failed: {e}")
+        else:
+            debug_info["trading_agent_info"] = {"available": False}
         
-        # Summary
-        debug_info["summary"] = {
-            "total_steps": 5,
-            "errors_count": len(debug_info["errors"]),
-            "likely_issue": "Unknown"
-        }
-        
-        if "TA service failed" in str(debug_info["errors"]):
-            debug_info["summary"]["likely_issue"] = "TA service not returning data"
-        elif "OpenAI client failed" in str(debug_info["errors"]):
-            debug_info["summary"]["likely_issue"] = "OpenAI API issues"
-        elif "Response generation failed" in str(debug_info["errors"]):
-            debug_info["summary"]["likely_issue"] = "Response generation logic error"
-        elif len(debug_info["errors"]) == 0:
-            debug_info["summary"]["likely_issue"] = "All systems working - check main processing flow"
+        # Test actual client calls
+        if openai_service and trading_agent:
+            try:
+                # Test the exact same logic as in parse_intent
+                client_to_use = trading_agent.openai_client
+                
+                debug_info["test_results"]["client_detection"] = {
+                    "has_client": hasattr(client_to_use, 'client'),
+                    "has_chat": hasattr(client_to_use, 'chat'),
+                    "will_use_wrapped": hasattr(client_to_use, 'client')
+                }
+                
+                # Try a simple test call
+                if hasattr(client_to_use, 'client'):
+                    test_response = await client_to_use.client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": "Say 'test successful'"}],
+                        max_tokens=5
+                    )
+                    debug_info["test_results"]["wrapped_client_test"] = {
+                        "success": True,
+                        "response": test_response.choices[0].message.content
+                    }
+                else:
+                    test_response = await client_to_use.chat.completions.create(
+                        model="gpt-4o-mini", 
+                        messages=[{"role": "user", "content": "Say 'test successful'"}],
+                        max_tokens=5
+                    )
+                    debug_info["test_results"]["direct_client_test"] = {
+                        "success": True,
+                        "response": test_response.choices[0].message.content
+                    }
+                    
+            except Exception as e:
+                debug_info["test_results"]["error"] = {
+                    "error_type": str(type(e)),
+                    "error_message": str(e),
+                    "is_await_error": "await" in str(e)
+                }
         
         return debug_info
         
     except Exception as e:
-        debug_info["errors"].append(f"💥 Debug trace failed: {e}")
-        debug_info["summary"] = {"fatal_error": str(e)}
-        return debug_info
+        return {
+            "error": str(e),
+            "error_type": str(type(e))
+        }
