@@ -17,6 +17,23 @@ class DatabaseService:
         self.mongo_client = None
         self.db = None
         self.redis = None
+
+# Add this method to your DatabaseService class
+async def update_user_activity(self, phone_number: str):
+    """Update user activity timestamp"""
+    try:
+        if self.db:
+            await self.db.users.update_one(
+                {"phone": phone_number},
+                {
+                    "$set": {"last_activity": datetime.utcnow()},
+                    "$setOnInsert": {"phone": phone_number, "created_at": datetime.utcnow()}
+                },
+                upsert=True
+            )
+            logger.info(f"✅ Updated user activity for {phone_number}")
+    except Exception as e:
+        logger.error(f"❌ Failed to update user activity: {e}")
         
     async def initialize(self):
         """Initialize database connections"""
