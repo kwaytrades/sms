@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Any
 from loguru import logger
 import openai
 from datetime import datetime
+from openai import AsyncOpenAI
 
 class TradingAgent:
     """Hybrid LLM Agent for intelligent trading bot interactions"""
