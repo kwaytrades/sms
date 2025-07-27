@@ -816,3 +816,10 @@ document.addEventListener('DOMContentLoaded', function() {
     refreshMetrics();
     loadPersonalityAnalytics();
     loadStyleExamples();
+
+setInterval(() => {
+        if (autoRefresh) {
+            refreshMetrics();
+        }
+    }, 60000);
+});
