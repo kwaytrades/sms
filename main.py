@@ -59,23 +59,53 @@ except ImportError:
     settings = Settings()
 
 # Import services with fallbacks
+# In main.py, replace the existing try/except blocks with:
+
 try:
     from services.database import DatabaseService
-except ImportError:
+    logger.info("✅ DatabaseService imported successfully")
+except Exception as e:
     DatabaseService = None
-    logger.warning("DatabaseService not available")
+    logger.error(f"❌ DatabaseService failed: {str(e)} | Type: {type(e).__name__}")
+    import traceback
+    logger.error(f"Full traceback: {traceback.format_exc()}")
 
 try:
     from services.openai_service import OpenAIService
-except ImportError:
+    logger.info("✅ OpenAIService imported successfully")
+except Exception as e:
     OpenAIService = None
-    logger.warning("OpenAIService not available")
+    logger.error(f"❌ OpenAIService failed: {str(e)} | Type: {type(e).__name__}")
+    import traceback
+    logger.error(f"Full traceback: {traceback.format_exc()}")
 
 try:
     from services.twilio_service import TwilioService
-except ImportError:
+    logger.info("✅ TwilioService imported successfully")
+except Exception as e:
     TwilioService = None
-    logger.warning("TwilioService not available")
+    logger.error(f"❌ TwilioService failed: {str(e)} | Type: {type(e).__name__}")
+    import traceback
+    logger.error(f"Full traceback: {traceback.format_exc()}")
+
+try:
+    from services.technical_analysis import TechnicalAnalysisService
+    logger.info("✅ TechnicalAnalysisService imported successfully")
+except Exception as e:
+    TechnicalAnalysisService = None
+    logger.error(f"❌ TechnicalAnalysisService failed: {str(e)} | Type: {type(e).__name__}")
+    import traceback
+    logger.error(f"Full traceback: {traceback.format_exc()}")
+
+try:
+    from services.llm_agent import TradingAgent, ToolExecutor
+    logger.info("✅ LLM Agent services imported successfully")
+except Exception as e:
+    TradingAgent = None
+    ToolExecutor = None
+    logger.error(f"❌ LLM Agent services failed: {str(e)} | Type: {type(e).__name__}")
+    import traceback
+    logger.error(f"Full traceback: {traceback.format_exc()}")
 
 try:
     from services.weekly_scheduler import WeeklyScheduler
@@ -90,19 +120,9 @@ except ImportError:
     logger.warning("MessageHandler not available")
 
 # Import integrated technical analysis service
-try:
-    from services.technical_analysis import TechnicalAnalysisService
-except ImportError:
-    TechnicalAnalysisService = None
-    logger.warning("TechnicalAnalysisService not available")
 
-# Import hybrid LLM agent services
-try:
-    from services.llm_agent import TradingAgent, ToolExecutor
-except ImportError:
-    TradingAgent = None
-    ToolExecutor = None
-    logger.warning("LLM Agent services not available")
+
+
 
 # Configure logging
 logger.remove()
