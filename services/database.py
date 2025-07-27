@@ -1,6 +1,6 @@
 # ===== services/database.py =====
 from motor.motor_asyncio import AsyncIOMotorClient
-import redis.asyncio as aioredis  # ONLY CHANGE: replaced "import aioredis" 
+import redis.asyncio as redis  
 from typing import Optional, Dict, List, Any
 from bson import ObjectId
 import json
