@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import json
 import re
 import random
-from dashboard_routes import dashboard_router, static_router, setup_static_files
+from dashboard_routes import dashboard_router
 from fastapi.staticfiles import StaticFiles
 # Import configuration
 try:
@@ -591,18 +591,18 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# After app = FastAPI(...) in main.py
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-# Create static directory if it doesn't exist
+# Create directories
 Path("static").mkdir(exist_ok=True)
 Path("templates").mkdir(exist_ok=True)
 
-# Mount static files BEFORE including routers
+# Mount static files directly in main.py
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Then setup dashboard routes
-setup_static_files(app)  # This might be redundant now
+# Include dashboard router
 app.include_router(dashboard_router)
 # ===== FASTAPI MIDDLEWARE FOR METRICS =====
 
