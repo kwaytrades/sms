@@ -1,16 +1,16 @@
-# ===== services/openai_service.py - FIXED VERSION =====
+# ===== services/openai_service.py - COMPLETELY FIXED VERSION =====
 from loguru import logger
 from config import settings
 from typing import Dict, List, Optional
-import openai
+from openai import AsyncOpenAI  # ✅ FIXED: Import AsyncOpenAI
 import asyncio
 
 class OpenAIService:
     def __init__(self):
         self.api_key = settings.openai_api_key
         if self.api_key:
-            openai.api_key = self.api_key
-            self.client = openai
+            # ✅ FIXED: Create actual AsyncOpenAI client instance
+            self.client = AsyncOpenAI(api_key=self.api_key)
             logger.info("✅ OpenAI service initialized with API key")
         else:
             self.client = None
@@ -99,12 +99,8 @@ Response:"""
     async def _call_openai_api(self, prompt: str) -> str:
         """Make the actual OpenAI API call"""
         try:
-            # Use the newer OpenAI client interface
-            from openai import AsyncOpenAI
-            
-            client = AsyncOpenAI(api_key=self.api_key)
-            
-            response = await client.chat.completions.create(
+            # ✅ FIXED: Use self.client (which is now AsyncOpenAI instance)
+            response = await self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "user", "content": prompt}
