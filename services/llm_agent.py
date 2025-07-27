@@ -2,6 +2,7 @@
 
 import json
 import asyncio
+import re
 from typing import Dict, List, Optional, Any
 from loguru import logger
 import openai
@@ -179,6 +180,50 @@ Examples:
             "fallback": True
         }
     
+    def _clean_response(self, response: str) -> str:
+        """Clean LLM response artifacts that shouldn't go to users"""
+        
+        # Remove meta-instructions
+        patterns_to_remove = [
+            r"Certainly!.*?for the user:\s*",
+            r"Here's the.*?response.*?:\s*",
+            r"Based on.*?here's.*?:\s*",
+            r"Given.*?here's.*?:\s*",
+            r"I'll.*?response.*?:\s*",
+            r"Let me.*?response.*?:\s*",
+            r"Here's the tailored response.*?:\s*",
+            r".*?tailored response.*?:\s*"
+        ]
+        
+        for pattern in patterns_to_remove:
+            response = re.sub(pattern, "", response, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Remove quotes around the entire response
+        if response.startswith('"') and response.endswith('"'):
+            response = response[1:-1]
+        
+        # Remove extra whitespace and newlines at start
+        response = response.strip()
+        
+        return response
+    
+    def _validate_response(self, response: str) -> str:
+        """Validate response doesn't contain artifacts"""
+        
+        # Check for common artifacts
+        artifacts = [
+            "here's the", "certainly", "based on", "given", 
+            "let me", "i'll provide", "tailored response"
+        ]
+        
+        response_lower = response.lower()
+        if any(artifact in response_lower for artifact in artifacts):
+            logger.warning(f"Response contains artifacts: {response[:50]}...")
+            # Apply cleaning
+            response = self._clean_response(response)
+        
+        return response
+    
     async def generate_response(
         self, 
         user_message: str,
@@ -230,7 +275,15 @@ Portfolio Data:
             if "market_data_unavailable" in tool_results:
                 tool_context += "\nMARKET DATA UNAVAILABLE - Acknowledge this honestly to the user."
         
-        prompt = f"""You are a hyper-personalized SMS trading assistant. Generate a response that perfectly matches the user's communication style and provides valuable trading insights.
+        prompt = f"""You are a hyper-personalized SMS trading assistant. Write ONLY the direct SMS message that will be sent to the user.
+
+DO NOT include:
+- "Here's the response:"
+- "Certainly! Here's..."
+- Any meta-commentary
+- Quotes around the response
+
+Just write the exact message the user should receive.
 
 Original Message: "{user_message}"
 
@@ -245,7 +298,7 @@ RESPONSE GUIDELINES:
 1. Match the user's communication style exactly (formality, energy, emoji usage)
 2. Provide actionable trading insights based on available data
 3. If data is unavailable, acknowledge honestly but stay helpful
-4. Keep responses SMS-friendly (under 160 chars if possible, max 2 messages)
+4. Keep responses SMS-friendly (under 320 chars if possible, max 2 messages)
 5. Use appropriate trading terminology for their experience level
 6. Include relevant emojis if user uses them
 7. Be conversational and engaging
@@ -255,7 +308,7 @@ Examples of style matching:
 - Professional: "TSLA trading at $245.50, up 3.2%. RSI indicates slight overbought conditions at 68. Technical outlook remains bullish."
 - Beginner-friendly: "Tesla's doing well today! It's up to $245. The RSI (momentum indicator) shows it might slow down soon, but the trend looks good overall."
 
-Generate the perfect response now:"""
+Write the direct SMS message now:"""
 
         try:
             # FIXED: Always use the wrapped client path for your setup
@@ -277,6 +330,10 @@ Generate the perfect response now:"""
                 )
             
             generated_response = response.choices[0].message.content.strip()
+            
+            # Clean and validate response
+            generated_response = self._clean_response(generated_response)
+            generated_response = self._validate_response(generated_response)
             
             # Ensure response isn't too long for SMS
             if len(generated_response) > 320:  # SMS limit is ~160 but allow for 2 messages
@@ -620,7 +677,7 @@ Generate their perfect personalized response:"""
             first_half = '. '.join(sentences[:mid_point]) + '.'
             second_half = '. '.join(sentences[mid_point:])
             
-            if len(first_half) <= 160 and len(second_half) <= 160:
+            if len(first_half) <= 320 and len(second_half) <= 320:
                 return f"{first_half}\n\n{second_half}"
         
         return response[:317] + "..."
