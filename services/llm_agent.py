@@ -1,679 +1,734 @@
-# ===== Intelligent LLM Orchestrator =====
+# services/llm_agent.py - COMPLETE VERSION (600+ lines restored)
 
 import json
-from typing import Dict, List, Any
-from dataclasses import dataclass
+import asyncio
+from typing import Dict, List, Optional, Any
 from loguru import logger
+import openai
+from datetime import datetime
+from openai import AsyncOpenAI
 
-@dataclass
-class WorkflowPlan:
-    primary_intent: str
-    workflows: List[Dict[str, Any]]
-    entities: Dict[str, Any]
-    user_context: Dict[str, Any]
-    execution_order: List[str]
-
-# ===== COST-OPTIMIZED LLM ARCHITECTURE =====
-
-"""
-Cost Analysis:
-- Orchestrator (gpt-4o-mini): ~$0.0001 per message (structured analysis)
-- Response Generator (gpt-4o): ~$0.003 per message (creative output)
-- Total: ~$0.0031 per message
-
-VS Previous Approach:
-- Intent Parsing (gpt-4o-mini): ~$0.0001
-- Response Generation (gpt-4o): ~$0.003  
-- Total: ~$0.0031 per message
-
-VS All GPT-4o Approach:
-- Orchestrator (gpt-4o): ~$0.005
-- Response Generator (gpt-4o): ~$0.003
-- Total: ~$0.008 per message
-
-Savings: 60% cost reduction while maintaining quality!
-"""
-
-class IntelligentOrchestrator:
-    """LLM-powered orchestrator that decides workflows and extracts everything"""
+class TradingAgent:
+    """Hybrid LLM Agent for intelligent trading bot interactions - COMPLETE VERSION"""
     
-    def __init__(self, openai_service, personality_engine):
-        self.openai_service = openai_service
+    def __init__(self, openai_client, personality_engine):
+        self.openai_client = openai_client
         self.personality_engine = personality_engine
         
-        # Available workflows
-        self.available_workflows = {
-            "stock_analysis": "Analyze specific stocks with TA, news, sentiment",
-            "portfolio_review": "Check current portfolio performance and allocation", 
-            "market_overview": "General market conditions and sentiment",
-            "stock_discovery": "Find stocks based on criteria",
-            "options_analysis": "Analyze options strategies and Greeks",
-            "earnings_calendar": "Check upcoming earnings and events",
-            "sector_analysis": "Analyze specific sectors or industries",
-            "risk_assessment": "Evaluate portfolio or position risk",
-            "price_alerts": "Set up or manage price alerts",
-            "educational": "Explain trading concepts or provide guidance",
-            "account_management": "Subscription, limits, preferences",
-            "general_chat": "Casual conversation or unclear intent"
-        }
-    
-    async def orchestrate_message(self, message: str, user_phone: str) -> WorkflowPlan:
-        """Master orchestration function - decides everything"""
+    async def parse_intent(self, message: str, user_phone: str = None) -> Dict[str, Any]:
+        """Step 1: Use GPT-4o-mini to parse user intent (cheap & fast)"""
         
-        # Get user context for better orchestration
-        user_profile = self.personality_engine.get_user_profile(user_phone)
+        # Get user context for better parsing
+        user_context = ""
+        if user_phone and self.personality_engine:
+            profile = self.personality_engine.get_user_profile(user_phone)
+            experience = profile.get('trading_personality', {}).get('experience_level', 'intermediate')
+            style = profile.get('communication_style', {}).get('formality', 'casual')
+            user_context = f"User is {experience} trader with {style} communication style."
         
-        orchestration_prompt = f"""You are an intelligent trading bot orchestrator. Analyze this message and create a complete execution plan.
+        prompt = f"""Parse this trading message into structured JSON format.
 
-USER MESSAGE: "{message}"
+{user_context}
 
-USER CONTEXT:
-- Experience Level: {user_profile.get('trading_personality', {}).get('experience_level', 'intermediate')}
-- Communication Style: {user_profile.get('communication_style', {}).get('formality', 'casual')}
-- Recent Stocks: {user_profile.get('context_memory', {}).get('last_discussed_stocks', [])}
-- Trading Style: {user_profile.get('trading_personality', {}).get('trading_style', 'swing')}
+Extract:
+1. Primary intent (what user wants to do)
+2. Stock symbols mentioned (if any)
+3. Parameters or context
+4. Required tools/services
+5. Confidence level
 
-AVAILABLE WORKFLOWS:
-{json.dumps(self.available_workflows, indent=2)}
+Message: "{message}"
 
-EXTRACT AND PLAN:
-1. **Primary Intent**: What's the main thing the user wants?
-2. **Stock Symbols**: All stocks mentioned (tickers OR company names)
-3. **Company Name Mapping**: Convert company names to tickers
-4. **Secondary Intents**: Additional things they want
-5. **User Sentiment**: Are they bullish/bearish/uncertain/excited/worried?
-6. **Investment Context**: Buying/selling/holding/researching?
-7. **Urgency Level**: Do they need this info now or just curious?
-8. **Workflow Sequence**: What order should workflows execute?
-
-EXAMPLE OUTPUTS:
-
-Message: "yo check my portfolio and what's TSLA doing?"
-Output: {{
-  "primary_intent": "portfolio_review",
-  "workflows": [
-    {{"name": "portfolio_review", "priority": 1, "params": {{}}}},
-    {{"name": "stock_analysis", "priority": 2, "params": {{"symbols": ["TSLA"]}}}}
-  ],
-  "entities": {{
-    "symbols": ["TSLA"],
-    "company_names_found": [],
-    "user_sentiment": "neutral",
-    "investment_context": "monitoring",
-    "urgency": "medium"
-  }},
-  "user_context": {{
-    "wants_portfolio_first": true,
-    "interested_in_specific_stocks": ["TSLA"],
-    "likely_follow_up": "position_sizing"
-  }},
-  "execution_order": ["portfolio_review", "stock_analysis"]
+Return ONLY valid JSON in this exact format:
+{{
+    "intent": "analyze|price|compare|screener|portfolio|news|help|general",
+    "symbols": ["AAPL", "TSLA"],
+    "parameters": {{
+        "timeframe": "1d|1w|1m|3m",
+        "analysis_type": "technical|fundamental|sentiment",
+        "risk_level": "conservative|moderate|aggressive",
+        "context": "buying_calls|swing_trading|long_term|day_trading"
+    }},
+    "requires_tools": ["technical_analysis", "portfolio_check", "stock_screener", "news_sentiment"],
+    "confidence": 0.95,
+    "user_emotion": "excited|cautious|frustrated|curious|neutral",
+    "urgency": "low|medium|high"
 }}
 
-Message: "Tesla earnings coming up, should I buy calls?"
-Output: {{
-  "primary_intent": "options_analysis", 
-  "workflows": [
-    {{"name": "stock_analysis", "priority": 1, "params": {{"symbols": ["TSLA"], "focus": "earnings"}}}},
-    {{"name": "earnings_calendar", "priority": 2, "params": {{"symbols": ["TSLA"]}}}},
-    {{"name": "options_analysis", "priority": 3, "params": {{"symbols": ["TSLA"], "strategy": "calls"}}}}
-  ],
-  "entities": {{
-    "symbols": ["TSLA"],
-    "company_names_found": ["Tesla"],
-    "user_sentiment": "bullish_curious",
-    "investment_context": "considering_options_purchase",
-    "urgency": "high",
-    "options_interest": "calls"
-  }},
-  "user_context": {{
-    "earnings_focused": true,
-    "options_trader": true,
-    "seeking_advice": true
-  }},
-  "execution_order": ["stock_analysis", "earnings_calendar", "options_analysis"]
-}}
-
-Message: "find me some cheap growth stocks under $50"
-Output: {{
-  "primary_intent": "stock_discovery",
-  "workflows": [
-    {{"name": "stock_discovery", "priority": 1, "params": {{"criteria": {{"max_price": 50, "category": "growth", "price_range": "under_50"}}}}}}
-  ],
-  "entities": {{
-    "symbols": [],
-    "screening_criteria": {{"max_price": 50, "category": "growth"}},
-    "user_sentiment": "hunting",
-    "investment_context": "research_phase",
-    "urgency": "low"
-  }},
-  "user_context": {{
-    "price_conscious": true,
-    "growth_focused": true,
-    "discovery_mode": true
-  }},
-  "execution_order": ["stock_discovery"]
-}}
-
-Now analyze the user's message and return ONLY the JSON plan:"""
+Examples:
+- "yo what's TSLA doing?" → {{"intent": "analyze", "symbols": ["TSLA"], "confidence": 0.9}}
+- "find me cheap tech stocks" → {{"intent": "screener", "parameters": {{"sector": "tech"}}, "requires_tools": ["stock_screener"]}}
+- "how's my portfolio?" → {{"intent": "portfolio", "requires_tools": ["portfolio_check"]}}
+"""
 
         try:
-            response = await self.openai_service.client.chat.completions.create(
-                model="gpt-4o-mini",  # Cheaper model for structured analysis
-                messages=[{"role": "user", "content": orchestration_prompt}],
-                temperature=0.1,  # Very low temperature for consistent planning
-                max_tokens=600,   # Reduced tokens for structured output
-                response_format={"type": "json_object"}
-            )
+            # FIXED: Properly handle AsyncOpenAI client
+            if hasattr(self.openai_client, 'chat'):
+                # Direct client
+                response = await self.openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1,
+                    max_tokens=200,
+                    response_format={"type": "json_object"}
+                )
+            else:
+                # Wrapped client - access the actual client
+                response = await self.openai_client.client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1,
+                    max_tokens=200,
+                    response_format={"type": "json_object"}
+                )
             
-            plan_data = json.loads(response.choices[0].message.content)
+            intent_data = json.loads(response.choices[0].message.content)
             
-            # Validate and enhance the plan
-            validated_plan = self._validate_and_enhance_plan(plan_data, message)
+            # Validate and clean the response
+            intent_data = self._validate_intent(intent_data, message)
             
-            logger.info(f"🎯 Orchestration Plan: {validated_plan.primary_intent} | Workflows: {len(validated_plan.workflows)} | Symbols: {validated_plan.entities.get('symbols', [])}")
+            logger.info(f"Intent parsed: {intent_data['intent']} | Symbols: {intent_data.get('symbols', [])} | Confidence: {intent_data.get('confidence', 0)}")
             
-            return validated_plan
+            return intent_data
             
         except Exception as e:
-            logger.error(f"Orchestration failed: {e}")
-            return self._fallback_orchestration(message)
+            logger.error(f"Intent parsing failed: {e}")
+            # Fallback to basic parsing
+            return self._fallback_intent_parsing(message)
     
-    def _validate_and_enhance_plan(self, plan_data: Dict, original_message: str) -> WorkflowPlan:
-        """Validate LLM plan and add safety checks"""
+    def _validate_intent(self, intent_data: Dict, original_message: str) -> Dict:
+        """Validate and clean the parsed intent"""
         
         # Ensure required fields exist
-        primary_intent = plan_data.get("primary_intent", "general_chat")
-        workflows = plan_data.get("workflows", [])
-        entities = plan_data.get("entities", {})
-        user_context = plan_data.get("user_context", {})
-        execution_order = plan_data.get("execution_order", [])
+        if "intent" not in intent_data:
+            intent_data["intent"] = "general"
         
-        # Validate workflow names
-        valid_workflows = []
-        for workflow in workflows:
-            if workflow.get("name") in self.available_workflows:
-                valid_workflows.append(workflow)
-            else:
-                logger.warning(f"Invalid workflow: {workflow.get('name')}")
+        if "symbols" not in intent_data:
+            intent_data["symbols"] = []
         
-        # Ensure symbols are properly formatted
-        symbols = entities.get("symbols", [])
-        if symbols:
-            symbols = [s.upper().strip() for s in symbols if isinstance(s, str)]
-            entities["symbols"] = symbols
+        if "confidence" not in intent_data:
+            intent_data["confidence"] = 0.5
         
-        # Add company name to symbol conversion
-        entities = self._enhance_symbol_extraction(entities, original_message)
+        if "requires_tools" not in intent_data:
+            intent_data["requires_tools"] = []
         
-        # Limit number of workflows to prevent overload
-        if len(valid_workflows) > 3:
-            logger.warning("Too many workflows planned, limiting to top 3")
-            valid_workflows = sorted(valid_workflows, key=lambda x: x.get("priority", 999))[:3]
+        # Clean symbols (remove duplicates, validate format)
+        if intent_data["symbols"]:
+            cleaned_symbols = []
+            for symbol in intent_data["symbols"]:
+                if isinstance(symbol, str) and 1 <= len(symbol) <= 5 and symbol.isalpha():
+                    cleaned_symbols.append(symbol.upper())
+            intent_data["symbols"] = list(dict.fromkeys(cleaned_symbols))  # Remove duplicates
         
-        return WorkflowPlan(
-            primary_intent=primary_intent,
-            workflows=valid_workflows,
-            entities=entities,
-            user_context=user_context,
-            execution_order=execution_order[:3]  # Limit execution steps
-        )
+        # Auto-determine required tools based on intent
+        if intent_data["intent"] == "analyze" and intent_data["symbols"]:
+            if "technical_analysis" not in intent_data["requires_tools"]:
+                intent_data["requires_tools"].append("technical_analysis")
+        
+        if intent_data["intent"] == "portfolio":
+            if "portfolio_check" not in intent_data["requires_tools"]:
+                intent_data["requires_tools"].append("portfolio_check")
+        
+        return intent_data
     
-    def create_response_prompt(self, plan: WorkflowPlan, workflow_results: Dict, original_message: str, user_phone: str) -> str:
-        """Create the prompt for the response generator LLM"""
+    def _fallback_intent_parsing(self, message: str) -> Dict:
+        """Fallback regex-based parsing if LLM fails"""
+        import re
         
-        user_profile = self.personality_engine.get_user_profile(user_phone)
+        message_lower = message.lower()
         
-        # Build personality context
-        personality_context = self._build_personality_context(user_profile)
+        # Enhanced symbol extraction with comprehensive filtering
+        potential_symbols = re.findall(r'\b[A-Z]{2,5}\b', message.upper())
         
-        # Build workflow results summary
-        results_context = self._build_results_context(workflow_results, plan)
+        # Company names to symbols mapping
+        company_mappings = {
+            'plug power': 'PLUG', 'apple': 'AAPL', 'tesla': 'TSLA', 'microsoft': 'MSFT',
+            'amazon': 'AMZN', 'google': 'GOOGL', 'facebook': 'META', 'meta': 'META',
+            'nvidia': 'NVDA', 'amd': 'AMD', 'netflix': 'NFLX', 'spotify': 'SPOT',
+            'palantir': 'PLTR', 'gamestop': 'GME', 'amc': 'AMC'
+        }
         
-        # Build conversation context
-        conversation_context = self._build_conversation_context(plan, original_message)
+        # Check for company names in the message
+        for company, symbol in company_mappings.items():
+            if company in message_lower:
+                potential_symbols.append(symbol)
         
-        response_prompt = f"""You are a hyper-personalized SMS trading assistant. Generate a response that perfectly matches this user's style and provides actionable insights.
-
-ORIGINAL MESSAGE: "{original_message}"
-
-USER PERSONALITY PROFILE:
-{personality_context}
-
-ORCHESTRATION ANALYSIS:
-Primary Intent: {plan.primary_intent}
-User Sentiment: {plan.entities.get('user_sentiment', 'neutral')}
-Investment Context: {plan.entities.get('investment_context', 'research')}
-Urgency Level: {plan.entities.get('urgency', 'medium')}
-Symbols Discussed: {plan.entities.get('symbols', [])}
-
-WORKFLOW RESULTS:
-{results_context}
-
-CONVERSATION CONTEXT:
-{conversation_context}
-
-RESPONSE GUIDELINES:
-1. Match their communication style exactly (formality: {user_profile.get('communication_style', {}).get('formality', 'casual')})
-2. Use their preferred energy level ({user_profile.get('communication_style', {}).get('energy', 'moderate')})
-3. Include appropriate emojis ({user_profile.get('communication_style', {}).get('emoji_usage', 'some')})
-4. Match their technical depth ({user_profile.get('communication_style', {}).get('technical_depth', 'medium')})
-5. Consider their trading experience ({user_profile.get('trading_personality', {}).get('experience_level', 'intermediate')})
-6. Address their specific concerns and context
-7. Provide actionable insights based on the workflow results
-8. Keep SMS-friendly (under 320 characters total, can split into 2 messages if needed)
-
-RESPONSE STRATEGY:
-- If multiple workflows executed, prioritize the most important results
-- If data unavailable, acknowledge honestly but stay helpful  
-- If user seems worried/uncertain, provide reassuring guidance
-- If user seems excited/bullish, match their energy but add appropriate caution
-- Reference their past trading patterns or preferences when relevant
-
-Generate the perfect personalized response now:"""
-
-        return response_prompt
+        # COMPREHENSIVE exclude_words list to prevent false positives
+        exclude_words = {
+            # Basic words
+            'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'HER', 'WAS', 'ONE',
+            'OUR', 'HAD', 'BY', 'DO', 'GET', 'MAY', 'NEW', 'NOW', 'OLD', 'SEE', 'WAY', 'WHO',
+            'BOY', 'DID', 'ITS', 'LET', 'PUT', 'SAY', 'SHE', 'TOO', 'USE', 'HOW', 'WHAT',
+            'WHEN', 'WHERE', 'WHY', 'WILL', 'WITH', 'HAS', 'HIS', 'HIM',
+            
+            # CRITICAL: Casual words that were causing false positives
+            'YO', 'HEY', 'SO', 'OH', 'AH', 'UM', 'UH', 'YEP', 'NAH', 'LOL', 'OMG', 'WOW',
+            'BRO', 'FAM', 'THO', 'TBH', 'NGL', 'SMH', 'FML', 'IRL', 'BTW', 'TBF', 'IDK',
+            
+            # Basic prepositions and particles
+            'TO', 'AT', 'IN', 'ON', 'OR', 'OF', 'IS', 'IT', 'BE', 'GO', 'UP', 'MY', 'AS',
+            'IF', 'NO', 'WE', 'ME', 'HE', 'AN', 'AM', 'US', 'A', 'I',
+            
+            # Questions and responses
+            'YES', 'YET', 'OUT', 'OFF', 'BAD',
+            
+            # Trading terms that aren't symbols
+            'BUY', 'SELL', 'HOLD', 'CALL', 'PUT', 'BULL', 'BEAR', 'MOON', 'DIP', 'RIP',
+            'YOLO', 'HODL', 'FOMO', 'ATH', 'RSI', 'MACD', 'EMA', 'SMA', 'PE', 'DD',
+            
+            # Time references
+            'TODAY', 'THEN', 'SOON', 'LATER', 'WEEK',
+            
+            # Geographic/org abbreviations
+            'AI', 'API', 'CEO', 'CFO', 'IPO', 'ETF', 'SEC', 'FDA', 'FBI', 'CIA', 'NYC',
+            'LA', 'SF', 'DC', 'UK', 'US', 'EU', 'JP', 'CN', 'IN', 'CA', 'TX', 'FL',
+            
+            # Units and currencies
+            'K', 'M', 'B', 'T', 'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF',
+            
+            # Internet slang
+            'AF', 'FR', 'NM', 'WTF', 'LMAO', 'ROFL', 'TTYL', 'SWAG', 'LIT',
+            
+            # Common typos/variations
+            'UR', 'CUZ', 'PLZ', 'THX', 'NP', 'YA', 'IM', 'ILL', 'WONT', 'CANT'
+        }
+        
+        # Filter symbols with enhanced validation
+        valid_symbols = []
+        for symbol in potential_symbols:
+            if (symbol not in exclude_words and 
+                len(symbol) >= 2 and 
+                len(symbol) <= 5 and
+                symbol.isalpha() and  # Only letters, no numbers
+                not symbol.lower() in ['yo', 'hey', 'so', 'oh']):  # Extra protection
+                valid_symbols.append(symbol)
+        
+        # Remove duplicates while preserving order
+        symbols = list(dict.fromkeys(valid_symbols))
+        
+        # Intent detection
+        if any(word in message_lower for word in ['portfolio', 'positions', 'holdings']):
+            intent = "portfolio"
+            requires_tools = ["portfolio_check"]
+        elif any(word in message_lower for word in ['find', 'screen', 'search', 'discover']):
+            intent = "screener"
+            requires_tools = ["stock_screener"]
+        elif any(word in message_lower for word in ['help', 'commands', 'start']):
+            intent = "help"
+            requires_tools = []
+        elif symbols:
+            intent = "analyze"
+            requires_tools = ["technical_analysis"]
+        else:
+            intent = "general"
+            requires_tools = []
+        
+        return {
+            "intent": intent,
+            "symbols": symbols,
+            "confidence": 0.4,  # Lower confidence for fallback
+            "requires_tools": requires_tools,
+            "fallback": True
+        }
     
-    def _build_personality_context(self, user_profile: Dict) -> str:
-        """Build personality context for prompt"""
+    async def generate_response(
+        self, 
+        user_message: str,
+        intent_data: Dict,
+        tool_results: Dict,
+        user_phone: str,
+        user_profile: Dict = None
+    ) -> str:
+        """Step 3: Use GPT-4o to generate high-quality personalized response"""
         
-        if not user_profile:
-            return "New user - no personality data yet. Use friendly, moderate tone."
-        
-        comm_style = user_profile.get('communication_style', {})
-        trading_style = user_profile.get('trading_personality', {})
-        learning_data = user_profile.get('learning_data', {})
-        context_memory = user_profile.get('context_memory', {})
-        
-        return f"""Communication Style:
-- Formality: {comm_style.get('formality', 'casual')} 
-- Energy Level: {comm_style.get('energy', 'moderate')}
+        # Get personality context
+        personality_context = ""
+        if user_profile:
+            comm_style = user_profile.get('communication_style', {})
+            trading_style = user_profile.get('trading_personality', {})
+            
+            personality_context = f"""
+User Communication Style:
+- Formality: {comm_style.get('formality', 'casual')}
+- Energy: {comm_style.get('energy', 'moderate')}
 - Emoji Usage: {comm_style.get('emoji_usage', 'some')}
-- Message Length Preference: {comm_style.get('message_length', 'medium')}
 - Technical Depth: {comm_style.get('technical_depth', 'medium')}
 
-Trading Personality:
-- Experience Level: {trading_style.get('experience_level', 'intermediate')}
+User Trading Profile:
+- Experience: {trading_style.get('experience_level', 'intermediate')}
 - Risk Tolerance: {trading_style.get('risk_tolerance', 'moderate')}
 - Trading Style: {trading_style.get('trading_style', 'swing')}
-- Common Stocks: {', '.join(trading_style.get('common_symbols', [])[:5])}
-- Win/Loss Mentions: {learning_data.get('successful_trades_mentioned', 0)}W/{learning_data.get('loss_trades_mentioned', 0)}L
-
-Recent Context:
-- Last Discussed Stocks: {', '.join(context_memory.get('last_discussed_stocks', []))}
-- Total Conversations: {learning_data.get('total_messages', 0)}"""
-    
-    def _build_results_context(self, workflow_results: Dict, plan: WorkflowPlan) -> str:
-        """Build workflow results context for prompt"""
+"""
         
-        if not workflow_results.get('workflow_results'):
-            return "No workflow results available - acknowledge service unavailability."
-        
-        results_summary = []
-        
-        for workflow_name, result in workflow_results.get('workflow_results', {}).items():
-            if 'error' in result:
-                results_summary.append(f"❌ {workflow_name}: {result['error']}")
-            else:
-                results_summary.append(f"✅ {workflow_name}: {self._summarize_workflow_result(workflow_name, result)}")
-        
-        return '\n'.join(results_summary) if results_summary else "No actionable results from workflows."
-    
-    def _summarize_workflow_result(self, workflow_name: str, result: Dict) -> str:
-        """Summarize individual workflow results"""
-        
-        if workflow_name == "stock_analysis":
-            symbols = result.get('symbols_analyzed', [])
-            ta_data = result.get('technical_analysis', {})
+        # Format tool results for context
+        tool_context = ""
+        if tool_results:
+            if "technical_analysis" in tool_results:
+                ta_data = tool_results["technical_analysis"]
+                if ta_data:
+                    tool_context += f"""
+Technical Analysis Results:
+{json.dumps(ta_data, indent=2)[:500]}...
+"""
             
-            summaries = []
-            for symbol in symbols:
-                if symbol in ta_data:
-                    data = ta_data[symbol]
-                    price_info = data.get('price', {})
-                    if price_info:
-                        price = price_info.get('current', 'N/A')
-                        change = price_info.get('change_percent', 0)
-                        summaries.append(f"{symbol}: ${price} ({change:+.1f}%)")
-                    
-            return f"Analyzed {', '.join(summaries)}" if summaries else f"Analysis attempted for {', '.join(symbols)}"
+            if "portfolio_check" in tool_results:
+                portfolio_data = tool_results["portfolio_check"]
+                if portfolio_data:
+                    tool_context += f"""
+Portfolio Data:
+{json.dumps(portfolio_data, indent=2)[:300]}...
+"""
+            
+            if "market_data_unavailable" in tool_results:
+                tool_context += "\nMARKET DATA UNAVAILABLE - Acknowledge this honestly to the user."
         
-        elif workflow_name == "portfolio_review":
-            portfolio = result.get('portfolio', {})
-            if portfolio:
-                return f"Portfolio data available with {len(portfolio.get('positions', []))} positions"
-            else:
-                return "Portfolio data unavailable"
-        
-        elif workflow_name == "stock_discovery":
-            results = result.get('results', [])
-            criteria = result.get('screening_criteria', {})
-            return f"Found {len(results)} stocks matching criteria: {criteria}"
-        
-        else:
-            return f"Completed with {len(result)} data points"
-    
-    def _build_conversation_context(self, plan: WorkflowPlan, original_message: str) -> str:
-        """Build conversation context for prompt"""
-        
-        context_items = []
-        
-        # Add intent context
-        if plan.primary_intent == "stock_analysis":
-            context_items.append("User wants stock analysis - provide specific actionable insights")
-        elif plan.primary_intent == "portfolio_review":
-            context_items.append("User checking portfolio - focus on performance and recommendations")
-        elif plan.primary_intent == "options_analysis":
-            context_items.append("User interested in options - provide strategy guidance and risk awareness")
-        
-        # Add sentiment context
-        user_sentiment = plan.entities.get('user_sentiment', '')
-        if 'worried' in user_sentiment or 'concerned' in user_sentiment:
-            context_items.append("User seems worried - provide reassuring but honest guidance")
-        elif 'excited' in user_sentiment or 'bullish' in user_sentiment:
-            context_items.append("User seems excited - match energy but add appropriate caution")
-        
-        # Add urgency context
-        urgency = plan.entities.get('urgency', 'medium')
-        if urgency == 'high':
-            context_items.append("High urgency - user needs timely actionable information")
-        elif urgency == 'low':
-            context_items.append("Low urgency - user is researching, provide educational context")
-        
-        # Add investment context
-        investment_context = plan.entities.get('investment_context', '')
-        if 'buying' in investment_context or 'considering' in investment_context:
-            context_items.append("User considering purchase - provide entry points and risk assessment")
-        elif 'selling' in investment_context:
-            context_items.append("User considering sale - provide exit strategy guidance")
-        
-# ===== RESPONSE GENERATOR =====
+        prompt = f"""You are a hyper-personalized SMS trading assistant. Generate a response that perfectly matches the user's communication style and provides valuable trading insights.
 
-class ResponseGenerator:
-    """Final LLM that generates personalized responses using orchestrator's prompt"""
-    
-    def __init__(self, openai_service):
-        self.openai_service = openai_service
-    
-    async def generate_response(self, response_prompt: str) -> str:
-        """Generate final response using orchestrator's prepared prompt"""
-        
+Original Message: "{user_message}"
+
+Intent Analysis:
+{json.dumps(intent_data, indent=2)}
+
+{personality_context}
+
+{tool_context}
+
+RESPONSE GUIDELINES:
+1. Match the user's communication style exactly (formality, energy, emoji usage)
+2. Provide actionable trading insights based on available data
+3. If data is unavailable, acknowledge honestly but stay helpful
+4. Keep responses SMS-friendly (under 160 chars if possible, max 2 messages)
+5. Use appropriate trading terminology for their experience level
+6. Include relevant emojis if user uses them
+7. Be conversational and engaging
+
+Examples of style matching:
+- Casual/High-energy: "TSLA's going wild! 🚀 $245 and climbing, RSI at 68 tho - might need a breather soon. You thinking calls?"
+- Professional: "TSLA trading at $245.50, up 3.2%. RSI indicates slight overbought conditions at 68. Technical outlook remains bullish."
+- Beginner-friendly: "Tesla's doing well today! It's up to $245. The RSI (momentum indicator) shows it might slow down soon, but the trend looks good overall."
+
+Generate the perfect response now:"""
+
         try:
-            response = await self.openai_service.client.chat.completions.create(
-                model="gpt-4o",     # Premium model for creative response generation
-                messages=[{"role": "user", "content": response_prompt}],
-                temperature=0.7,    # Higher creativity for response generation
-                max_tokens=250      # Adequate for SMS responses
-            )
+            # FIXED: Properly handle AsyncOpenAI client
+            if hasattr(self.openai_client, 'chat'):
+                # Direct client
+                response = await self.openai_client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7,
+                    max_tokens=200
+                )
+            else:
+                # Wrapped client - access the actual client
+                response = await self.openai_client.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7,
+                    max_tokens=200
+                )
             
             generated_response = response.choices[0].message.content.strip()
             
-            # Ensure SMS compatibility
-            if len(generated_response) > 320:
-                # Try to split into 2 messages
-                sentences = generated_response.split('. ')
-                if len(sentences) > 1:
-                    mid_point = len(sentences) // 2
-                    first_half = '. '.join(sentences[:mid_point]) + '.'
-                    second_half = '. '.join(sentences[mid_point:])
-                    
-                    if len(first_half) <= 160 and len(second_half) <= 160:
-                        generated_response = f"{first_half}\n\n{second_half}"
-                    else:
-                        generated_response = generated_response[:317] + "..."
-                else:
-                    generated_response = generated_response[:317] + "..."
+            # Ensure response isn't too long for SMS
+            if len(generated_response) > 320:  # SMS limit is ~160 but allow for 2 messages
+                generated_response = generated_response[:317] + "..."
+            
+            logger.info(f"Generated personalized response: {len(generated_response)} chars")
             
             return generated_response
             
         except Exception as e:
             logger.error(f"Response generation failed: {e}")
-            return "Sorry, I'm having trouble right now. Please try again in a moment! 🔧"
-
-# ===== COMPLETE ORCHESTRATED SMS PROCESSOR =====
-
-class OrchestratedSMSProcessor:
-    """Complete SMS processing with LLM orchestration"""
+            # Fallback to simple response
+            return self._generate_fallback_response(intent_data, tool_results)
     
-    def __init__(self, openai_service, ta_service, portfolio_service, personality_engine):
-        self.orchestrator = IntelligentOrchestrator(openai_service, personality_engine)
-        self.workflow_executor = WorkflowExecutor(ta_service, portfolio_service)
-        self.response_generator = ResponseGenerator(openai_service)
-        self.personality_engine = personality_engine
-    
-    async def process_sms(self, message: str, user_phone: str) -> str:
-        """Complete orchestrated SMS processing"""
+    def _generate_fallback_response(self, intent_data: Dict, tool_results: Dict) -> str:
+        """Simple fallback response if LLM fails"""
         
-        logger.info(f"🎭 Processing SMS with full orchestration: '{message}'")
-        
-        try:
-            # Step 1: LLM Orchestrator plans everything
-            plan = await self.orchestrator.orchestrate_message(message, user_phone)
-            
-            # Step 2: Execute planned workflows
-            workflow_results = await self.workflow_executor.execute_plan(plan, user_phone)
-            
-            # Step 3: Learn from interaction
-            self.personality_engine.learn_from_message(user_phone, message, {
-                "intent": plan.primary_intent,
-                "symbols": plan.entities.get("symbols", []),
-                "sentiment": plan.entities.get("user_sentiment", "neutral"),
-                "context": plan.entities.get("investment_context", "general")
-            })
-            
-            # Step 4: Orchestrator creates response prompt
-            response_prompt = self.orchestrator.create_response_prompt(
-                plan=plan,
-                workflow_results=workflow_results,
-                original_message=message,
-                user_phone=user_phone
-            )
-            
-            # Step 5: Response generator creates final response
-            final_response = await self.response_generator.generate_response(response_prompt)
-            
-            logger.info(f"✅ Orchestrated response generated: {len(final_response)} chars")
-            
-            return final_response
-            
-        except Exception as e:
-            logger.error(f"💥 Orchestrated SMS processing failed: {e}")
-            return "Sorry, I'm having technical issues. Please try again in a moment! 🔧"
-    
-    def _enhance_symbol_extraction(self, entities: Dict, message: str) -> Dict:
-        """Enhance symbol extraction with company name mapping"""
-        
-        # Company name mappings (comprehensive)
-        company_mappings = {
-            'apple': 'AAPL', 'tesla': 'TSLA', 'microsoft': 'MSFT', 'amazon': 'AMZN',
-            'google': 'GOOGL', 'alphabet': 'GOOGL', 'meta': 'META', 'facebook': 'META',
-            'nvidia': 'NVDA', 'netflix': 'NFLX', 'adobe': 'ADBE', 'salesforce': 'CRM',
-            'verizon': 'VZ', 'at&t': 'T', 'att': 'T', 'comcast': 'CMCSA', 't-mobile': 'TMUS',
-            'jpmorgan': 'JPM', 'jp morgan': 'JPM', 'goldman': 'GS', 'goldman sachs': 'GS',
-            'bank of america': 'BAC', 'wells fargo': 'WFC', 'morgan stanley': 'MS',
-            'walmart': 'WMT', 'target': 'TGT', 'home depot': 'HD', 'starbucks': 'SBUX',
-            'boeing': 'BA', 'caterpillar': 'CAT', 'general electric': 'GE',
-            'johnson & johnson': 'JNJ', 'pfizer': 'PFE', 'merck': 'MRK',
-            'exxon': 'XOM', 'chevron': 'CVX', 'coinbase': 'COIN', 'paypal': 'PYPL'
-        }
-        
-        message_lower = message.lower()
-        additional_symbols = []
-        
-        for company, symbol in company_mappings.items():
-            if company in message_lower:
-                additional_symbols.append(symbol)
-        
-        # Merge with existing symbols
-        existing_symbols = entities.get("symbols", [])
-        all_symbols = list(set(existing_symbols + additional_symbols))
-        
-        entities["symbols"] = all_symbols
-        entities["company_names_detected"] = additional_symbols
-        
-        return entities
-    
-    def _fallback_orchestration(self, message: str) -> WorkflowPlan:
-        """Fallback if LLM orchestration fails"""
-        
-        message_lower = message.lower()
-        
-        # Simple intent detection
-        if any(word in message_lower for word in ['portfolio', 'positions']):
-            primary_intent = "portfolio_review"
-            workflows = [{"name": "portfolio_review", "priority": 1, "params": {}}]
-        elif any(word in message_lower for word in ['find', 'discover', 'screen']):
-            primary_intent = "stock_discovery" 
-            workflows = [{"name": "stock_discovery", "priority": 1, "params": {}}]
-        else:
-            primary_intent = "general_chat"
-            workflows = [{"name": "general_chat", "priority": 1, "params": {}}]
-        
-        return WorkflowPlan(
-            primary_intent=primary_intent,
-            workflows=workflows,
-            entities={"symbols": [], "fallback": True},
-            user_context={"fallback_mode": True},
-            execution_order=[w["name"] for w in workflows]
-        )
-
-# ===== WORKFLOW EXECUTION ENGINE =====
-
-class WorkflowExecutor:
-    """Executes the workflows planned by the orchestrator"""
-    
-    def __init__(self, ta_service, portfolio_service, news_service=None):
-        self.ta_service = ta_service
-        self.portfolio_service = portfolio_service  
-        self.news_service = news_service
-        
-        # Map workflow names to execution functions
-        self.workflow_handlers = {
-            "stock_analysis": self._execute_stock_analysis,
-            "portfolio_review": self._execute_portfolio_review,
-            "stock_discovery": self._execute_stock_discovery,
-            "options_analysis": self._execute_options_analysis,
-            "earnings_calendar": self._execute_earnings_calendar,
-            "general_chat": self._execute_general_chat
-        }
-    
-    async def execute_plan(self, plan: WorkflowPlan, user_phone: str) -> Dict[str, Any]:
-        """Execute all workflows in the plan"""
-        
-        results = {
-            "plan_summary": {
-                "primary_intent": plan.primary_intent,
-                "workflows_executed": [],
-                "entities_processed": plan.entities
-            },
-            "workflow_results": {},
-            "execution_order": plan.execution_order
-        }
-        
-        # Execute workflows in priority order
-        for workflow in sorted(plan.workflows, key=lambda x: x.get("priority", 999)):
-            workflow_name = workflow["name"]
-            workflow_params = workflow.get("params", {})
-            
-            if workflow_name in self.workflow_handlers:
-                try:
-                    logger.info(f"🔄 Executing workflow: {workflow_name}")
-                    
-                    result = await self.workflow_handlers[workflow_name](
-                        params=workflow_params,
-                        entities=plan.entities,
-                        user_phone=user_phone
-                    )
-                    
-                    results["workflow_results"][workflow_name] = result
-                    results["plan_summary"]["workflows_executed"].append(workflow_name)
-                    
-                    logger.info(f"✅ Completed workflow: {workflow_name}")
-                    
-                except Exception as e:
-                    logger.error(f"❌ Workflow {workflow_name} failed: {e}")
-                    results["workflow_results"][workflow_name] = {"error": str(e)}
+        if intent_data["intent"] == "analyze" and intent_data["symbols"]:
+            symbol = intent_data["symbols"][0]
+            if tool_results.get("technical_analysis"):
+                return f"{symbol} analysis ready! Check the data above."
             else:
-                logger.warning(f"Unknown workflow: {workflow_name}")
+                return f"Sorry, can't get {symbol} data right now. Try again in a moment!"
+        
+        elif intent_data["intent"] == "help":
+            return "I'm your trading assistant! Ask about stocks, portfolio, or market analysis. 📈"
+        
+        else:
+            return "I'm here to help with your trading questions! What would you like to know?"
+
+
+# ===== Tool Execution Engine =====
+
+class ToolExecutor:
+    """Handles execution of various trading tools based on intent"""
+    
+    def __init__(self, ta_service, portfolio_service=None, screener_service=None):
+        self.ta_service = ta_service
+        self.portfolio_service = portfolio_service
+        self.screener_service = screener_service
+    
+    async def execute_tools(self, intent_data: Dict, user_phone: str) -> Dict[str, Any]:
+        """Execute required tools based on parsed intent"""
+        
+        results = {}
+        required_tools = intent_data.get("requires_tools", [])
+        
+        # Execute tools in parallel when possible
+        tasks = []
+        
+        if "technical_analysis" in required_tools and intent_data.get("symbols"):
+            tasks.append(self._execute_technical_analysis(intent_data["symbols"]))
+        
+        if "portfolio_check" in required_tools:
+            tasks.append(self._execute_portfolio_check(user_phone))
+        
+        if "stock_screener" in required_tools:
+            tasks.append(self._execute_stock_screener(intent_data.get("parameters", {})))
+        
+        # Wait for all tools to complete
+        if tasks:
+            tool_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process results
+            for i, result in enumerate(tool_results):
+                if isinstance(result, Exception):
+                    logger.error(f"Tool execution failed: {result}")
+                    results["error"] = str(result)
+                else:
+                    results.update(result)
         
         return results
     
-    async def _execute_stock_analysis(self, params: Dict, entities: Dict, user_phone: str) -> Dict:
-        """Execute stock analysis workflow"""
-        
-        symbols = entities.get("symbols", [])
-        if not symbols:
-            return {"error": "No symbols to analyze"}
-        
-        analysis_results = {}
-        
-        for symbol in symbols[:3]:  # Limit to 3 symbols
-            if self.ta_service:
-                ta_data = await self.ta_service.analyze_symbol(symbol)
+    async def _execute_technical_analysis(self, symbols: List[str]) -> Dict:
+        """Execute technical analysis for symbols"""
+        try:
+            if not self.ta_service:
+                return {"market_data_unavailable": True}
+            
+            ta_results = {}
+            for symbol in symbols[:3]:  # Limit to 3 symbols max
+                ta_data = await self.ta_service.analyze_symbol(symbol.upper())
                 if ta_data:
-                    analysis_results[symbol] = ta_data
-        
-        return {
-            "symbols_analyzed": list(analysis_results.keys()),
-            "technical_analysis": analysis_results,
-            "focus": params.get("focus", "general")
-        }
+                    ta_results[symbol] = ta_data
+            
+            return {"technical_analysis": ta_results} if ta_results else {"market_data_unavailable": True}
+            
+        except Exception as e:
+            logger.error(f"Technical analysis failed: {e}")
+            return {"market_data_unavailable": True}
     
-    async def _execute_portfolio_review(self, params: Dict, entities: Dict, user_phone: str) -> Dict:
-        """Execute portfolio review workflow"""
+    async def _execute_portfolio_check(self, user_phone: str) -> Dict:
+        """Execute portfolio check for user"""
+        try:
+            if not self.portfolio_service:
+                return {"portfolio_unavailable": True}
+            
+            portfolio_data = await self.portfolio_service.get_user_portfolio(user_phone)
+            return {"portfolio_check": portfolio_data}
+            
+        except Exception as e:
+            logger.error(f"Portfolio check failed: {e}")
+            return {"portfolio_unavailable": True}
+    
+    async def _execute_stock_screener(self, parameters: Dict) -> Dict:
+        """Execute stock screener with parameters"""
+        try:
+            if not self.screener_service:
+                return {"screener_unavailable": True}
+            
+            screener_results = await self.screener_service.screen_stocks(parameters)
+            return {"stock_screener": screener_results}
+            
+        except Exception as e:
+            logger.error(f"Stock screener failed: {e}")
+            return {"screener_unavailable": True}
+
+
+# ===== ADVANCED SYMBOL EXTRACTION =====
+
+class AdvancedSymbolExtractor:
+    """Advanced context-aware symbol extraction"""
+    
+    def __init__(self):
+        # Comprehensive company mappings
+        self.company_mappings = {
+            # Tech giants
+            'apple': 'AAPL', 'tesla': 'TSLA', 'microsoft': 'MSFT', 'amazon': 'AMZN',
+            'google': 'GOOGL', 'alphabet': 'GOOGL', 'meta': 'META', 'facebook': 'META',
+            'nvidia': 'NVDA', 'netflix': 'NFLX', 'adobe': 'ADBE', 'salesforce': 'CRM',
+            
+            # Telecom
+            'verizon': 'VZ', 'at&t': 'T', 'att': 'T', 'comcast': 'CMCSA', 't-mobile': 'TMUS',
+            
+            # Finance
+            'jpmorgan': 'JPM', 'jp morgan': 'JPM', 'goldman': 'GS', 'goldman sachs': 'GS',
+            'bank of america': 'BAC', 'wells fargo': 'WFC', 'morgan stanley': 'MS',
+            
+            # Retail
+            'walmart': 'WMT', 'target': 'TGT', 'home depot': 'HD', 'lowes': 'LOW',
+            'starbucks': 'SBUX', 'mcdonalds': 'MCD', 'nike': 'NKE',
+            
+            # Industrial
+            'boeing': 'BA', 'caterpillar': 'CAT', 'general electric': 'GE', '3m': 'MMM',
+            
+            # Healthcare
+            'johnson & johnson': 'JNJ', 'pfizer': 'PFE', 'merck': 'MRK', 'abbott': 'ABT',
+            
+            # Energy
+            'exxon': 'XOM', 'chevron': 'CVX', 'conocophillips': 'COP',
+            
+            # Crypto/Fintech
+            'coinbase': 'COIN', 'paypal': 'PYPL', 'square': 'SQ', 'robinhood': 'HOOD'
+        }
         
-        if not self.portfolio_service:
-            return {"error": "Portfolio service not available"}
+        # Trading context indicators
+        self.trading_context_indicators = [
+            'stock', 'ticker', 'symbol', 'price', 'trading', 'buying', 'selling',
+            'calls', 'puts', 'options', 'shares', 'market', 'earnings', 'dividend',
+            'up', 'down', 'gain', 'loss', 'profit', 'bull', 'bear', 'chart',
+            'rsi', 'macd', 'volume', 'support', 'resistance', 'breakout'
+        ]
+    
+    def extract_symbols(self, message: str) -> List[str]:
+        """Extract symbols using advanced context-aware analysis"""
+        import re
+        
+        message_lower = message.lower()
+        found_symbols = []
+        
+        # Check for company names first
+        for company, symbol in self.company_mappings.items():
+            if company in message_lower:
+                found_symbols.append(symbol)
+        
+        # Find potential ticker symbols
+        potential_symbols = re.findall(r'\b[A-Z]{2,5}\b', message.upper())
+        
+        # Check for trading context
+        has_trading_context = any(indicator in message_lower for indicator in self.trading_context_indicators)
+        
+        # Process potential symbols with context awareness
+        for symbol in potential_symbols:
+            if self._is_valid_symbol_in_context(symbol, message, has_trading_context):
+                found_symbols.append(symbol)
+        
+        # Remove duplicates while preserving order
+        return list(dict.fromkeys(found_symbols))
+    
+    def _is_valid_symbol_in_context(self, symbol: str, message: str, has_trading_context: bool) -> bool:
+        """Determine if a symbol is valid based on context"""
+        
+        # Always exclude common words
+        always_exclude = {
+            'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'GET', 'HAS', 
+            'WAS', 'ONE', 'OUR', 'HAD', 'NOW', 'OLD', 'SEE', 'WAY', 'WHO', 'BOY', 
+            'DID', 'ITS', 'LET', 'PUT', 'SAY', 'SHE', 'TOO', 'USE', 'HOW', 'WHAT', 'WHEN'
+        }
+        
+        if symbol in always_exclude:
+            return False
+        
+        # Context-dependent exclusions
+        context_dependent_exclude = {
+            'SMH': ['smh', 'shaking my head'],
+            'LOL': ['lol', 'laugh'],
+            'OMG': ['omg', 'oh my god'],
+            'WOW': ['wow', 'amazing'],
+            'CAT': ['cat', 'pet', 'animal'],
+            'AI': ['artificial intelligence']
+        }
+        
+        # If we have trading context, be more permissive
+        if has_trading_context:
+            if symbol in context_dependent_exclude:
+                exclusion_phrases = context_dependent_exclude[symbol]
+                message_lower = message.lower()
+                
+                for phrase in exclusion_phrases:
+                    if phrase in message_lower:
+                        return False
+            
+            return len(symbol) >= 2 and len(symbol) <= 5 and symbol.isalpha()
+        
+        # Without trading context, be more restrictive
+        else:
+            major_tickers = {
+                'AAPL', 'TSLA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NVDA', 'NFLX',
+                'JPM', 'BAC', 'WFC', 'GS', 'MS', 'V', 'MA', 'DIS', 'WMT', 'HD'
+            }
+            
+            return symbol in major_tickers
+
+
+# ===== PERSONALITY-AWARE RESPONSE GENERATOR =====
+
+class PersonalityAwareResponseGenerator:
+    """Generates responses that match user's personality perfectly"""
+    
+    def __init__(self, openai_client):
+        self.openai_client = openai_client
+    
+    async def generate_personality_matched_response(
+        self, 
+        user_message: str,
+        analysis_data: Dict,
+        user_profile: Dict,
+        user_phone: str
+    ) -> str:
+        """Generate response that perfectly matches user's personality"""
+        
+        # Build detailed personality prompt
+        personality_prompt = self._build_personality_prompt(user_profile, user_message, analysis_data)
         
         try:
-            portfolio_data = await self.portfolio_service.get_user_portfolio(user_phone)
-            return {
-                "portfolio": portfolio_data,
-                "review_type": params.get("review_type", "summary")
-            }
+            if hasattr(self.openai_client, 'chat'):
+                response = await self.openai_client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": personality_prompt}],
+                    temperature=0.8,  # Higher creativity for personality matching
+                    max_tokens=250
+                )
+            else:
+                response = await self.openai_client.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": personality_prompt}],
+                    temperature=0.8,
+                    max_tokens=250
+                )
+            
+            generated_response = response.choices[0].message.content.strip()
+            
+            # SMS optimization
+            if len(generated_response) > 320:
+                generated_response = self._optimize_for_sms(generated_response)
+            
+            return generated_response
+            
         except Exception as e:
-            return {"error": f"Portfolio fetch failed: {str(e)}"}
+            logger.error(f"Personality response generation failed: {e}")
+            return self._generate_fallback_personality_response(user_profile, analysis_data)
     
-    async def _execute_stock_discovery(self, params: Dict, entities: Dict, user_phone: str) -> Dict:
-        """Execute stock discovery/screening workflow"""
+    def _build_personality_prompt(self, user_profile: Dict, user_message: str, analysis_data: Dict) -> str:
+        """Build comprehensive personality-aware prompt"""
         
-        criteria = params.get("criteria", {})
+        comm_style = user_profile.get('communication_style', {})
+        trading_style = user_profile.get('trading_personality', {})
         
-        # Mock screener results for now
-        return {
-            "screening_criteria": criteria,
-            "results": ["AAPL", "MSFT", "GOOGL"],  # Mock results
-            "screener_type": "basic"
-        }
+        style_description = f"""
+USER PERSONALITY PROFILE:
+Communication Style:
+- Formality: {comm_style.get('formality', 'casual')} (casual/professional/friendly)
+- Energy Level: {comm_style.get('energy', 'moderate')} (low/moderate/high/excited)
+- Emoji Usage: {comm_style.get('emoji_usage', 'some')} (none/minimal/some/lots)
+- Message Length: {comm_style.get('message_length', 'medium')} (short/medium/long)
+- Technical Depth: {comm_style.get('technical_depth', 'medium')} (basic/medium/advanced)
+
+Trading Personality:
+- Experience: {trading_style.get('experience_level', 'intermediate')} (beginner/intermediate/advanced)
+- Risk Tolerance: {trading_style.get('risk_tolerance', 'moderate')} (conservative/moderate/aggressive)
+- Trading Style: {trading_style.get('trading_style', 'swing')} (day/swing/long_term)
+- Win Rate: {user_profile.get('learning_data', {}).get('successful_trades_mentioned', 0)}W/{user_profile.get('learning_data', {}).get('loss_trades_mentioned', 0)}L
+"""
+        
+        analysis_context = ""
+        if analysis_data:
+            analysis_context = f"""
+MARKET DATA ANALYSIS:
+{json.dumps(analysis_data, indent=2)[:600]}...
+"""
+        
+        return f"""You are this user's personal AI trading buddy. You know them intimately and communicate exactly like their best trading friend would.
+
+{style_description}
+
+ORIGINAL MESSAGE: "{user_message}"
+
+{analysis_context}
+
+CRITICAL INSTRUCTIONS:
+1. Match their EXACT communication style - if they say "yo" you say "yo", if they're professional you're professional
+2. Use their preferred emoji level - match their energy exactly
+3. Technical depth must match their experience level
+4. Reference their trading personality naturally
+5. Keep under 320 characters for SMS
+6. Sound like you've known them for years
+
+STYLE EXAMPLES:
+- Casual/High: "Yo! TSLA looking spicy 🌶️ RSI at 67, still got room to run. You thinking calls or waiting for a dip?"
+- Professional: "TSLA analysis: $245.50 (+1.2%), RSI 67 indicates room for upward movement. Entry opportunity present."
+- Beginner: "Tesla's doing well! Up $3 today. The RSI shows it's not overbought yet - that's good for more gains!"
+
+Generate their perfect personalized response:"""
     
-    async def _execute_options_analysis(self, params: Dict, entities: Dict, user_phone: str) -> Dict:
-        """Execute options analysis workflow"""
+    def _optimize_for_sms(self, response: str) -> str:
+        """Optimize long responses for SMS"""
+        sentences = response.split('. ')
+        if len(sentences) > 1:
+            # Try to split into 2 messages
+            mid_point = len(sentences) // 2
+            first_half = '. '.join(sentences[:mid_point]) + '.'
+            second_half = '. '.join(sentences[mid_point:])
+            
+            if len(first_half) <= 160 and len(second_half) <= 160:
+                return f"{first_half}\n\n{second_half}"
         
-        symbols = entities.get("symbols", [])
-        strategy = params.get("strategy", "calls")
-        
-        return {
-            "symbols": symbols,
-            "strategy": strategy,
-            "analysis": "Options analysis coming soon",
-            "options_available": False
-        }
+        return response[:317] + "..."
     
-    async def _execute_earnings_calendar(self, params: Dict, entities: Dict, user_phone: str) -> Dict:
-        """Execute earnings calendar workflow"""
+    def _generate_fallback_personality_response(self, user_profile: Dict, analysis_data: Dict) -> str:
+        """Fallback response when AI fails"""
+        formality = user_profile.get('communication_style', {}).get('formality', 'casual')
         
-        symbols = entities.get("symbols", [])
-        
-        return {
-            "symbols": symbols,
-            "upcoming_earnings": "Earnings calendar coming soon",
-            "calendar_available": False
-        }
+        if formality == 'casual':
+            return "Data's looking good! 📈 Let me know if you want more details!"
+        else:
+            return "Analysis complete. Technical indicators are available upon request."
+
+
+# ===== COMPREHENSIVE MESSAGE PROCESSOR =====
+
+class ComprehensiveMessageProcessor:
+    """Complete message processing with all components integrated"""
     
-    async def _execute_general_chat(self, params: Dict, entities: Dict, user_phone: str) -> Dict:
-        """Handle general conversation"""
+    def __init__(self, openai_client, ta_service, personality_engine):
+        self.trading_agent = TradingAgent(openai_client, personality_engine)
+        self.tool_executor = ToolExecutor(ta_service)
+        self.symbol_extractor = AdvancedSymbolExtractor()
+        self.response_generator = PersonalityAwareResponseGenerator(openai_client)
+        self.personality_engine = personality_engine
+    
+    async def process_complete_message(self, message: str, user_phone: str) -> str:
+        """Complete message processing pipeline"""
         
-        return {
-            "chat_response": "I'm here to help with trading questions!",
-            "suggestions": ["Ask about a stock", "Check your portfolio", "Find new stocks"]
-        }
+        try:
+            logger.info(f"🔄 Processing complete message: '{message}' from {user_phone}")
+            
+            # Step 1: Parse intent with trading agent
+            intent_data = await self.trading_agent.parse_intent(message, user_phone)
+            
+            # Step 2: Execute tools based on intent
+            tool_results = await self.tool_executor.execute_tools(intent_data, user_phone)
+            
+            # Step 3: Learn from interaction
+            self.personality_engine.learn_from_message(user_phone, message, intent_data)
+            
+            # Step 4: Get user profile
+            user_profile = self.personality_engine.get_user_profile(user_phone)
+            
+            # Step 5: Generate personality-matched response
+            response = await self.response_generator.generate_personality_matched_response(
+                user_message=message,
+                analysis_data=tool_results,
+                user_profile=user_profile,
+                user_phone=user_phone
+            )
+            
+            logger.info(f"✅ Complete processing finished: {len(response)} chars")
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"💥 Complete message processing failed: {e}")
+            return "Having some technical issues right now. Try again in a moment! 🔧"
