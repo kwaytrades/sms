@@ -582,7 +582,7 @@ async def lifespan(app: FastAPI):
         if TradingAgent and openai_service:
             try:
                 trading_agent = TradingAgent(
-                    openai_client=openai_service.client,  # Fixed: pass the client
+                    openai_client=openai_service,  # Fixed: pass the client
                     personality_engine=personality_engine  # Fixed: pass personality_engine
                 )
                 logger.info("✅ Trading agent initialized")
