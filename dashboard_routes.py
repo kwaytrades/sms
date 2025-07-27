@@ -18,17 +18,9 @@ dashboard_router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 # Static files router for dashboard assets
 static_router = APIRouter()
 
-def setup_static_files(app):
-    """Setup static file serving for dashboard assets"""
-    # Create static directories if they don't exist
-    static_dir = Path("static")
-    static_dir.mkdir(exist_ok=True)
-    
-    templates_dir = Path("templates")
-    templates_dir.mkdir(exist_ok=True)
-    
+
     # Mount static files
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+    #app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @dashboard_router.get("/", response_class=HTMLResponse)
 async def dashboard_home():
