@@ -33,6 +33,8 @@ except ImportError:
         twilio_account_sid = os.getenv('TWILIO_ACCOUNT_SID')
         twilio_auth_token = os.getenv('TWILIO_AUTH_TOKEN')
         twilio_phone_number = os.getenv('TWILIO_PHONE_NUMBER')
+        eodhd_api_key = os.getenv('EODHD_API_KEY')
+        marketaux_api_key = os.getenv('MARKETAUX_API_KEY')
         
         # Plan limits
         free_weekly_limit = 4
@@ -552,122 +554,132 @@ async def lifespan(app: FastAPI):
     
     try:
         # Initialize Database Service
-        db_service = DatabaseService()
-        try:
-            await db_service.initialize()
-            logger.info("✅ Database service initialized")
-        except Exception as e:
-            logger.error(f"❌ Database service failed: {e}")
-            logger.error(f"MongoDB URL: {settings.mongodb_url[:50]}...")
-            logger.error(f"Redis URL: {settings.redis_url[:30]}...")
-            db_service = None
+        if DatabaseService:
+            db_service = DatabaseService()
+            try:
+                await db_service.initialize()
+                logger.info("✅ Database service initialized")
+            except Exception as e:
+                logger.error(f"❌ Database service failed: {e}")
+                logger.error(f"MongoDB URL: {settings.mongodb_url[:50]}...")
+                logger.error(f"Redis URL: {settings.redis_url[:30]}...")
+                db_service = None
         
         # Initialize OpenAI Service
-        try:
-            openai_service = OpenAIService()
-            logger.info("✅ OpenAI service initialized")
-        except Exception as e:
-            logger.error(f"❌ OpenAI service failed: {e}")
-            openai_service = None
+        if OpenAIService:
+            try:
+                openai_service = OpenAIService()
+                logger.info("✅ OpenAI service initialized")
+            except Exception as e:
+                logger.error(f"❌ OpenAI service failed: {e}")
+                openai_service = None
         
         # Initialize Twilio Service
-        try:
-            twilio_service = TwilioService()
-            logger.info("✅ Twilio service initialized")
-        except Exception as e:
-            logger.error(f"❌ Twilio service failed: {e}")
-            twilio_service = None
+        if TwilioService:
+            try:
+                twilio_service = TwilioService()
+                logger.info("✅ Twilio service initialized")
+            except Exception as e:
+                logger.error(f"❌ Twilio service failed: {e}")
+                twilio_service = None
         
         # Initialize Technical Analysis Service
-        try:
-            ta_service = TechnicalAnalysisService()
-            logger.info("✅ TA Service initialized with API key: {'Set' if settings.eodhd_api_key else 'Missing'}")
-        except Exception as e:
-            logger.error(f"❌ Technical Analysis service failed: {e}")
-            ta_service = None
+        if TechnicalAnalysisService:
+            try:
+                ta_service = TechnicalAnalysisService()
+                logger.info("✅ TA Service initialized with API key: {'Set' if getattr(settings, 'eodhd_api_key', None) else 'Missing'}")
+            except Exception as e:
+                logger.error(f"❌ Technical Analysis service failed: {e}")
+                ta_service = None
         
         # Initialize Fundamental Analysis Service
-        try:
-            # Check if Redis is available for caching
-            redis_available = db_service and db_service.redis
-            if redis_available:
-                logger.info("✅ Redis available for fundamental analysis caching")
-            else:
-                logger.warning("⚠️ Redis unavailable for fundamental analysis: Using weekly caching fallback")
-            
-            fundamental_service = FundamentalAnalysisEngine(
-                eodhd_api_key=settings.eodhd_api_key,
-                redis_client=db_service.redis if redis_available else None,
-                cache_ttl=3600 if redis_available else 604800  # 1 hour with Redis, 1 week without
-            )
-            logger.info("✅ Fundamental Analysis Engine initialized with weekly caching")
-        except Exception as e:
-            logger.error(f"❌ Fundamental Analysis service failed: {e}")
-            fundamental_service = None
+        if FundamentalAnalysisEngine:
+            try:
+                # Check if Redis is available for caching
+                redis_available = db_service and hasattr(db_service, 'redis') and db_service.redis
+                if redis_available:
+                    logger.info("✅ Redis available for fundamental analysis caching")
+                else:
+                    logger.warning("⚠️ Redis unavailable for fundamental analysis: Using weekly caching fallback")
+                
+                fundamental_service = FundamentalAnalysisEngine(
+                    eodhd_api_key=getattr(settings, 'eodhd_api_key', None),
+                    redis_client=db_service.redis if redis_available else None,
+                    cache_ttl=3600 if redis_available else 604800  # 1 hour with Redis, 1 week without
+                )
+                logger.info("✅ Fundamental Analysis Engine initialized with weekly caching")
+            except Exception as e:
+                logger.error(f"❌ Fundamental Analysis service failed: {e}")
+                fundamental_service = None
         
         # Initialize News Sentiment Service
-        try:
-            news_service = NewsSentimentService(
-                marketaux_api_key=settings.marketaux_api_key,
-                redis_client=db_service.redis if db_service else None,
-                openai_service=openai_service
-            )
-            logger.info("✅ News Sentiment Service initialized with MarketAux API: {'Set' if settings.marketaux_api_key else 'Missing'}")
-            logger.info(f"✅ Redis available: {db_service and db_service.redis is not None}")
-            logger.info(f"✅ OpenAI service available: {openai_service is not None}")
-        except Exception as e:
-            logger.error(f"❌ News Sentiment service failed: {e}")
-            news_service = None
+        if NewsSentimentService:
+            try:
+                news_service = NewsSentimentService(
+                    marketaux_api_key=getattr(settings, 'marketaux_api_key', None),
+                    redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
+                    openai_service=openai_service
+                )
+                logger.info("✅ News Sentiment Service initialized with MarketAux API: {'Set' if getattr(settings, 'marketaux_api_key', None) else 'Missing'}")
+                logger.info(f"✅ Redis available: {db_service and hasattr(db_service, 'redis') and db_service.redis is not None}")
+                logger.info(f"✅ OpenAI service available: {openai_service is not None}")
+            except Exception as e:
+                logger.error(f"❌ News Sentiment service failed: {e}")
+                news_service = None
         
         # Initialize Trading Agent (Hybrid LLM Agent)
-        try:
-            if openai_service and personality_engine:
-                trading_agent = TradingAgent(
-                    openai_client=openai_service,
-                    personality_engine=personality_engine,
-                    database_service=db_service  # Pass database service for context
-                )
-                logger.info("✅ Trading agent initialized")
-            else:
-                logger.warning("⚠️ Trading agent not initialized - missing OpenAI service or personality engine")
+        if TradingAgent:
+            try:
+                if openai_service and personality_engine:
+                    trading_agent = TradingAgent(
+                        openai_client=openai_service,
+                        personality_engine=personality_engine,
+                        database_service=db_service  # Pass database service for context
+                    )
+                    logger.info("✅ Trading agent initialized")
+                else:
+                    logger.warning("⚠️ Trading agent not initialized - missing OpenAI service or personality engine")
+                    trading_agent = None
+            except Exception as e:
+                logger.error(f"❌ Trading agent failed: {e}")
                 trading_agent = None
-        except Exception as e:
-            logger.error(f"❌ Trading agent failed: {e}")
-            trading_agent = None
         
         # Initialize Fundamental Analysis Tool
-        try:
-            if fundamental_service:
-                fundamental_tool = FundamentalAnalysisTool(fundamental_service)
-                logger.info("✅ Fundamental Analysis Tool initialized")
-            else:
+        if FundamentalAnalysisTool:
+            try:
+                if fundamental_service:
+                    fundamental_tool = FundamentalAnalysisTool(fundamental_service)
+                    logger.info("✅ Fundamental Analysis Tool initialized")
+                else:
+                    fundamental_tool = None
+                    logger.warning("⚠️ Fundamental Analysis Tool not available")
+            except Exception as e:
+                logger.error(f"❌ Fundamental Analysis Tool failed: {e}")
                 fundamental_tool = None
-                logger.warning("⚠️ Fundamental Analysis Tool not available")
-        except Exception as e:
-            logger.error(f"❌ Fundamental Analysis Tool failed: {e}")
-            fundamental_tool = None
         
         # Initialize Tool Executor
-        try:
-            tool_executor = ToolExecutor(
-                ta_service=ta_service,
-                portfolio_service=None,  # Not implemented yet
-                screener_service=None,   # Not implemented yet
-                news_service=news_service,
-                fundamental_tool=fundamental_tool
-            )
-            logger.info("✅ Tool executor initialized with TA + News + Fundamental Analysis")
-        except Exception as e:
-            logger.error(f"❌ Tool executor failed: {e}")
-            tool_executor = None
+        if ToolExecutor:
+            try:
+                tool_executor = ToolExecutor(
+                    ta_service=ta_service,
+                    portfolio_service=None,  # Not implemented yet
+                    screener_service=None,   # Not implemented yet
+                    news_service=news_service,
+                    fundamental_tool=fundamental_tool
+                )
+                logger.info("✅ Tool executor initialized with TA + News + Fundamental Analysis")
+            except Exception as e:
+                logger.error(f"❌ Tool executor failed: {e}")
+                tool_executor = None
         
         # Initialize Message Handler
-        try:
-            message_handler = MessageHandler()
-            logger.info("✅ Enhanced message handler initialized with context support")
-        except Exception as e:
-            logger.error(f"❌ Message handler failed: {e}")
-            message_handler = None
+        if MessageHandler:
+            try:
+                message_handler = MessageHandler()
+                logger.info("✅ Enhanced message handler initialized with context support")
+            except Exception as e:
+                logger.error(f"❌ Message handler failed: {e}")
+                message_handler = None
         
         # Final status report
         logger.info("🎯 Complete Intelligence Suite: TA + News + Fundamental Analysis + LLM Agent")
@@ -717,156 +729,10 @@ async def lifespan(app: FastAPI):
     logger.info("✅ Shutdown complete")
     
     # Clear global variables
+    global trading_agent, tool_executor
     trading_agent = None
     tool_executor = None
 
-        # ===== INITIALIZE FUNDAMENTAL ANALYSIS ENGINE =====
-    if FundamentalAnalysisEngine and os.getenv('EODHD_API_KEY'):
-            try:
-                # Use basic Redis client for caching
-                import redis
-                try:
-                    redis_client = redis.Redis(
-                        host=os.getenv('REDIS_HOST', 'localhost'),
-                        port=int(os.getenv('REDIS_PORT', 6379)),
-                        db=0,
-                        decode_responses=True,
-                        socket_timeout=5,
-                        socket_connect_timeout=5
-                    )
-                    # Test connection
-                    redis_client.ping()
-                    logger.info("✅ Redis connection established for fundamental analysis")
-                except Exception as redis_error:
-                    logger.warning(f"⚠️ Redis unavailable for fundamental analysis: {redis_error}")
-                    # Create a mock Redis client that doesn't cache
-                    class MockRedis:
-                        def get(self, key): return None
-                        def setex(self, key, ttl, value): pass
-                        def ping(self): return True
-                    redis_client = MockRedis()
-                
-                fundamental_service = FundamentalAnalysisEngine(
-                    eodhd_api_key=os.getenv('EODHD_API_KEY'),
-                    redis_client=redis_client
-                )
-                
-                fundamental_tool = FundamentalAnalysisTool(
-                    eodhd_api_key=os.getenv('EODHD_API_KEY'),
-                    redis_client=redis_client
-                )
-                
-                logger.info("✅ Fundamental Analysis Engine initialized with weekly caching")
-            except Exception as e:
-                logger.error(f"❌ Fundamental Analysis Engine failed: {e}")
-                fundamental_service = None
-                fundamental_tool = None
-        else:
-            if not FundamentalAnalysisEngine:
-                logger.warning("❌ FundamentalAnalysisEngine class not available")
-            if not os.getenv('EODHD_API_KEY'):
-                logger.warning("❌ EODHD_API_KEY required for Fundamental Analysis Engine")
-
-        # ===== INITIALIZE NEWS SERVICE =====
-        news_service = None  # Initialize as None first
-        if NewsSentimentService:
-            try:
-                news_service = NewsSentimentService(
-                    redis_client=None,  # We don't have Redis client initialized yet, but that's OK
-                    openai_service=openai_service  # NOW this exists
-                )
-                logger.info("✅ News Sentiment Service initialized")
-            except Exception as e:
-                logger.error(f"❌ News Sentiment Service failed: {e}")
-                news_service = None
-        else:
-            logger.warning("❌ NewsSentimentService class not available")
-        
-        # Initialize Trading Agent (FIXED CONSTRUCTOR CALL)
-        if TradingAgent and openai_service:
-            try:
-                trading_agent = TradingAgent(
-                    openai_client=openai_service,
-                    personality_engine=personality_engine
-                )
-                logger.info("✅ Trading agent initialized")
-            except Exception as e:
-                logger.error(f"❌ Trading agent failed: {e}")
-                trading_agent = None
-        
-        # Initialize Tool Executor (ENHANCED WITH FUNDAMENTAL ANALYSIS)
-        if ToolExecutor:
-            try:
-                tool_executor = ToolExecutor(
-                    ta_service=ta_service,
-                    portfolio_service=None,
-                    screener_service=None,
-                    news_service=news_service,
-                    fundamental_tool=fundamental_tool  # Add fundamental analysis
-                )
-                logger.info("✅ Tool executor initialized with TA + News + Fundamental Analysis")
-            except Exception as e:
-                logger.error(f"❌ Tool executor failed: {e}")
-                tool_executor = None
-        
-        # Initialize Message Handler (FIXED CONSTRUCTOR CALL)
-        if MessageHandler:
-            try:
-                message_handler = MessageHandler(
-                    db_service=db_service,
-                    openai_service=openai_service, 
-                    twilio_service=twilio_service
-                )
-                logger.info("✅ Message handler initialized")
-            except Exception as e:
-                logger.error(f"❌ Message handler failed: {e}")
-                message_handler = None
-        
-        # Check if hybrid agent is working
-        if trading_agent and tool_executor:
-            logger.info("🎯 Complete Intelligence Suite: TA + News + Fundamental Analysis + LLM Agent")
-        else:
-            logger.warning("⚠️ Falling back to regex parsing - hybrid agent unavailable")
-        
-        # Log available analysis engines
-        analysis_engines = []
-        if ta_service:
-            analysis_engines.append("Technical Analysis")
-        if news_service:
-            analysis_engines.append("News Sentiment")
-        if fundamental_service:
-            analysis_engines.append("Fundamental Analysis")
-        
-        logger.info(f"📊 Available Analysis Engines: {', '.join(analysis_engines) if analysis_engines else 'None'}")
-        logger.info("✅ SMS Trading Bot startup completed")
-        
-        yield  # Application runs here
-        
-    except Exception as e:
-        logger.error(f"❌ Startup failed: {e}")
-        yield  # Still yield even if startup fails
-    
-    finally:
-        # Shutdown
-        logger.info("🛑 Shutting down SMS Trading Bot...")
-        
-        # Close services gracefully
-        if hasattr(ta_service, 'close'):
-            await ta_service.close()
-        
-        if news_service and hasattr(news_service, 'close'):
-            await news_service.close()
-        
-        if fundamental_service and hasattr(fundamental_service, 'close'):
-            await fundamental_service.close()
-        
-        if db_service and hasattr(db_service, 'mongo_client'):
-            if db_service.mongo_client:
-                db_service.mongo_client.close()
-        
-        logger.info("✅ Shutdown complete")
-    
-  
 app = FastAPI(
     title="SMS Trading Bot",
     description="Hyper-personalized SMS trading insights with Hybrid LLM Agent + Fundamental Analysis",
@@ -887,6 +753,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Include dashboard router
 app.include_router(dashboard_router)
+
 # ===== FASTAPI MIDDLEWARE FOR METRICS =====
 
 @app.middleware("http")
@@ -1003,7 +870,7 @@ async def health_check():
                 await db_service.db.command("ping")
                 health_status["database"] = {
                     "mongodb": {"status": "connected"},
-                    "redis": {"status": "connected" if db_service.redis is not None else "not_configured"}
+                    "redis": {"status": "connected" if hasattr(db_service, 'redis') and db_service.redis is not None else "not_configured"}
                 }
             except Exception as e:
                 health_status["database"] = {
@@ -1497,7 +1364,7 @@ async def stripe_webhook(request: Request):
         logger.error(f"❌ Stripe webhook error: {e}")
         return {"status": "error", "message": str(e)}
 
-# ===== DEBUG ENDPOINTS WITH FUNDAMENTAL ANALYSIS TESTING =====
+# ===== REMAINING ENDPOINTS =====
 
 @app.get("/debug/test-fundamental/{symbol}")
 async def test_fundamental_analysis(symbol: str, depth: str = "standard"):
@@ -1526,25 +1393,11 @@ async def test_fundamental_analysis(symbol: str, depth: str = "standard"):
                     "symbol": symbol.upper(),
                     "fundamental_analysis": {
                         "available": True,
-                        "overall_score": analysis_result.overall_score,
-                        "financial_health": analysis_result.financial_health.value,
-                        "data_completeness": analysis_result.data_completeness,
+                        "overall_score": getattr(analysis_result, 'overall_score', None),
+                        "financial_health": getattr(analysis_result, 'financial_health', None),
+                        "data_completeness": getattr(analysis_result, 'data_completeness', None),
                         "cache_status": "weekly_cache",
                         "analysis_depth": depth
-                    },
-                    "key_ratios": {
-                        "pe_ratio": analysis_result.ratios.pe_ratio,
-                        "roe": analysis_result.ratios.roe,
-                        "debt_to_equity": analysis_result.ratios.debt_to_equity,
-                        "current_ratio": analysis_result.ratios.current_ratio
-                    },
-                    "growth_metrics": {
-                        "revenue_growth_1y": analysis_result.growth.revenue_growth_1y,
-                        "earnings_growth_1y": analysis_result.growth.earnings_growth_1y
-                    },
-                    "investment_thesis": {
-                        "bull_case": analysis_result.bull_case,
-                        "bear_case": analysis_result.bear_case
                     },
                     "sms_response": result["sms_response"],
                     "service_status": "working",
@@ -1572,258 +1425,6 @@ async def test_fundamental_analysis(symbol: str, depth: str = "standard"):
             "recommendation": "Check EODHD API key and service configuration"
         }
 
-@app.get("/debug/test-complete-analysis/{symbol}")
-async def test_complete_analysis(symbol: str):
-    """Test complete analysis: TA + News + Fundamental Analysis"""
-    try:
-        test_message = f"give me complete analysis of {symbol}"
-        test_phone = "+1234567890"
-        
-        # Test hybrid agent intent parsing
-        if trading_agent:
-            intent = await trading_agent.parse_intent(test_message, test_phone)
-            agent_working = True
-        else:
-            intent = {
-                "intent": "comprehensive_analysis", 
-                "symbols": [symbol], 
-                "requires_tools": ["technical_analysis", "news_sentiment", "fundamental_analysis"]
-            }
-            agent_working = False
-        
-        # Execute all tools
-        if tool_executor:
-            tool_results = await tool_executor.execute_tools(intent, test_phone)
-        else:
-            tool_results = await execute_tools_fallback(intent, test_phone)
-        
-        # Update personality engine
-        personality_engine.learn_from_message(test_phone, test_message, intent)
-        user_profile = personality_engine.get_user_profile(test_phone)
-        
-        # Generate comprehensive response
-        if trading_agent and tool_results:
-            ai_response = await trading_agent.generate_response(
-                user_message=test_message,
-                intent_data=intent,
-                tool_results=tool_results,
-                user_phone=test_phone,
-                user_profile=user_profile
-            )
-        else:
-            ai_response = generate_fallback_response(intent, tool_results, user_profile)
-        
-        return {
-            "symbol": symbol.upper(),
-            "complete_analysis": {
-                "intent_parsing": agent_working,
-                "tool_execution": len(tool_results) > 0,
-                "technical_analysis": "technical_analysis" in tool_results and not tool_results.get("technical_analysis_unavailable"),
-                "news_sentiment": "news_sentiment" in tool_results and not tool_results.get("news_sentiment_unavailable"), 
-                "fundamental_analysis": "fundamental_analysis" in tool_results and not tool_results.get("fundamental_analysis_unavailable")
-            },
-            "analysis_results": {
-                "technical": tool_results.get("technical_analysis", {}),
-                "news": tool_results.get("news_sentiment", {}),
-                "fundamental": {
-                    symbol: {
-                        "overall_score": getattr(tool_results.get("fundamental_analysis", {}).get(symbol), 'overall_score', None),
-                        "financial_health": getattr(tool_results.get("fundamental_analysis", {}).get(symbol), 'financial_health', None),
-                        "pe_ratio": getattr(getattr(tool_results.get("fundamental_analysis", {}).get(symbol), 'ratios', None), 'pe_ratio', None)
-                    } if tool_results.get("fundamental_analysis", {}).get(symbol) else "unavailable"
-                }
-            },
-            "comprehensive_response": ai_response,
-            "user_profile": user_profile["communication_style"],
-            "analysis_engines": _get_available_engines(),
-            "recommendation": _get_complete_analysis_recommendation(tool_results)
-        }
-        
-    except Exception as e:
-        logger.error(f"Complete analysis test error: {e}")
-        return {
-            "symbol": symbol.upper(),
-            "complete_analysis": "failed",
-            "error": str(e),
-            "recommendation": "Check service initialization and API keys"
-        }
-
-def _get_available_engines() -> Dict[str, bool]:
-    """Get status of all analysis engines"""
-    return {
-        "technical_analysis": ta_service is not None,
-        "news_sentiment": news_service is not None,
-        "fundamental_analysis": fundamental_service is not None,
-        "personality_engine": personality_engine is not None,
-        "hybrid_llm_agent": trading_agent is not None
-    }
-
-def _get_complete_analysis_recommendation(tool_results: Dict) -> str:
-    """Get recommendation for complete analysis setup"""
-    ta_working = "technical_analysis" in tool_results and not tool_results.get("technical_analysis_unavailable")
-    news_working = "news_sentiment" in tool_results and not tool_results.get("news_sentiment_unavailable")
-    fundamental_working = "fundamental_analysis" in tool_results and not tool_results.get("fundamental_analysis_unavailable")
-    
-    if ta_working and news_working and fundamental_working:
-        return "✅ Complete Intelligence Suite working! Technical + News + Fundamental Analysis + Personality learning active."
-    elif ta_working and fundamental_working and not news_working:
-        return "⚠️ TA + Fundamental working, News needs setup. Set MARKETAUX_API_KEY and restart."
-    elif ta_working and news_working and not fundamental_working:
-        return "⚠️ TA + News working, Fundamental using same EODHD_API_KEY. Check configuration."
-    elif fundamental_working:
-        return "⚠️ Fundamental analysis working, other engines need setup. Check API keys."
-    else:
-        return "❌ Multiple engines need setup. Check EODHD_API_KEY, MARKETAUX_API_KEY, and OPENAI_API_KEY."
-
-@app.post("/debug/test-hybrid-agent")
-async def test_hybrid_agent_endpoint(request: Request):
-    """Test the hybrid LLM agent system with all analysis engines"""
-    try:
-        data = await request.json()
-        message = data.get('message', 'give me complete analysis of TSLA - technical, fundamental, and news 📊')
-        phone = data.get('phone', '+1234567890')
-        
-        logger.info(f"🧪 Testing Complete Hybrid Agent: '{message}' from {phone}")
-        
-        if not trading_agent:
-            return {
-                "error": "Hybrid LLM Agent not available",
-                "fallback_available": True,
-                "recommendation": "Check OPENAI_API_KEY environment variable"
-            }
-        
-        start_time = time.time()
-        
-        # Step 1: Parse intent with LLM
-        intent_data = await trading_agent.parse_intent(message, phone)
-        
-        # Step 2: Execute tools (all analysis engines)
-        tool_results = {}
-        if tool_executor:
-            tool_results = await tool_executor.execute_tools(intent_data, phone)
-        else:
-            tool_results = await execute_tools_fallback(intent_data, phone)
-        
-        # Step 3: Learn personality
-        personality_engine.learn_from_message(phone, message, intent_data)
-        user_profile = personality_engine.get_user_profile(phone)
-        
-        # Step 4: Generate response
-        response = await trading_agent.generate_response(
-            user_message=message,
-            intent_data=intent_data,
-            tool_results=tool_results,
-            user_phone=phone,
-            user_profile=user_profile
-        )
-        
-        processing_time = time.time() - start_time
-        
-        return {
-            "test_message": message,
-            "hybrid_agent": {
-                "available": True,
-                "intent_parsing": intent_data,
-                "tool_execution": {
-                    "tools_used": list(tool_results.keys()),
-                    "technical_analysis": "technical_analysis" in tool_results,
-                    "news_sentiment": "news_sentiment" in tool_results,
-                    "fundamental_analysis": "fundamental_analysis" in tool_results,
-                    "success": len(tool_results) > 0
-                },
-                "personality_learning": {
-                    "active": True,
-                    "style": user_profile.get("communication_style", {}),
-                    "trading_profile": user_profile.get("trading_personality", {})
-                },
-                "response_generation": {
-                    "response": response,
-                    "personalized": True,
-                    "length": len(response)
-                }
-            },
-            "analysis_engines": _get_available_engines(),
-            "performance": {
-                "processing_time": f"{processing_time:.2f}s",
-                "agent_mode": "complete_intelligence_suite"
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Hybrid agent test failed: {e}")
-        return {
-            "error": str(e),
-            "hybrid_agent": {"available": False},
-            "timestamp": datetime.now().isoformat()
-        }
-
-@app.get("/debug/agent-status")
-async def get_agent_status():
-    """Get detailed status of the hybrid agent system"""
-    try:
-        return {
-            "timestamp": datetime.now().isoformat(),
-            "hybrid_agent": {
-                "trading_agent": {
-                    "available": trading_agent is not None,
-                    "openai_client": openai_service is not None,
-                    "personality_engine": personality_engine is not None
-                },
-                "tool_executor": {
-                    "available": tool_executor is not None,
-                    "ta_service": ta_service is not None,
-                    "news_service": news_service is not None,
-                    "fundamental_service": fundamental_service is not None,
-                    "portfolio_service": False,  # Not implemented yet
-                    "screener_service": False   # Not implemented yet
-                }
-            },
-            "fallback_systems": {
-                "regex_intent_parsing": True,
-                "basic_tool_execution": True,
-                "personality_engine": True
-            },
-            "environment_variables": {
-                "OPENAI_API_KEY": "Set" if os.getenv('OPENAI_API_KEY') else "Missing",
-                "EODHD_API_KEY": "Set" if os.getenv('EODHD_API_KEY') else "Missing",
-                "MARKETAUX_API_KEY": "Set" if os.getenv('MARKETAUX_API_KEY') else "Missing"
-            },
-            "recommendations": _get_agent_recommendations()
-        }
-        
-    except Exception as e:
-        return {"error": str(e)}
-
-def _get_agent_recommendations() -> List[str]:
-    """Get recommendations for hybrid agent setup"""
-    recommendations = []
-    
-    if not trading_agent:
-        if not os.getenv('OPENAI_API_KEY'):
-            recommendations.append("❌ Set OPENAI_API_KEY to enable Hybrid LLM Agent")
-        else:
-            recommendations.append("⚠️ Hybrid LLM Agent failed to initialize - check OpenAI service")
-    else:
-        recommendations.append("✅ Hybrid LLM Agent is working!")
-    
-    if not ta_service:
-        recommendations.append("❌ Technical Analysis service not available")
-    elif not os.getenv('EODHD_API_KEY'):
-        recommendations.append("⚠️ Set EODHD_API_KEY for real market data")
-    
-    if not news_service and not os.getenv('MARKETAUX_API_KEY'):
-        recommendations.append("⚠️ Set MARKETAUX_API_KEY for news sentiment analysis")
-    
-    if not fundamental_service:
-        recommendations.append("⚠️ Fundamental Analysis engine uses EODHD_API_KEY")
-    
-    if not recommendations:
-        recommendations.append("🚀 Complete Intelligence Suite operational - All engines ready!")
-    
-    return recommendations
-
-# ===== EXISTING ENDPOINTS (keeping all existing functionality) =====
-
 @app.get("/admin")
 async def admin_dashboard():
     """Comprehensive admin dashboard"""
@@ -1841,7 +1442,6 @@ async def admin_dashboard():
             "services": {
                 "database": "connected" if db_service else "disconnected",
                 "message_handler": "active" if message_handler else "inactive",
-                "weekly_scheduler": "active" if scheduler_task and not scheduler_task.done() else "inactive",
                 "ta_service": "active" if ta_service else "inactive",
                 "news_service": "active" if news_service else "inactive",
                 "fundamental_service": "active" if fundamental_service else "inactive",
@@ -1858,741 +1458,6 @@ async def admin_dashboard():
     except Exception as e:
         logger.error(f"❌ Admin dashboard error: {e}")
         return {"error": str(e)}
-
-# ===== USER MANAGEMENT ENDPOINTS =====
-
-@app.get("/admin/users/{phone_number}")
-async def get_user_profile(phone_number: str):
-    """Get user profile for admin"""
-    try:
-        # Get personality profile
-        user_profile = personality_engine.user_profiles.get(phone_number)
-        if user_profile:
-            return {
-                "phone_number": phone_number,
-                "found": True,
-                "personality_profile": user_profile,
-                "total_messages": user_profile["learning_data"]["total_messages"],
-                "communication_style": user_profile["communication_style"],
-                "trading_personality": user_profile["trading_personality"]
-            }
-        return {"phone_number": phone_number, "found": False, "message": "User profile not found"}
-    except Exception as e:
-        logger.error(f"Error getting user {phone_number}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/admin/users/stats")
-async def get_user_stats():
-    """Get user statistics"""
-    try:
-        total_users = len(personality_engine.user_profiles)
-        active_users = len([p for p in personality_engine.user_profiles.values() 
-                           if p["learning_data"]["total_messages"] > 0])
-        
-        return {
-            "total_users": total_users,
-            "active_users": active_users,
-            "total_conversations": len(conversation_history),
-            "plan_breakdown": {"free": total_users, "paid": 0, "pro": 0}  # Mock data
-        }
-    except Exception as e:
-        logger.error(f"Error getting user stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/admin/users/{phone_number}/subscription")
-async def update_user_subscription(phone_number: str, request: Request):
-    """Update user subscription"""
-    try:
-        plan_data = await request.json()
-        # Mock subscription update
-        return {"success": True, "phone": phone_number, "plan": plan_data.get('plan_type')}
-    except Exception as e:
-        logger.error(f"Error updating subscription for {phone_number}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ===== CONVERSATION ENDPOINTS =====
-
-@app.get("/api/conversations/{phone_number}")
-async def get_user_conversations(phone_number: str, limit: int = 20):
-    """Get conversation history for a specific user"""
-    try:
-        clean_phone = phone_number.replace('%2B', '+').replace('%20', '')
-        messages = conversation_history.get(clean_phone, [])
-        recent_messages = messages[-limit:] if messages else []
-        
-        conversations = []
-        if recent_messages:
-            conversations.append({
-                "session_id": f"session_{clean_phone}_{datetime.now().strftime('%Y%m%d')}",
-                "messages": recent_messages,
-                "total_messages": len(recent_messages)
-            })
-        
-        return {
-            "phone_number": clean_phone,
-            "total_sessions": len(conversations),
-            "conversations": conversations,
-            "total_messages": len(messages)
-        }
-    except Exception as e:
-        logger.error(f"Error getting conversations for {phone_number}: {e}")
-        return {"error": str(e)}
-
-@app.get("/api/conversations/recent")
-async def get_recent_conversations(limit: int = 10):
-    """Get recent conversations across all users"""
-    try:
-        all_conversations = []
-        
-        for phone, messages in conversation_history.items():
-            if messages:
-                latest_message = messages[-1]
-                all_conversations.append({
-                    "user_id": phone,
-                    "latest_message": latest_message,
-                    "total_messages": len(messages)
-                })
-        
-        all_conversations.sort(key=lambda x: x["latest_message"]["timestamp"], reverse=True)
-        
-        return {
-            "recent_conversations": all_conversations[:limit],
-            "total_active_users": len(conversation_history)
-        }
-    except Exception as e:
-        logger.error(f"Error getting recent conversations: {e}")
-        return {"error": str(e)}
-
-@app.post("/api/test/sms-with-response")
-async def test_sms_with_response(request: Request):
-    """Enhanced SMS testing endpoint using hybrid agent"""
-    try:
-        form_data = await request.form()
-        from_number = form_data.get('From')
-        message_body = form_data.get('Body', '').strip()
-        
-        if not from_number or not message_body:
-            return {"error": "Missing required fields"}
-        
-        user_message_timestamp = datetime.now().isoformat()
-        store_conversation(from_number, message_body)
-        
-        # Use hybrid agent for response generation
-        bot_response = await process_sms_with_hybrid_agent(message_body, from_number)
-        
-        store_conversation(from_number, message_body, bot_response)
-        
-        return {
-            "status": "success",
-            "user_message": {
-                "from": from_number,
-                "body": message_body,
-                "timestamp": user_message_timestamp
-            },
-            "bot_response": {
-                "content": bot_response,
-                "message_type": "bot_response",
-                "timestamp": datetime.now().isoformat(),
-                "session_id": f"test_session_{from_number}",
-                "agent_type": "hybrid_llm" if trading_agent else "fallback"
-            },
-            "processing_status": "completed",
-            "conversation_stored": True,
-            "personality_learning": "active"
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in SMS test with response: {e}")
-        return {
-            "status": "error", 
-            "processing_error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
-
-# ===== DEBUG ENDPOINTS =====
-
-@app.get("/debug/database")
-async def debug_database():
-    """Debug database connections and collections"""
-    try:
-        return {
-            "database_name": "ai",
-            "collections": ["users", "conversations", "usage_tracking"],
-            "users_count": len(personality_engine.user_profiles),
-            "connection_status": "connected",
-            "personality_profiles": len(personality_engine.user_profiles)
-        }
-    except Exception as e:
-        logger.error(f"Database debug error: {e}")
-        return {"error": str(e), "connection_status": "failed"}
-
-@app.get("/debug/config")
-async def debug_config():
-    """Debug configuration settings"""
-    return {
-        "environment": settings.environment,
-        "testing_mode": settings.testing_mode,
-        "capabilities": settings.get_capability_summary(),
-        "security": settings.get_security_config(),
-        "scheduler": settings.get_scheduler_config(),
-        "validation": settings.validate_runtime_requirements(),
-        "plan_limits": PLAN_LIMITS,
-        "popular_tickers_count": len(POPULAR_TICKERS),
-        "personality_engine": {
-            "total_profiles": len(personality_engine.user_profiles),
-            "active_learning": True
-        },
-        "analysis_engines": _get_available_engines(),
-        "agent_type": "hybrid_llm" if trading_agent else "fallback"
-    }
-
-@app.post("/debug/test-activity/{phone_number}")
-async def test_user_activity(phone_number: str):
-    """Test user activity update"""
-    try:
-        # Test personality learning
-        test_message = "Hey, how's AAPL doing today? I'm thinking about buying some calls!"
-        
-        if trading_agent:
-            intent = await trading_agent.parse_intent(test_message, phone_number)
-        else:
-            intent = analyze_message_intent_fallback(test_message)
-            
-        personality_engine.learn_from_message(phone_number, test_message, intent)
-        
-        return {
-            "update_success": True,
-            "phone_number": phone_number,
-            "personality_updated": True,
-            "learned_style": personality_engine.user_profiles[phone_number]["communication_style"],
-            "agent_type": "hybrid_llm" if trading_agent else "fallback",
-            "message": "Personality learning test completed"
-        }
-    except Exception as e:
-        logger.error(f"Test activity error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/debug/limits/{phone_number}")
-async def debug_limits(phone_number: str):
-    """Debug user limits"""
-    try:
-        user_profile = personality_engine.user_profiles.get(phone_number)
-        return {
-            "phone_number": phone_number,
-            "can_send": True,
-            "plan": "free",
-            "used": user_profile["learning_data"]["total_messages"] if user_profile else 0,
-            "limit": 4,
-            "remaining": 4,
-            "personality_data": user_profile["communication_style"] if user_profile else None
-        }
-    except Exception as e:
-        logger.error(f"Debug limits error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/debug/analyze-intent")
-async def debug_analyze_intent(request: Request):
-    """Debug intent analysis - now uses hybrid agent"""
-    try:
-        data = await request.json()
-        message = data.get('message', '')
-        phone = data.get('phone', '+1234567890')
-        
-        if trading_agent:
-            # Use hybrid LLM agent for intent parsing
-            intent_result = await trading_agent.parse_intent(message, phone)
-            agent_type = "hybrid_llm"
-        else:
-            # Use fallback regex parsing
-            intent_result = analyze_message_intent_fallback(message)
-            agent_type = "fallback"
-        
-        return {
-            "message": message,
-            "intent": intent_result["intent"],
-            "symbols": intent_result["symbols"],
-            "confidence": intent_result["confidence"],
-            "agent_type": agent_type,
-            "analysis_details": intent_result
-        }
-    except Exception as e:
-        logger.error(f"Intent analysis error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ===== TECHNICAL ANALYSIS ENDPOINTS =====
-
-@app.get("/debug/test-ta/{symbol}")
-async def test_technical_analysis(symbol: str):
-    """Test the integrated technical analysis"""
-    try:
-        if not ta_service:
-            return {
-                "symbol": symbol.upper(),
-                "ta_service_connected": False,
-                "integrated_ta": True,
-                "error": "Technical Analysis service not initialized"
-            }
-        
-        ta_data = await ta_service.analyze_symbol(symbol.upper())
-        
-        if ta_data:
-            # Test formatting with different personality styles
-            mock_profiles = {
-                "casual_high": {
-                    "communication_style": {"formality": "casual", "energy": "high", "emoji_usage": "lots"},
-                    "trading_personality": {"experience_level": "intermediate"}
-                },
-                "professional_low": {
-                    "communication_style": {"formality": "professional", "energy": "low", "emoji_usage": "none"},
-                    "trading_personality": {"experience_level": "advanced"}
-                }
-            }
-            
-            formatted_responses = {}
-            for style_name, profile in mock_profiles.items():
-                if trading_agent:
-                    # Use hybrid agent for response formatting
-                    mock_intent = {"intent": "analyze", "symbols": [symbol.upper()], "confidence": 0.9}
-                    mock_tools = {"technical_analysis": {symbol.upper(): ta_data}}
-                    formatted_responses[style_name] = await trading_agent.generate_response(
-                        user_message=f"How's {symbol} doing?",
-                        intent_data=mock_intent,
-                        tool_results=mock_tools,
-                        user_phone="+1555TEST",
-                        user_profile=profile
-                    )
-                else:
-                    # Use fallback formatting
-                    formatted_responses[style_name] = f"{symbol.upper()} analysis using fallback formatting"
-            
-            return {
-                "symbol": symbol.upper(),
-                "ta_service_connected": True,
-                "integrated_ta": True,
-                "raw_ta_data": ta_data,
-                "personalized_responses": formatted_responses,
-                "data_source": ta_data.get('source', 'unknown'),
-                "cache_status": ta_data.get('cache_status', 'unknown'),
-                "api_used": "EODHD" if ta_data.get('source') != 'fallback' else "Mock Data",
-                "agent_type": "hybrid_llm" if trading_agent else "fallback"
-            }
-        else:
-            return {
-                "symbol": symbol.upper(),
-                "ta_service_connected": False,
-                "integrated_ta": True,
-                "error": "No data received from integrated TA service",
-                "fallback_used": True
-            }
-            
-    except Exception as e:
-        return {
-            "symbol": symbol.upper(),
-            "ta_service_connected": False,
-            "integrated_ta": True,
-            "error": str(e),
-            "fallback_used": True
-        }
-
-@app.get("/debug/diagnose-services")
-async def diagnose_services():
-    """Comprehensive service diagnosis including all analysis engines"""
-    diagnosis = {
-        "timestamp": datetime.now().isoformat(),
-        "environment_variables": {},
-        "service_availability": {},
-        "connection_tests": {},
-        "personality_engine": {},
-        "hybrid_agent": {},
-        "recommendations": []
-    }
-    
-    # Check environment variables
-    env_vars = {
-        "EODHD_API_KEY": "Set" if os.getenv('EODHD_API_KEY') else None,
-        "OPENAI_API_KEY": "Set" if os.getenv('OPENAI_API_KEY') else None,
-        "MARKETAUX_API_KEY": "Set" if os.getenv('MARKETAUX_API_KEY') else None,
-        "MONGODB_URL": "Set" if os.getenv('MONGODB_URL') else None,
-    }
-    diagnosis["environment_variables"] = env_vars
-    
-    # Check service initialization
-    diagnosis["service_availability"] = {
-        "openai_service": openai_service is not None,
-        "db_service": db_service is not None,
-        "message_handler": message_handler is not None,
-        "twilio_service": twilio_service is not None,
-        "ta_service": ta_service is not None,
-        "news_service": news_service is not None,
-        "fundamental_service": fundamental_service is not None,
-        "personality_engine": True,
-        "trading_agent": trading_agent is not None,
-        "tool_executor": tool_executor is not None
-    }
-    
-    # Test personality engine
-    diagnosis["personality_engine"] = {
-        "total_profiles": len(personality_engine.user_profiles),
-        "learning_active": True,
-        "features": ["communication_style", "trading_personality", "context_memory"]
-    }
-    
-    # Test hybrid agent system
-    if trading_agent:
-        try:
-            test_intent = await trading_agent.parse_intent("test message", "+1555TEST")
-            diagnosis["hybrid_agent"] = {
-                "trading_agent": {
-                    "available": True,
-                    "intent_parsing": True,
-                    "test_successful": test_intent is not None
-                },
-                "tool_executor": {
-                    "available": tool_executor is not None,
-                    "ta_integration": ta_service is not None,
-                    "news_integration": news_service is not None,
-                    "fundamental_integration": fundamental_service is not None
-                }
-            }
-        except Exception as e:
-            diagnosis["hybrid_agent"] = {
-                "trading_agent": {
-                    "available": True,
-                    "intent_parsing": False,
-                    "error": str(e)
-                }
-            }
-    else:
-        diagnosis["hybrid_agent"] = {
-            "trading_agent": {
-                "available": False,
-                "reason": "OpenAI service not available or failed to initialize"
-            }
-        }
-    
-    # Test all analysis services
-    analysis_tests = {}
-    
-    # Test TA Service
-    if ta_service:
-        try:
-            test_ta_result = await ta_service.analyze_symbol("AAPL")
-            analysis_tests["technical_analysis"] = {
-                "working": True,
-                "test_successful": test_ta_result is not None,
-                "data_source": test_ta_result.get('source', 'unknown') if test_ta_result else None
-            }
-        except Exception as e:
-            analysis_tests["technical_analysis"] = {"working": False, "error": str(e)}
-    else:
-        analysis_tests["technical_analysis"] = {"working": False, "error": "Service not initialized"}
-    
-    # Test News Service
-    if news_service:
-        try:
-            test_news_result = await news_service.get_sentiment("AAPL")
-            analysis_tests["news_sentiment"] = {
-                "working": True,
-                "test_successful": test_news_result is not None and not test_news_result.get('error')
-            }
-        except Exception as e:
-            analysis_tests["news_sentiment"] = {"working": False, "error": str(e)}
-    else:
-        analysis_tests["news_sentiment"] = {"working": False, "error": "Service not initialized"}
-    
-    # Test Fundamental Service
-    if fundamental_tool:
-        try:
-            test_fund_result = await fundamental_tool.execute({
-                "symbol": "AAPL",
-                "depth": "basic",
-                "user_style": "casual"
-            })
-            analysis_tests["fundamental_analysis"] = {
-                "working": True,
-                "test_successful": test_fund_result.get("success", False),
-                "weekly_caching": True
-            }
-        except Exception as e:
-            analysis_tests["fundamental_analysis"] = {"working": False, "error": str(e)}
-    else:
-        analysis_tests["fundamental_analysis"] = {"working": False, "error": "Service not initialized"}
-    
-    diagnosis["connection_tests"] = analysis_tests
-    
-    # Test OpenAI if available
-    if openai_service:
-        try:
-            test_response = await openai_service.generate_personalized_response(
-                user_query="Test",
-                user_profile={"plan_type": "free"},
-                conversation_history=[]
-            )
-            diagnosis["connection_tests"]["openai"] = {
-                "available": True,
-                "test_successful": True,
-                "response_length": len(test_response)
-            }
-        except Exception as e:
-            diagnosis["connection_tests"]["openai"] = {
-                "available": True,
-                "test_successful": False,
-                "error": str(e)
-            }
-    else:
-        diagnosis["connection_tests"]["openai"] = {
-            "available": False,
-            "error": "OpenAI service not initialized"
-        }
-    
-    # Generate recommendations
-    recommendations = []
-    
-    if not env_vars["EODHD_API_KEY"]:
-        recommendations.append("❌ Set EODHD_API_KEY for Technical Analysis + Fundamental Analysis")
-    
-    if not env_vars["MARKETAUX_API_KEY"]:
-        recommendations.append("❌ Set MARKETAUX_API_KEY for News Sentiment Analysis")
-    
-    if not env_vars["OPENAI_API_KEY"]:
-        recommendations.append("❌ Set OPENAI_API_KEY for Hybrid LLM Agent")
-    elif not trading_agent:
-        recommendations.append("❌ Hybrid LLM Agent failed to initialize")
-    
-    # Check working services
-    working_services = []
-    if analysis_tests.get("technical_analysis", {}).get("working"):
-        working_services.append("Technical Analysis")
-    if analysis_tests.get("news_sentiment", {}).get("working"):
-        working_services.append("News Sentiment")
-    if analysis_tests.get("fundamental_analysis", {}).get("working"):
-        working_services.append("Fundamental Analysis")
-    
-    if len(working_services) == 3:
-        recommendations.append("✅ Complete Intelligence Suite operational! All analysis engines working.")
-    elif working_services:
-        recommendations.append(f"⚠️ Partial setup: {', '.join(working_services)} working.")
-    
-    if not recommendations:
-        recommendations.append("🚀 Perfect setup - All systems operational!")
-    
-    diagnosis["recommendations"] = recommendations
-    
-    return diagnosis
-
-@app.post("/debug/test-message")
-async def test_message_processing(request: Request):
-    """Test message processing with hybrid agent"""
-    try:
-        data = await request.json()
-        message = data.get('message', 'Give me complete analysis of AAPL - technical, fundamental, and news')
-        phone = data.get('phone', '+1234567890')
-        
-        logger.info(f"🧪 Testing message processing: '{message}' from {phone}")
-        
-        start_time = time.time()
-        
-        # Use the hybrid agent system for processing
-        response = await process_sms_with_hybrid_agent(message, phone)
-        
-        # Get updated user profile
-        user_profile = personality_engine.get_user_profile(phone)
-        
-        processing_time = time.time() - start_time
-        
-        return {
-            "test_message": message,
-            "personality_profile": {
-                "communication_style": user_profile.get("communication_style", {}),
-                "trading_personality": user_profile.get("trading_personality", {}),
-                "total_messages": user_profile.get("learning_data", {}).get("total_messages", 0)
-            },
-            "generated_response": response,
-            "response_length": len(response),
-            "personalization_active": True,
-            "analysis_engines": _get_available_engines(),
-            "agent_type": "hybrid_llm" if trading_agent else "fallback",
-            "processing_time": f"{processing_time:.2f}s",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Test message processing failed: {e}")
-        return {
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
-
-@app.get("/debug/test-full-flow/{symbol}")
-async def test_full_integration_flow(symbol: str):
-    """Test the complete integration flow: TA + News + Fundamental + Hybrid Agent + Personality"""
-    try:
-        # Step 1: Test all analysis services
-        ta_data = None
-        news_data = None
-        fund_data = None
-        
-        if ta_service:
-            ta_data = await ta_service.analyze_symbol(symbol.upper())
-        
-        if news_service:
-            try:
-                news_data = await news_service.get_sentiment(symbol.upper())
-            except Exception:
-                pass
-        
-        if fundamental_tool:
-            try:
-                fund_result = await fundamental_tool.execute({
-                    "symbol": symbol.upper(),
-                    "depth": "standard",
-                    "user_style": "casual"
-                })
-                if fund_result.get("success"):
-                    fund_data = fund_result["analysis_result"]
-            except Exception:
-                pass
-        
-        # Step 2: Test personality engine
-        test_phone = "+1234567890"
-        test_message = f"Give me complete analysis of {symbol.upper()}"
-        
-        # Step 3: Test hybrid agent intent parsing
-        if trading_agent:
-            intent = await trading_agent.parse_intent(test_message, test_phone)
-            agent_working = True
-        else:
-            intent = analyze_message_intent_fallback(test_message)
-            agent_working = False
-        
-        personality_engine.learn_from_message(test_phone, test_message, intent)
-        user_profile = personality_engine.get_user_profile(test_phone)
-        
-        # Step 4: Test hybrid agent response generation
-        mock_tool_results = {}
-        if ta_data:
-            mock_tool_results["technical_analysis"] = {symbol.upper(): ta_data}
-        if news_data:
-            mock_tool_results["news_sentiment"] = {symbol.upper(): news_data}
-        if fund_data:
-            mock_tool_results["fundamental_analysis"] = {symbol.upper(): fund_data}
-        
-        if trading_agent and mock_tool_results:
-            ai_response = await trading_agent.generate_response(
-                user_message=test_message,
-                intent_data=intent,
-                tool_results=mock_tool_results,
-                user_phone=test_phone,
-                user_profile=user_profile
-            )
-        else:
-            ai_response = generate_fallback_response(intent, mock_tool_results, user_profile)
-        
-        return {
-            "symbol": symbol.upper(),
-            "complete_integration_test": {
-                "technical_analysis": {
-                    "working": ta_data is not None,
-                    "has_price": 'price' in (ta_data or {}),
-                    "has_indicators": 'technical_indicators' in (ta_data or {})
-                },
-                "news_sentiment": {
-                    "working": news_data is not None and not news_data.get('error', False) if news_data else False,
-                    "has_sentiment": news_data.get('sentiment') is not None if news_data else False
-                },
-                "fundamental_analysis": {
-                    "working": fund_data is not None,
-                    "has_ratios": hasattr(fund_data, 'ratios') if fund_data else False,
-                    "weekly_caching": True
-                },
-                "personality_engine": {
-                    "working": True,
-                    "user_profile_created": True,
-                    "communication_style": user_profile["communication_style"],
-                    "learning_active": True
-                },
-                "hybrid_agent": {
-                    "intent_parsing": agent_working,
-                    "response_generation": trading_agent is not None,
-                    "working": agent_working
-                }
-            },
-            "responses": {
-                "ai_personalized": ai_response,
-                "raw_data": {
-                    "technical": ta_data is not None,
-                    "news": news_data is not None,
-                    "fundamental": fund_data is not None
-                }
-            },
-            "agent_type": "complete_intelligence_suite" if trading_agent else "fallback",
-            "recommendation": _get_full_integration_recommendation(ta_data, news_data, fund_data, agent_working)
-        }
-        
-    except Exception as e:
-        return {
-            "symbol": symbol.upper(),
-            "complete_integration_test": "failed",
-            "error": str(e),
-            "recommendation": "Check your environment variables and service connections"
-        }
-
-def _get_full_integration_recommendation(ta_data, news_data, fund_data, agent_working) -> str:
-    """Get recommendation based on complete integration test results"""
-    working_engines = []
-    if ta_data:
-        working_engines.append("Technical Analysis")
-    if news_data and not news_data.get('error'):
-        working_engines.append("News Sentiment")
-    if fund_data:
-        working_engines.append("Fundamental Analysis")
-    
-    if len(working_engines) == 3 and agent_working:
-        return "✅ COMPLETE INTELLIGENCE SUITE OPERATIONAL! All engines + Hybrid LLM Agent + Personality learning working perfectly."
-    elif len(working_engines) == 3:
-        return "⚠️ All analysis engines working but Hybrid LLM Agent unavailable. Check OPENAI_API_KEY."
-    elif len(working_engines) >= 2:
-        return f"⚠️ Partial intelligence suite: {', '.join(working_engines)} working. Check missing API keys."
-    elif len(working_engines) == 1:
-        return f"⚠️ Only {working_engines[0]} working. Check EODHD_API_KEY and MARKETAUX_API_KEY."
-    else:
-        return "❌ No analysis engines working. Check all API keys: EODHD_API_KEY, MARKETAUX_API_KEY, OPENAI_API_KEY."
-
-# ===== SCHEDULER ENDPOINTS =====
-
-@app.get("/admin/scheduler/status")
-async def get_scheduler_status():
-    """Get scheduler status"""
-    if not scheduler_task:
-        return {"status": "inactive", "message": "Scheduler not running"}
-    
-    try:
-        return {"status": "active" if scheduler_task and not scheduler_task.done() else "inactive"}
-    except Exception as e:
-        logger.error(f"Error getting scheduler status: {e}")
-        return {"status": "error", "error": str(e)}
-
-@app.post("/admin/scheduler/manual-reset")
-async def manual_reset_trigger():
-    """Manually trigger reset notifications (for testing)"""
-    try:
-        logger.info("📅 Manual reset trigger executed")
-        return {"status": "success", "message": "Manual reset trigger executed"}
-    except Exception as e:
-        logger.error(f"Manual reset trigger error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/admin/scheduler/manual-reminder")
-async def manual_reminder_trigger():
-    """Manually trigger 24-hour reminders (for testing)"""
-    try:
-        logger.info("📅 Manual reminder trigger executed")
-        return {"status": "success", "message": "Manual reminder trigger executed"}
-    except Exception as e:
-        logger.error(f"Manual reminder trigger error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ===== METRICS ENDPOINTS =====
 
 @app.get("/metrics")
 async def get_metrics():
@@ -2628,57 +1493,6 @@ async def get_metrics():
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
-
-# ===== PERSONALITY INSIGHTS ENDPOINT =====
-
-@app.get("/debug/personality/{phone_number}")
-async def get_personality_insights(phone_number: str):
-    """Get detailed personality insights for a user"""
-    try:
-        user_profile = personality_engine.user_profiles.get(phone_number)
-        
-        if not user_profile:
-            return {"error": "User profile not found", "phone_number": phone_number}
-        
-        # Generate personality summary
-        personality_summary = {
-            "communication_analysis": {
-                "formality": user_profile["communication_style"]["formality"],
-                "energy_level": user_profile["communication_style"]["energy"],
-                "emoji_preference": user_profile["communication_style"]["emoji_usage"],
-                "message_length_preference": user_profile["communication_style"]["message_length"],
-                "technical_depth": user_profile["communication_style"]["technical_depth"]
-            },
-            "trading_analysis": {
-                "risk_tolerance": user_profile["trading_personality"]["risk_tolerance"],
-                "trading_style": user_profile["trading_personality"]["trading_style"],
-                "experience_level": user_profile["trading_personality"]["experience_level"],
-                "favorite_symbols": user_profile["trading_personality"]["common_symbols"][:10],
-                "win_loss_ratio": f"{user_profile['learning_data']['successful_trades_mentioned']}W/{user_profile['learning_data']['loss_trades_mentioned']}L"
-            },
-            "engagement_data": {
-                "total_messages": user_profile["learning_data"]["total_messages"],
-                "recent_stocks_discussed": user_profile["context_memory"]["last_discussed_stocks"],
-                "goals_mentioned": len(user_profile["context_memory"]["goals_mentioned"]),
-                "concerns_expressed": len(user_profile["context_memory"]["concerns_expressed"])
-            },
-            "personalization_level": "high" if user_profile["learning_data"]["total_messages"] > 10 else "medium" if user_profile["learning_data"]["total_messages"] > 3 else "basic"
-        }
-        
-        return {
-            "phone_number": phone_number,
-            "personality_summary": personality_summary,
-            "raw_profile": user_profile,
-            "learning_status": "active",
-            "analysis_engines": _get_available_engines(),
-            "agent_type": "complete_intelligence_suite" if trading_agent else "fallback"
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting personality insights for {phone_number}: {e}")
-        return {"error": str(e)}
-
-# ===== TEST INTERFACE ENDPOINT =====
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_interface():
