@@ -1,4 +1,4 @@
-# services/llm_agent.py - COMPLETE ENHANCED HUMAN-LIKE VERSION
+# services/llm_agent.py - COMPLETE ENHANCED HUMAN-LIKE VERSION WITH CONTEXT-RICH CONVERSATION
 
 import json
 import asyncio
@@ -10,11 +10,12 @@ from datetime import datetime
 from openai import AsyncOpenAI
 
 class TradingAgent:
-    """Human-like trading companion that adapts to user personality perfectly"""
+    """Human-like trading companion that adapts to user personality with rich conversation context"""
     
-    def __init__(self, openai_client, personality_engine):
+    def __init__(self, openai_client, personality_engine, database_service=None):
         self.openai_client = openai_client
         self.personality_engine = personality_engine
+        self.database_service = database_service  # NEW: Database service for context retrieval
         
         # Human conversation patterns for natural responses
         self.conversation_starters = {
@@ -37,9 +38,18 @@ class TradingAgent:
         }
     
     async def parse_intent(self, message: str, user_phone: str = None) -> Dict[str, Any]:
-        """Parse intent while understanding human conversation context"""
+        """Parse intent with rich conversation context awareness"""
         
-        # Get user context for better parsing
+        # NEW: Get conversation context if database service available
+        conversation_context = {}
+        if self.database_service and user_phone:
+            try:
+                conversation_context = await self.database_service.get_conversation_context(user_phone)
+            except Exception as e:
+                logger.warning(f"Failed to get conversation context: {e}")
+                conversation_context = {}
+        
+        # Get user context for better parsing (existing functionality)
         user_context = ""
         if user_phone and self.personality_engine:
             profile = self.personality_engine.get_user_profile(user_phone)
@@ -48,13 +58,19 @@ class TradingAgent:
             energy = profile.get('communication_style', {}).get('energy', 'moderate')
             user_context = f"User is {experience} trader with {style}/{energy} style."
         
+        # NEW: Build enhanced context with conversation history
+        enhanced_context = self._build_enhanced_context(user_context, conversation_context)
+        
         prompt = f"""You're parsing a message from a real person to their trading buddy. Understand the HUMAN context and emotion behind their words.
 
-{user_context}
+{enhanced_context}
 
 Extract intent but think like a human - what is this person REALLY asking/feeling?
 
 Message: "{message}"
+
+CONVERSATION CONTEXT AWARENESS:
+{self._format_conversation_context(conversation_context)}
 
 HUMAN CONVERSATION RULES:
 - "yo what's google doing?" = they're casually checking GOOGL performance, probably considering a trade
@@ -94,7 +110,8 @@ Return JSON:
     "human_subtext": "they want validation for their investment thesis",
     "requires_tools": ["technical_analysis", "news_sentiment"],
     "response_tone": "celebratory|reassuring|analytical|validating",
-    "urgency": "low|medium|high"
+    "urgency": "low|medium|high",
+    "conversation_continuity": "new_topic|continuing_discussion|follow_up_question|reference_to_previous"
 }}
 
 Examples:
@@ -110,7 +127,7 @@ Examples:
                     model="gpt-4o-mini",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,  # Slightly higher for more natural understanding
-                    max_tokens=250,
+                    max_tokens=300,  # Increased for conversation context
                     response_format={"type": "json_object"}
                 )
             else:
@@ -118,20 +135,90 @@ Examples:
                     model="gpt-4o-mini",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
-                    max_tokens=250,
+                    max_tokens=300,
                     response_format={"type": "json_object"}
                 )
             
             intent_data = json.loads(response.choices[0].message.content)
             intent_data = self._validate_intent(intent_data, message)
             
-            logger.info(f"Human intent parsed: {intent_data.get('intent')} | Emotion: {intent_data.get('emotional_state')} | Symbols: {intent_data.get('symbols', [])}")
+            # NEW: Add conversation context to intent data
+            intent_data["conversation_context"] = conversation_context.get("context_summary", "")
+            
+            logger.info(f"Human intent parsed: {intent_data.get('intent')} | Emotion: {intent_data.get('emotional_state')} | Symbols: {intent_data.get('symbols', [])} | Context: {intent_data.get('conversation_continuity', 'unknown')}")
             
             return intent_data
             
         except Exception as e:
             logger.error(f"Intent parsing failed: {e}")
             return self._fallback_intent_parsing(message)
+    
+    def _build_enhanced_context(self, user_context: str, conversation_context: Dict) -> str:
+        """Build enhanced context including conversation history"""
+        enhanced_parts = [user_context] if user_context else []
+        
+        if conversation_context:
+            conv_ctx = conversation_context.get("conversation_context", {})
+            today_session = conversation_context.get("today_session", {})
+            
+            # Add relationship context
+            relationship = conv_ctx.get("relationship_stage", "new")
+            total_convos = conv_ctx.get("total_conversations", 0)
+            enhanced_parts.append(f"Relationship: {relationship} ({total_convos} conversations)")
+            
+            # Add recent discussion context
+            recent_symbols = conv_ctx.get("recent_symbols", [])
+            if recent_symbols:
+                enhanced_parts.append(f"Recently discussed: {', '.join(recent_symbols[-3:])}")
+            
+            # Add today's session context
+            if today_session.get("message_count", 0) > 0:
+                topics_today = today_session.get("topics_discussed", [])
+                mood_today = today_session.get("session_mood", "neutral")
+                enhanced_parts.append(f"Today: {len(topics_today)} topics, {mood_today} mood")
+            else:
+                enhanced_parts.append("First message today")
+        
+        return "\n".join(enhanced_parts)
+    
+    def _format_conversation_context(self, conversation_context: Dict) -> str:
+        """Format conversation context for prompt"""
+        if not conversation_context:
+            return "- New conversation, no previous context"
+        
+        context_lines = []
+        
+        # Recent topics and symbols
+        conv_ctx = conversation_context.get("conversation_context", {})
+        recent_symbols = conv_ctx.get("recent_symbols", [])
+        recent_topics = conv_ctx.get("recent_topics", [])
+        
+        if recent_symbols:
+            context_lines.append(f"- Recently discussed symbols: {', '.join(recent_symbols[-5:])}")
+        
+        if recent_topics:
+            topic_strs = []
+            for topic in recent_topics[-3:]:
+                if isinstance(topic, dict):
+                    topic_strs.append(f"{topic.get('topic', 'unknown')} ({', '.join(topic.get('symbols', []))})")
+                else:
+                    topic_strs.append(str(topic))
+            context_lines.append(f"- Recent topics: {', '.join(topic_strs)}")
+        
+        # Pending decisions
+        pending = conv_ctx.get("pending_decisions", [])
+        if pending:
+            decisions = [d.get("decision", str(d)) if isinstance(d, dict) else str(d) for d in pending[-2:]]
+            context_lines.append(f"- Pending decisions: {', '.join(decisions)}")
+        
+        # Session context
+        today_session = conversation_context.get("today_session", {})
+        if today_session.get("message_count", 0) > 0:
+            context_lines.append(f"- Today's session: {today_session.get('message_count')} messages, {today_session.get('session_mood', 'neutral')} mood")
+        else:
+            context_lines.append("- First message of the day")
+        
+        return "\n".join(context_lines) if context_lines else "- No significant conversation context"
     
     def _validate_intent(self, intent_data: Dict, original_message: str) -> Dict:
         """Validate and clean the parsed intent"""
@@ -262,7 +349,7 @@ Examples:
         }
         
         return context
-    
+
     async def generate_response(
         self, 
         user_message: str,
@@ -271,19 +358,27 @@ Examples:
         user_phone: str,
         user_profile: Dict = None
     ) -> str:
-        """Generate human-like response that feels like texting a trading buddy"""
+        """Generate human-like response with rich conversation context"""
         
-        # Get comprehensive personality context
-        personality_context = self._build_personality_context(user_profile, user_message)
+        # NEW: Get conversation context from database
+        conversation_context = {}
+        if self.database_service and user_phone:
+            try:
+                conversation_context = await self.database_service.get_conversation_context(user_phone)
+            except Exception as e:
+                logger.warning(f"Failed to get conversation context for response: {e}")
+        
+        # Get comprehensive personality context (existing functionality enhanced)
+        personality_context = self._build_personality_context(user_profile, user_message, conversation_context)
         
         # Detect conversation context and emotional state
-        conversation_context = self._detect_conversation_context(user_message, user_profile or {})
+        conversation_state = self._detect_conversation_context(user_message, user_profile or {})
         
         # Build human-like analysis context
         analysis_context = self._build_human_analysis_context(tool_results, intent_data)
         
-        # Determine response strategy based on emotional state and context
-        response_strategy = self._determine_response_strategy(intent_data, conversation_context, user_profile)
+        # NEW: Enhanced response strategy with conversation continuity
+        response_strategy = self._determine_enhanced_response_strategy(intent_data, conversation_state, user_profile, conversation_context)
         
         # Determine formality level from message content
         casual_indicators = ['hey', 'yo', 'sup', 'haha', 'lol', 'rn', 'gonna', 'wanna', 'throwing', 'bucks', 'few bucks', 'thinking about']
@@ -298,17 +393,22 @@ Examples:
         analysis_depth_indicators = ['analytical assessment', 'technical perspective', 'comprehensive', 'detailed analysis', 'investment potential', 'deep dive']
         requires_deep_analysis = any(indicator in user_message.lower() for indicator in analysis_depth_indicators)
         
-        prompt = f"""You're their trading partner in an ongoing conversation. NO greetings unless they greeted first. Provide the analysis depth they requested.
+        # NEW: Enhanced prompt with conversation context
+        prompt = f"""You're their trading partner in an ongoing conversation. Use conversation history for natural continuity.
 
-ONGOING CONVERSATION CONTEXT:
+PERSONALITY & RELATIONSHIP CONTEXT:
 {personality_context}
 
-THEIR REQUEST: "{user_message}"
+THEIR CURRENT MESSAGE: "{user_message}"
+
 MESSAGE ANALYSIS:
 - Length: {len(user_message)} characters
 - Style: {detected_formality}
 - Depth Required: {"COMPREHENSIVE" if requires_deep_analysis else "STANDARD"}
-- User Greeted: {conversation_context.get('user_greeted_first', False)}
+- User Greeted: {conversation_state.get('user_greeted_first', False)}
+
+CONVERSATION CONTINUITY:
+{self._format_conversation_continuity(conversation_context)}
 
 MARKET DATA:
 {analysis_context}
@@ -329,35 +429,38 @@ HUMAN RESPONSE RULES:
 
 1. **MATCH THEIR EXACT STYLE**: If formal → be formal, if casual → be casual
 2. **NO EMOJIS UNLESS THEY USED THEM**: Zero tolerance emoji policy
-3. **TALK LIKE A HUMAN**: Natural flow but match their formality level  
+3. **USE CONVERSATION HISTORY**: Reference previous discussions naturally
 4. **NO AI ARTIFACTS**: Never say "here's the analysis" - just dive in naturally
-5. **NO GREETINGS**: Don't say "Hey!" unless they greeted you first
+5. **CONTEXTUAL GREETINGS**: Only greet if appropriate based on relationship and today's conversation
 
 RESPONSE EXAMPLES BY DETECTED STYLE:
 
 **COMPREHENSIVE ANALYSIS** (when they ask for "analytical assessment", "technical perspective"):
-"GOOGL $193.18, up 1.2% with strong volume. Technical setup: RSI 58 (neutral-bullish), MACD showing positive divergence, breaking above 20-day MA resistance at $191. Key levels: support $188, resistance $197. Chart pattern suggests continuation to $200-205 range. News sentiment mixed but earnings momentum strong. Risk/reward favors upside with stop below $188."
+"GOOGL technical setup: $193.18, RSI 58 (neutral-bullish), MACD positive divergence, breaking above 20-day MA resistance at $191. Key levels: support $188, resistance $197. Target range $200-205. Mixed news sentiment but solid fundamentals. Risk/reward favors upside with stop below $188."
 
 **CASUAL ANALYSIS** (when they ask simple questions):  
 "GOOGL looking solid at $193, RSI neutral so room to run. breaking key resistance, next target $200"
 
-**PROFESSIONAL DETAILED** (formal analytical requests):
-"GOOGL exhibits constructive technical characteristics at $193.18. RSI positioning at 58 indicates balanced momentum with upside capacity. MACD crossover confirms bullish divergence. Price action above 20-day moving average establishes support at $191 level. Target range $200-205 with risk management below $188."
+**CONTINUING CONVERSATION** (when referencing previous discussion):
+"GOOGL update: still holding above that $191 support we talked about. RSI cooled off to 58, so that overbought concern from yesterday is gone. Looking good for that $200 target."
 
-FOR THIS SPECIFIC MESSAGE (analytical assessment request):
-- User wants: DEEP technical analysis
-- Response style: {detected_formality} but COMPREHENSIVE  
-- NO greeting needed - jump straight to detailed analysis
-- Include: specific levels, indicators, timeframes, risk/reward
+**PROFESSIONAL DETAILED** (formal analytical requests):
+"GOOGL exhibits constructive technical characteristics at $193.18. RSI positioning at 58 indicates balanced momentum with upside capacity. MACD crossover confirms bullish divergence. Price action above 20-day moving average establishes support at $191 level."
+
+FOR THIS SPECIFIC MESSAGE:
+- Response style: {detected_formality} with {"COMPREHENSIVE" if requires_deep_analysis else "STANDARD"} depth
+- Use conversation context naturally for continuity
+- Include specific levels, indicators, timeframes if analysis requested
+- NO emojis unless user message is under 100 chars AND user used emojis
 
 SMS OPTIMIZATION:
 - Keep under 300 chars but pack maximum value
 - Can split into 2 messages if needed
 - Use abbreviations naturally (tho, rn, gonna, etc.) ONLY if user is casual
-- **CRITICAL**: NO EMOJIS unless user message is under 100 chars AND user used emojis
 - Match their formality level exactly
+- Reference conversation history naturally when relevant
 
-Generate the perfect human response:"""
+Generate the perfect contextual human response:"""
 
         try:
             if hasattr(self.openai_client, 'client'):
@@ -365,20 +468,20 @@ Generate the perfect human response:"""
                     model="gpt-4o",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.8,  # Higher temperature for more natural, human-like responses
-                    max_tokens=220
+                    max_tokens=250  # Increased for context-rich responses
                 )
             else:
                 response = await self.openai_client.chat.completions.create(
                     model="gpt-4o",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.8,
-                    max_tokens=220
+                    max_tokens=250
                 )
             
             generated_response = response.choices[0].message.content.strip()
             
             # Apply human-like post-processing
-            generated_response = self._humanize_response(generated_response, user_profile, conversation_context)
+            generated_response = self._humanize_response(generated_response, user_profile, conversation_state)
             
             # Clean and validate response
             generated_response = self._clean_response(generated_response)
@@ -388,51 +491,138 @@ Generate the perfect human response:"""
             if len(generated_response) > 320:
                 generated_response = self._split_for_sms(generated_response)
             
-            logger.info(f"Generated human-like response: {len(generated_response)} chars")
+            # NEW: Save enhanced message with context to database
+            if self.database_service and user_phone:
+                try:
+                    await self.database_service.save_enhanced_message(
+                        phone_number=user_phone,
+                        user_message=user_message,
+                        bot_response=generated_response,
+                        intent_data=intent_data,
+                        symbols=intent_data.get("symbols", []),
+                        context_used=conversation_context.get("context_summary", "")
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save enhanced message: {e}")
+            
+            logger.info(f"Generated context-rich response: {len(generated_response)} chars")
             
             return generated_response
             
         except Exception as e:
             logger.error(f"Response generation failed: {e}")
-            return self._generate_human_fallback(intent_data, tool_results, user_profile, conversation_context)
+            return self._generate_human_fallback(intent_data, tool_results, user_profile, conversation_state)
     
-    def _build_personality_context(self, user_profile: Dict, user_message: str) -> str:
-        """Build comprehensive personality context for response generation"""
+    # NEW: Enhanced context formatting methods
+    def _format_conversation_continuity(self, conversation_context: Dict) -> str:
+        """Format conversation continuity information for response generation"""
+        if not conversation_context:
+            return "- New conversation, respond appropriately for first interaction"
+        
+        continuity_lines = []
+        
+        # Today's session status
+        today_session = conversation_context.get("today_session", {})
+        if today_session.get("is_first_message_today", True):
+            continuity_lines.append("- First message today - natural greeting may be appropriate")
+        else:
+            msg_count = today_session.get("message_count", 0)
+            continuity_lines.append(f"- Continuing today's conversation ({msg_count} messages so far)")
+            
+            # Today's topics for continuity
+            topics_today = today_session.get("topics_discussed", [])
+            if topics_today:
+                continuity_lines.append(f"- Topics discussed today: {', '.join(topics_today)}")
+        
+        # Recent conversation references
+        conv_ctx = conversation_context.get("conversation_context", {})
+        recent_symbols = conv_ctx.get("recent_symbols", [])
+        if recent_symbols:
+            continuity_lines.append(f"- Can reference recent symbols: {', '.join(recent_symbols[-3:])}")
+        
+        # Relationship stage affects conversation style
+        relationship = conv_ctx.get("relationship_stage", "new")
+        total_convos = conv_ctx.get("total_conversations", 0)
+        continuity_lines.append(f"- Relationship level: {relationship} ({total_convos} total conversations)")
+        
+        return "\n".join(continuity_lines)
+    
+    def _build_personality_context(self, user_profile: Dict, user_message: str, conversation_context: Dict = None) -> str:
+        """Build comprehensive personality context including conversation history"""
         
         if not user_profile:
-            return "New user - be friendly and welcoming"
+            context_parts = ["New user - be friendly and welcoming"]
+        else:
+            comm_style = user_profile.get('communication_style', {})
+            trading_style = user_profile.get('trading_personality', {})
+            
+            context_parts = [
+                f"COMMUNICATION: {comm_style.get('formality', 'casual')}/{comm_style.get('energy', 'moderate')} energy",
+                f"TRADING: {trading_style.get('experience_level', 'intermediate')} {trading_style.get('trading_style', 'swing')} trader"
+            ]
         
-        comm_style = user_profile.get('communication_style', {})
-        trading_style = user_profile.get('trading_personality', {})
-        context_memory = user_profile.get('context_memory', {})
-        learning_data = user_profile.get('learning_data', {})
+        # Add conversation context if available
+        if conversation_context:
+            conv_ctx = conversation_context.get("conversation_context", {})
+            
+            # Relationship context
+            relationship = conv_ctx.get("relationship_stage", "new")
+            total_convos = conv_ctx.get("total_conversations", 0)
+            context_parts.append(f"RELATIONSHIP: {relationship} ({total_convos} conversations)")
+            
+            # Recent context for natural references
+            recent_symbols = conv_ctx.get("recent_symbols", [])
+            if recent_symbols:
+                context_parts.append(f"RECENT FOCUS: {', '.join(recent_symbols[-3:])}")
+            
+            # Conversation frequency affects response style
+            frequency = conv_ctx.get("conversation_frequency", "occasional")
+            context_parts.append(f"FREQUENCY: {frequency}")
         
-        # Build relationship context
-        total_messages = learning_data.get('total_messages', 0)
-        relationship_stage = (
-            "brand new friend" if total_messages < 3 else
-            "getting to know them" if total_messages < 10 else
-            "close trading buddy" if total_messages < 50 else
-            "longtime friend"
-        )
+        return "\n".join(context_parts)
+    
+    def _determine_enhanced_response_strategy(self, intent_data: Dict, conversation_state: Dict, 
+                                            user_profile: Dict, conversation_context: Dict) -> str:
+        """Determine response strategy with conversation context awareness"""
         
-        # Recent conversation context
-        recent_stocks = context_memory.get('last_discussed_stocks', [])
-        recent_context = f"Recently talked about: {', '.join(recent_stocks[:3])}" if recent_stocks else "First time discussing stocks"
+        emotional_state = intent_data.get('emotional_state', 'neutral')
         
-        # Success/failure context for emotional support
-        wins = learning_data.get('successful_trades_mentioned', 0)
-        losses = learning_data.get('loss_trades_mentioned', 0)
-        trade_context = f"They've mentioned {wins} wins, {losses} losses" if wins + losses > 0 else "No trade history yet"
+        # Check conversation continuity
+        today_session = conversation_context.get("today_session", {}) if conversation_context else {}
+        is_first_today = today_session.get("is_first_message_today", True)
+        relationship = conversation_context.get("conversation_context", {}).get("relationship_stage", "new") if conversation_context else "new"
         
-        return f"""
-RELATIONSHIP: {relationship_stage} ({total_messages} messages exchanged)
-COMMUNICATION STYLE: {comm_style.get('formality', 'casual')} / {comm_style.get('energy', 'moderate')} energy / {comm_style.get('emoji_usage', 'some')} emojis
-TRADING EXPERIENCE: {trading_style.get('experience_level', 'intermediate')} / {trading_style.get('risk_tolerance', 'moderate')} risk / {trading_style.get('trading_style', 'swing')} trader
-CONTEXT: {recent_context}
-TRACK RECORD: {trade_context}
-TYPICAL CONCERNS: {', '.join(context_memory.get('concerns_expressed', [])[:3]) if context_memory.get('concerns_expressed') else 'None yet'}
-"""
+        # Greeting logic based on context
+        if conversation_state.get('user_greeted_first'):
+            if is_first_today or relationship == "new":
+                return "CONTEXTUAL GREETING - they greeted first, appropriate to greet back and continue"
+            else:
+                return "FRIENDLY ACKNOWLEDGMENT - brief greeting then dive into their request"
+        
+        # For direct questions/analysis requests - context-aware responses
+        if conversation_state.get('is_direct_question'):
+            if not is_first_today and today_session.get("message_count", 0) > 2:
+                return "CONTINUING CONVERSATION - reference previous discussion, no greeting needed"
+            else:
+                return "DIRECT ANALYSIS - jump straight to analysis, use conversation history if relevant"
+        
+        # Emotional states with context awareness
+        if conversation_state.get('is_celebrating'):
+            return "CELEBRATION MODE - match excitement, reference their trading journey if established relationship"
+        
+        elif conversation_state.get('is_worried'):
+            support_level = "deep reassurance" if relationship in ["building_trust", "established"] else "gentle support"
+            return f"SUPPORT MODE - provide {support_level}, reference past successes if known"
+        
+        elif conversation_state.get('is_seeking_validation'):
+            return "VALIDATION MODE - honest assessment, use relationship history to build confidence"
+        
+        elif conversation_state.get('has_fomo'):
+            return "FOMO CHECK - rational perspective, reference their typical investment approach if known"
+        
+        else:
+            continuity = "with conversation continuity" if not is_first_today else "as fresh interaction"
+            return f"ANALYTICAL MODE - provide solid analysis {continuity}, no unnecessary greetings"
     
     def _build_human_analysis_context(self, tool_results: Dict, intent_data: Dict) -> str:
         """Format analysis data in human-digestible way"""
@@ -484,38 +674,6 @@ TYPICAL CONCERNS: {', '.join(context_memory.get('concerns_expressed', [])[:3]) i
             context += "News feeds are slow today\n"
         
         return context or "Limited data available but we can work with it"
-    
-    def _determine_response_strategy(self, intent_data: Dict, conversation_context: Dict, user_profile: Dict) -> str:
-        """Determine the human response strategy based on context"""
-        
-        emotional_state = intent_data.get('emotional_state', 'neutral')
-        
-        # Check if user actually greeted first
-        if conversation_context.get('user_greeted_first'):
-            total_messages = user_profile.get('learning_data', {}).get('total_messages', 0) if user_profile else 0
-            if total_messages == 0:
-                return "WELCOME MODE - they greeted first, so greet back and get them started"
-            else:
-                return "FRIENDLY GREETING - they greeted, so greet back then dive into analysis"
-        
-        # For direct questions/analysis requests - NO GREETINGS
-        if conversation_context.get('is_direct_question'):
-            return "DIRECT ANALYSIS MODE - they want analysis, jump straight to it with no greetings"
-        
-        if conversation_context.get('is_celebrating'):
-            return "CELEBRATION MODE - match their excitement, validate their success, but gently mention risks"
-        
-        elif conversation_context.get('is_worried'):
-            return "SUPPORT MODE - be reassuring, provide perspective, help them think clearly"
-        
-        elif conversation_context.get('is_seeking_validation'):
-            return "VALIDATION MODE - give them honest assessment, support good ideas, redirect bad ones"
-        
-        elif conversation_context.get('has_fomo'):
-            return "FOMO CHECK - help them think rationally, provide perspective on timing"
-        
-        else:
-            return "ANALYTICAL MODE - provide solid analysis with personality, no unnecessary greetings"
     
     def _humanize_response(self, response: str, user_profile: Dict, conversation_context: Dict) -> str:
         """Apply final human touches to the response"""
@@ -685,26 +843,26 @@ TYPICAL CONCERNS: {', '.join(context_memory.get('concerns_expressed', [])[:3]) i
         # Emotional fallbacks based on detected state
         if conversation_context.get('is_worried'):
             if formality == 'casual':
-                return "hey market data's being wonky rn but don't stress - we'll figure this out together 💪"
+                return "hey market data's being wonky rn but don't stress - we'll figure this out together"
             else:
                 return "Market data is temporarily unavailable, but I'm here to help you work through your concerns."
         
         elif conversation_context.get('is_celebrating'):
             if formality == 'casual':
-                return "yooo can't pull the exact numbers rn but sounds like you're crushing it! 🚀"
+                return "yooo can't pull the exact numbers rn but sounds like you're crushing it!"
             else:
                 return "Congratulations on your success! I'll have updated analysis for you shortly."
         
         elif intent_data.get("symbols"):
             symbol = intent_data["symbols"][0]
             if formality == 'casual' and energy == 'high':
-                return f"yo {symbol} data's loading slow but I got you! gimme a sec to grab fresh numbers 📊"
+                return f"yo {symbol} data's loading slow but I got you! gimme a sec to grab fresh numbers"
             else:
                 return f"Retrieving latest {symbol} analysis - one moment please."
         
         else:
             if formality == 'casual':
-                return "data's being slow rn but I'm still here to help! what's on your mind? 🤔"
+                return "data's being slow rn but I'm still here to help! what's on your mind?"
             else:
                 return "I'm experiencing some technical difficulties but I'm here to assist however I can."
 
@@ -949,51 +1107,54 @@ THEIR CONCERNS: {', '.join(memory.get('concerns_expressed', [])[:2]) if memory.g
         return random.choice(fallbacks)
 
 
-# ===== ENHANCED MESSAGE PROCESSOR =====
+# ===== ENHANCED MESSAGE PROCESSOR WITH CONTEXT AWARENESS =====
 
 class ComprehensiveMessageProcessor:
-    """Processes messages like a human trading buddy would"""
+    """Processes messages like a human trading buddy with conversation memory"""
     
-    def __init__(self, openai_client, ta_service, personality_engine, news_service=None, fundamental_tool=None):
-        self.trading_agent = TradingAgent(openai_client, personality_engine)
+    def __init__(self, openai_client, ta_service, personality_engine, database_service=None, news_service=None, fundamental_tool=None):
+        self.trading_agent = TradingAgent(openai_client, personality_engine, database_service)  # NEW: Pass database service
         self.tool_executor = ToolExecutor(ta_service, None, None, news_service, fundamental_tool)
         self.response_generator = PersonalityAwareResponseGenerator(openai_client)
         self.personality_engine = personality_engine
+        self.database_service = database_service  # NEW: Store database service
     
     async def process_complete_message(self, message: str, user_phone: str) -> str:
-        """Process message like a knowledgeable human friend would"""
+        """Process message with rich conversation context"""
         
         try:
-            logger.info(f"🤝 Human-like processing: '{message}' from {user_phone}")
+            logger.info(f"🤝 Context-rich processing: '{message}' from {user_phone}")
             
-            # Step 1: Understand the human context and intent
+            # Step 1: Understand the human context and intent (now with conversation history)
             intent_data = await self.trading_agent.parse_intent(message, user_phone)
             
-            # Step 2: Learn from this interaction (like a human would remember)
-            self.personality_engine.learn_from_message(user_phone, message, intent_data)
+            # Step 2: Learn from this interaction (existing functionality)
+            if self.personality_engine:
+                self.personality_engine.learn_from_message(user_phone, message, intent_data)
             
             # Step 3: Get tools/analysis if needed
             tool_results = await self.tool_executor.execute_tools(intent_data, user_phone)
             
-            # Step 4: Get their personality (how you know them)
-            user_profile = self.personality_engine.get_user_profile(user_phone)
+            # Step 4: Get their personality (existing functionality)
+            user_profile = self.personality_engine.get_user_profile(user_phone) if self.personality_engine else {}
             
-            # Step 5: Respond like their trading buddy would
-            response = await self.response_generator.generate_personality_matched_response(
+            # Step 5: Generate context-rich response
+            response = await self.trading_agent.generate_response(
                 user_message=message,
-                analysis_data=tool_results,
-                user_profile=user_profile,
-                user_phone=user_phone
+                intent_data=intent_data,
+                tool_results=tool_results,
+                user_phone=user_phone,
+                user_profile=user_profile
             )
             
-            logger.info(f"✅ Human-like response generated: {len(response)} chars")
+            logger.info(f"✅ Context-rich response generated: {len(response)} chars")
             
             return response
             
         except Exception as e:
-            logger.error(f"💥 Human processing failed: {e}")
+            logger.error(f"💥 Context-rich processing failed: {e}")
             # Even fallback should sound human
-            return "yo something's wonky on my end rn but I'm still here! try me again in a sec? 🤖"
+            return "yo something's wonky on my end rn but I'm still here! try me again in a sec?"
 
 
 # ===== TOOL EXECUTOR (Same as before but with enhanced error handling) =====
