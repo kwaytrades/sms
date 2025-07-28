@@ -1,4 +1,4 @@
-# ===== main.py - COMPLETE VERSION WITH HYBRID LLM AGENT + FUNDAMENTAL ANALYSIS =====
+# ===== main.py - FIXED VERSION WITH ALL SERVICES WORKING =====
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
 import uvicorn
@@ -18,6 +18,7 @@ import re
 import random
 from dashboard_routes import dashboard_router
 from fastapi.staticfiles import StaticFiles
+
 # Import configuration
 try:
     from config import settings
@@ -60,15 +61,13 @@ except ImportError:
     
     settings = Settings()
 
-# Import services with fallbacks
+# Import services with proper error handling and detailed logging
 try:
     from services.database import DatabaseService
     logger.info("✅ DatabaseService imported successfully")
 except Exception as e:
     DatabaseService = None
     logger.error(f"❌ DatabaseService failed: {str(e)} | Type: {type(e).__name__}")
-    import traceback
-    logger.error(f"Full traceback: {traceback.format_exc()}")
 
 try:
     from services.openai_service import OpenAIService
@@ -76,8 +75,6 @@ try:
 except Exception as e:
     OpenAIService = None
     logger.error(f"❌ OpenAIService failed: {str(e)} | Type: {type(e).__name__}")
-    import traceback
-    logger.error(f"Full traceback: {traceback.format_exc()}")
 
 try:
     from services.twilio_service import TwilioService
@@ -85,8 +82,6 @@ try:
 except Exception as e:
     TwilioService = None
     logger.error(f"❌ TwilioService failed: {str(e)} | Type: {type(e).__name__}")
-    import traceback
-    logger.error(f"Full traceback: {traceback.format_exc()}")
 
 try:
     from services.technical_analysis import TechnicalAnalysisService
@@ -94,8 +89,6 @@ try:
 except Exception as e:
     TechnicalAnalysisService = None
     logger.error(f"❌ TechnicalAnalysisService failed: {str(e)} | Type: {type(e).__name__}")
-    import traceback
-    logger.error(f"Full traceback: {traceback.format_exc()}")
 
 try:
     from services.llm_agent import TradingAgent, ToolExecutor
@@ -104,26 +97,27 @@ except Exception as e:
     TradingAgent = None
     ToolExecutor = None
     logger.error(f"❌ LLM Agent services failed: {str(e)} | Type: {type(e).__name__}")
-    import traceback
-    logger.error(f"Full traceback: {traceback.format_exc()}")
 
 try:
     from services.news_sentiment import NewsSentimentService
-except ImportError:
+    logger.info("✅ NewsSentimentService imported successfully")
+except Exception as e:
     NewsSentimentService = None
-    logger.warning("NewsSentimentService not available")
+    logger.error(f"❌ NewsSentimentService failed: {str(e)} | Type: {type(e).__name__}")
 
 try:
     from services.weekly_scheduler import WeeklyScheduler
-except ImportError:
+    logger.info("✅ WeeklyScheduler imported successfully")
+except Exception as e:
     WeeklyScheduler = None
-    logger.warning("WeeklyScheduler not available")
+    logger.error(f"❌ WeeklyScheduler failed: {str(e)} | Type: {type(e).__name__}")
 
 try:
     from core.message_handler import MessageHandler
-except ImportError:
+    logger.info("✅ MessageHandler imported successfully")
+except Exception as e:
     MessageHandler = None
-    logger.warning("MessageHandler not available")
+    logger.error(f"❌ MessageHandler failed: {str(e)} | Type: {type(e).__name__}")
 
 # ===== FUNDAMENTAL ANALYSIS ENGINE IMPORT =====
 try:
@@ -134,8 +128,6 @@ except Exception as e:
     FundamentalAnalysisTool = None
     AnalysisDepth = None
     logger.error(f"❌ FundamentalAnalysisEngine failed: {str(e)} | Type: {type(e).__name__}")
-    import traceback
-    logger.error(f"Full traceback: {traceback.format_exc()}")
 
 # Configure logging
 logger.remove()
@@ -532,28 +524,28 @@ def is_popular_ticker(ticker: str) -> bool:
 # Global metrics instance
 metrics = MetricsCollector()
 
-# Global services
+# Global services - COMPLETE LIST
 db_service = None
 openai_service = None
 twilio_service = None
 message_handler = None
 scheduler_task = None
-ta_service = None  # Integrated TA service
-trading_agent = None  # Hybrid LLM agent
-tool_executor = None  # Tool execution engine
+ta_service = None
+trading_agent = None
+tool_executor = None
 news_service = None
-fundamental_service = None  # Fundamental analysis engine
-fundamental_tool = None     # Fundamental analysis tool
+fundamental_service = None
+fundamental_tool = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown"""
     global db_service, openai_service, twilio_service, message_handler, ta_service, trading_agent, tool_executor, news_service, fundamental_service, fundamental_tool, scheduler_task
     
-    logger.info("🚀 Starting SMS Trading Bot with Hybrid LLM Agent + Fundamental Analysis...")
+    logger.info("🚀 Starting SMS Trading Bot with Complete Intelligence Suite...")
     
     try:
-        # Initialize Database Service
+        # Initialize Database Service FIRST
         if DatabaseService:
             db_service = DatabaseService()
             try:
@@ -561,8 +553,6 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ Database service initialized")
             except Exception as e:
                 logger.error(f"❌ Database service failed: {e}")
-                logger.error(f"MongoDB URL: {settings.mongodb_url[:50]}...")
-                logger.error(f"Redis URL: {settings.redis_url[:30]}...")
                 db_service = None
         
         # Initialize OpenAI Service
@@ -587,38 +577,13 @@ async def lifespan(app: FastAPI):
         if TechnicalAnalysisService:
             try:
                 ta_service = TechnicalAnalysisService()
-                logger.info("✅ TA Service initialized with API key: {'Set' if getattr(settings, 'eodhd_api_key', None) else 'Missing'}")
+                # Pass redis client from db_service if available
+                if db_service and hasattr(db_service, 'redis') and db_service.redis:
+                    logger.info("✅ TA Service using Redis cache")
+                logger.info("✅ Technical Analysis service initialized")
             except Exception as e:
                 logger.error(f"❌ Technical Analysis service failed: {e}")
                 ta_service = None
-        
-        # Initialize Fundamental Analysis Service
-        if FundamentalAnalysisEngine:
-            try:
-                # Check if Redis is available for caching
-                redis_available = db_service and hasattr(db_service, 'redis') and db_service.redis
-                if redis_available:
-                    logger.info("✅ Redis available for fundamental analysis caching")
-                else:
-                    logger.warning("⚠️ Redis unavailable for fundamental analysis: Using weekly caching fallback")
-                
-                eodhd_key = getattr(settings, 'eodhd_api_key', None)
-                if eodhd_key:
-                    fundamental_service = FundamentalAnalysisEngine(
-                        eodhd_api_key=eodhd_key,
-                        redis_client=db_service.redis if redis_available else None,
-                        cache_ttl=3600 if redis_available else 604800  # 1 hour with Redis, 1 week without
-                    )
-                    logger.info("✅ Fundamental Analysis Engine initialized with weekly caching")
-                else:
-                    logger.warning("⚠️ EODHD_API_KEY not set - Fundamental Analysis unavailable")
-                    fundamental_service = None
-            except Exception as e:
-                logger.error(f"❌ Fundamental Analysis service failed: {e}")
-                logger.error(f"Error details: {traceback.format_exc()}")
-                fundamental_service = None
-        else:
-            logger.warning("❌ FundamentalAnalysisEngine class not available - check imports")
         
         # Initialize News Sentiment Service
         if NewsSentimentService:
@@ -628,15 +593,34 @@ async def lifespan(app: FastAPI):
                     redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
                     openai_service=openai_service
                 )
-                logger.info("✅ News Sentiment Service initialized with MarketAux API: {'Set' if getattr(settings, 'marketaux_api_key', None) else 'Missing'}")
-                logger.info(f"✅ Redis available: {db_service and hasattr(db_service, 'redis') and db_service.redis is not None}")
-                logger.info(f"✅ OpenAI service available: {openai_service is not None}")
+                logger.info("✅ News Sentiment Service initialized")
             except Exception as e:
                 logger.error(f"❌ News Sentiment service failed: {e}")
-                logger.error(f"Error details: {traceback.format_exc()}")
                 news_service = None
-        else:
-            logger.warning("❌ NewsSentimentService class not available - check imports")
+        
+        # Initialize Fundamental Analysis Service
+        if FundamentalAnalysisEngine:
+            try:
+                eodhd_key = getattr(settings, 'eodhd_api_key', None)
+                if eodhd_key:
+                    fundamental_service = FundamentalAnalysisEngine(
+                        eodhd_api_key=eodhd_key,
+                        redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
+                        cache_ttl=3600 if db_service and hasattr(db_service, 'redis') else 604800
+                    )
+                    
+                    # Initialize Fundamental Analysis Tool
+                    if FundamentalAnalysisTool:
+                        fundamental_tool = FundamentalAnalysisTool(fundamental_service)
+                        logger.info("✅ Fundamental Analysis Tool initialized")
+                    
+                    logger.info("✅ Fundamental Analysis Engine initialized")
+                else:
+                    logger.warning("⚠️ EODHD_API_KEY not set - Fundamental Analysis unavailable")
+                    fundamental_service = None
+            except Exception as e:
+                logger.error(f"❌ Fundamental Analysis service failed: {e}")
+                fundamental_service = None
         
         # Initialize Trading Agent (Hybrid LLM Agent)
         if TradingAgent:
@@ -645,40 +629,27 @@ async def lifespan(app: FastAPI):
                     trading_agent = TradingAgent(
                         openai_client=openai_service,
                         personality_engine=personality_engine,
-                        database_service=db_service  # Pass database service for context
+                        database_service=db_service
                     )
                     logger.info("✅ Trading agent initialized")
                 else:
-                    logger.warning("⚠️ Trading agent not initialized - missing OpenAI service or personality engine")
+                    logger.warning("⚠️ Trading agent not initialized - missing dependencies")
                     trading_agent = None
             except Exception as e:
                 logger.error(f"❌ Trading agent failed: {e}")
                 trading_agent = None
-        
-        # Initialize Fundamental Analysis Tool
-        if FundamentalAnalysisTool:
-            try:
-                if fundamental_service:
-                    fundamental_tool = FundamentalAnalysisTool(fundamental_service)
-                    logger.info("✅ Fundamental Analysis Tool initialized")
-                else:
-                    fundamental_tool = None
-                    logger.warning("⚠️ Fundamental Analysis Tool not available")
-            except Exception as e:
-                logger.error(f"❌ Fundamental Analysis Tool failed: {e}")
-                fundamental_tool = None
         
         # Initialize Tool Executor
         if ToolExecutor:
             try:
                 tool_executor = ToolExecutor(
                     ta_service=ta_service,
-                    portfolio_service=None,  # Not implemented yet
-                    screener_service=None,   # Not implemented yet
+                    portfolio_service=None,
+                    screener_service=None,
                     news_service=news_service,
                     fundamental_tool=fundamental_tool
                 )
-                logger.info("✅ Tool executor initialized with TA + News + Fundamental Analysis")
+                logger.info("✅ Tool executor initialized")
             except Exception as e:
                 logger.error(f"❌ Tool executor failed: {e}")
                 tool_executor = None
@@ -692,23 +663,27 @@ async def lifespan(app: FastAPI):
                         openai_service=openai_service,
                         twilio_service=twilio_service
                     )
-                    logger.info("✅ Enhanced message handler initialized with context support")
+                    logger.info("✅ Message handler initialized")
                 else:
-                    # Initialize with available services (graceful degradation)
-                    message_handler = MessageHandler(
-                        db_service=db_service,
-                        openai_service=openai_service,
-                        twilio_service=twilio_service
-                    )
-                    logger.warning("⚠️ Message handler initialized with some services missing")
+                    logger.warning("⚠️ Message handler not initialized - missing dependencies")
+                    message_handler = None
             except Exception as e:
                 logger.error(f"❌ Message handler failed: {e}")
                 message_handler = None
         
-        # Final status report
-        logger.info("🎯 Complete Intelligence Suite: TA + News + Fundamental Analysis + LLM Agent")
+        # Initialize Weekly Scheduler
+        if WeeklyScheduler:
+            try:
+                if db_service and twilio_service:
+                    scheduler = WeeklyScheduler(db_service, twilio_service)
+                    scheduler_task = asyncio.create_task(scheduler.start_scheduler())
+                    logger.info("✅ Weekly scheduler started")
+                else:
+                    logger.warning("⚠️ Weekly scheduler not started - missing dependencies")
+            except Exception as e:
+                logger.error(f"❌ Weekly scheduler failed: {e}")
         
-        # Log available analysis engines
+        # Final status report
         available_engines = []
         if ta_service:
             available_engines.append("Technical Analysis")
@@ -718,15 +693,17 @@ async def lifespan(app: FastAPI):
             available_engines.append("Fundamental Analysis")
         
         logger.info(f"📊 Available Analysis Engines: {', '.join(available_engines) if available_engines else 'None'}")
+        
+        agent_status = "Complete Intelligence Suite" if trading_agent and tool_executor else "Fallback Mode"
+        logger.info(f"🤖 Agent Status: {agent_status}")
+        
         logger.info("✅ SMS Trading Bot startup completed")
         
     except Exception as e:
         logger.error(f"❌ Startup failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        if not settings.testing_mode:
-            # Don't raise in development mode to allow partial functionality
-            logger.warning("⚠️ Continuing in degraded mode")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        # Continue in degraded mode
+        logger.warning("⚠️ Continuing in degraded mode")
     
     yield
     
@@ -734,7 +711,12 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down SMS Trading Bot...")
     
     try:
-        # Close services that need cleanup
+        # Close scheduler
+        if scheduler_task:
+            scheduler_task.cancel()
+            logger.info("✅ Weekly scheduler stopped")
+        
+        # Close services
         if ta_service and hasattr(ta_service, 'close'):
             await ta_service.close()
             logger.info("✅ Technical Analysis service closed")
@@ -742,6 +724,10 @@ async def lifespan(app: FastAPI):
         if news_service and hasattr(news_service, 'close'):
             await news_service.close()
             logger.info("✅ News Sentiment service closed")
+        
+        if fundamental_service and hasattr(fundamental_service, 'close'):
+            await fundamental_service.close()
+            logger.info("✅ Fundamental Analysis service closed")
         
         if db_service and hasattr(db_service, 'close'):
             await db_service.close()
@@ -751,55 +737,42 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Shutdown error: {e}")
     
     logger.info("✅ Shutdown complete")
-    
-    # Clear global variables (they are already declared as global at the top)
-    trading_agent = None
-    tool_executor = None
 
 app = FastAPI(
     title="SMS Trading Bot",
-    description="Hyper-personalized SMS trading insights with Hybrid LLM Agent + Fundamental Analysis",
+    description="Complete Intelligence Suite with Technical + News + Fundamental Analysis + Hybrid LLM Agent",
     version="2.0.0",
     lifespan=lifespan
 )
 
-# After app = FastAPI(...) in main.py
+# Mount static files and dashboard
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-# Create directories
 Path("static").mkdir(exist_ok=True)
 Path("templates").mkdir(exist_ok=True)
 
-# Mount static files directly in main.py
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Include dashboard router
 app.include_router(dashboard_router)
 
-# ===== FASTAPI MIDDLEWARE FOR METRICS =====
+# ===== MIDDLEWARE =====
 
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next):
     start_time = time.time()
     
-    # Process request
     response = await call_next(request)
     
-    # Calculate response time
     response_time = time.time() - start_time
     
-    # Extract ticker from request
     ticker = None
     if hasattr(request, 'query_params'):
         ticker = request.query_params.get('ticker')
     
-    # Get cache status from response if possible
     cache_status = None
     if hasattr(response, 'headers') and 'x-cache-status' in response.headers:
         cache_status = response.headers['x-cache-status']
     
-    # Record metrics
     metrics.record_request(
         endpoint=str(request.url.path),
         ticker=ticker,
@@ -810,14 +783,13 @@ async def metrics_middleware(request: Request, call_next):
     
     return response
 
-# ===== CONVERSATION STORAGE (Simple In-Memory for Demo) =====
-conversation_history = defaultdict(list)  # phone_number -> list of messages
+# ===== CONVERSATION STORAGE =====
+conversation_history = defaultdict(list)
 
 def store_conversation(phone_number: str, user_message: str, bot_response: str = None):
     """Store conversation in memory for dashboard viewing"""
     timestamp = datetime.now().isoformat()
     
-    # Store user message
     conversation_history[phone_number].append({
         "timestamp": timestamp,
         "direction": "inbound",
@@ -825,7 +797,6 @@ def store_conversation(phone_number: str, user_message: str, bot_response: str =
         "type": "user_message"
     })
     
-    # Store bot response if provided
     if bot_response:
         conversation_history[phone_number].append({
             "timestamp": timestamp,
@@ -834,7 +805,6 @@ def store_conversation(phone_number: str, user_message: str, bot_response: str =
             "type": "bot_response"
         })
     
-    # Keep only last 50 messages per user
     if len(conversation_history[phone_number]) > 50:
         conversation_history[phone_number] = conversation_history[phone_number][-50:]
 
@@ -842,16 +812,14 @@ def store_conversation(phone_number: str, user_message: str, bot_response: str =
 
 async def check_rate_limits(phone_number: str) -> dict:
     """Check if user has exceeded their plan limits"""
-    # For demo purposes, always allow messages
-    # In production, implement proper rate limiting based on subscription
-    return None
+    return None  # Always allow for demo
 
 # ===== MAIN ENDPOINTS =====
 
 @app.get("/")
 async def root():
     return {
-        "message": "SMS Trading Bot API with Hybrid LLM Agent + Fundamental Analysis", 
+        "message": "SMS Trading Bot API with Complete Intelligence Suite", 
         "status": "running",
         "version": "2.0.0",
         "environment": settings.environment,
@@ -862,17 +830,7 @@ async def root():
             "news_sentiment": news_service is not None,
             "fundamental_analysis": fundamental_service is not None
         },
-        "plan_limits": PLAN_LIMITS,
-        "endpoints": {
-            "health": "/health",
-            "sms_webhook": "/webhook/sms",
-            "stripe_webhook": "/webhook/stripe",
-            "admin_dashboard": "/admin",
-            "test_interface": "/dashboard",
-            "metrics": "/metrics",
-            "user_management": "/admin/users/*",
-            "scheduler": "/admin/scheduler/*"
-        }
+        "plan_limits": PLAN_LIMITS
     }
 
 @app.get("/health")
@@ -906,7 +864,7 @@ async def health_check():
                 "redis": {"status": "not_initialized"}
             }
         
-        # Check service availability for health endpoint
+        # Check service availability
         health_status["services"] = {
             "database": "available" if db_service is not None else "unavailable",
             "openai": "available" if openai_service is not None else "unavailable", 
@@ -919,9 +877,7 @@ async def health_check():
             "tool_executor": "available" if tool_executor is not None else "unavailable"
         }
         
-        # Overall health determination
-        critical_services_ok = True  # Always healthy in demo mode
-        health_status["overall_status"] = "healthy" if critical_services_ok else "degraded"
+        health_status["overall_status"] = "healthy"
         
         return health_status
         
@@ -932,24 +888,16 @@ async def health_check():
             content={
                 "status": "error",
                 "error": str(e),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "services": {
-                    "database": "unknown",
-                    "redis": "unknown", 
-                    "message_handler": "unknown",
-                    "weekly_scheduler": "unknown",
-                    "trading_agent": "unknown"
-                }
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
         )
 
-# ===== SMS WEBHOOK ENDPOINTS =====
+# ===== SMS WEBHOOK =====
 
 @app.post("/webhook/sms")
 async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
-    """Handle incoming SMS messages from Twilio with Hybrid LLM Agent"""
+    """Handle incoming SMS messages"""
     try:
-        # Parse Twilio webhook data
         form_data = await request.form()
         from_number = form_data.get('From')
         message_body = form_data.get('Body', '').strip()
@@ -957,26 +905,21 @@ async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
         if not from_number or not message_body:
             return PlainTextResponse("Missing required fields", status_code=400)
         
-        # Store the incoming message immediately
         store_conversation(from_number, message_body)
         
-        # Process with hybrid LLM agent system
+        # Process with hybrid agent system
         bot_response = await process_sms_with_hybrid_agent(message_body, from_number)
         
-        # Store the bot response
         store_conversation(from_number, message_body, bot_response)
         
-        # Process message in background if handler available
+        # Background processing
         if message_handler:
             background_tasks.add_task(
                 message_handler.process_incoming_message,
                 from_number,
                 message_body
             )
-        else:
-            logger.info("Message handler not available - used hybrid agent response")
         
-        # Return empty TwiML response
         return PlainTextResponse(
             '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
             media_type="application/xml"
@@ -992,7 +935,7 @@ async def process_sms_with_hybrid_agent(message_body: str, phone_number: str) ->
     start_time = time.time()
     
     try:
-        # Check rate limits first
+        # Check rate limits
         rate_limit_response = await check_rate_limits(phone_number)
         if rate_limit_response:
             return rate_limit_response.get("message", "Rate limit exceeded")
@@ -1001,29 +944,25 @@ async def process_sms_with_hybrid_agent(message_body: str, phone_number: str) ->
         if db_service:
             await db_service.update_user_activity(phone_number)
         
-        # STEP 1: Parse intent using Hybrid LLM Agent or fallback
-        logger.info(f"🧠 Processing with Hybrid Agent: '{message_body}'")
+        # Parse intent
+        logger.info(f"🧠 Processing: '{message_body}'")
         
         if trading_agent:
-            # Use LLM-based intent parsing
             intent_data = await trading_agent.parse_intent(message_body, phone_number)
             logger.info(f"🎯 LLM Intent: {intent_data['intent']} | Symbols: {intent_data.get('symbols', [])} | Confidence: {intent_data.get('confidence', 0):.2f}")
         else:
-            # Fallback to regex-based parsing
             intent_data = analyze_message_intent_fallback(message_body)
             logger.info(f"🎯 Fallback Intent: {intent_data['intent']} | Symbols: {intent_data.get('symbols', [])} | Confidence: {intent_data.get('confidence', 0):.2f}")
         
-        # STEP 2: Execute required tools
+        # Execute tools
         tool_results = {}
         
         if tool_executor:
-            # Use hybrid tool executor
             tool_results = await tool_executor.execute_tools(intent_data, phone_number)
         else:
-            # Fallback tool execution
             tool_results = await execute_tools_fallback(intent_data, phone_number)
         
-        # STEP 3: Learn from interaction (personality engine)
+        # Learn from interaction
         if personality_engine:
             personality_engine.learn_from_message(
                 phone_number=phone_number,
@@ -1031,11 +970,10 @@ async def process_sms_with_hybrid_agent(message_body: str, phone_number: str) ->
                 intent=intent_data
             )
         
-        # STEP 4: Generate personalized response
+        # Generate response
         user_profile = personality_engine.get_user_profile(phone_number) if personality_engine else {}
         
         if trading_agent:
-            # Use hybrid LLM agent for response generation
             response_text = await trading_agent.generate_response(
                 user_message=message_body,
                 intent_data=intent_data,
@@ -1044,16 +982,15 @@ async def process_sms_with_hybrid_agent(message_body: str, phone_number: str) ->
                 user_profile=user_profile
             )
         else:
-            # Fallback response generation
             response_text = generate_fallback_response(intent_data, tool_results, user_profile)
         
-        # Send SMS response
+        # Send SMS
         if twilio_service and response_text:
             sms_sent = await twilio_service.send_message(phone_number, response_text)
             if not sms_sent:
                 logger.error(f"❌ Failed to send SMS to {phone_number}")
         
-        # Store conversation in database
+        # Store in database
         if db_service:
             await db_service.store_conversation(
                 phone_number=phone_number,
@@ -1064,14 +1001,13 @@ async def process_sms_with_hybrid_agent(message_body: str, phone_number: str) ->
             )
         
         processing_time = time.time() - start_time
-        logger.info(f"✅ Processed message in {processing_time:.2f}s using {'Hybrid Agent' if trading_agent else 'Fallback'}")
+        logger.info(f"✅ Processed in {processing_time:.2f}s using {'Hybrid Agent' if trading_agent else 'Fallback'}")
         
         return response_text
         
     except Exception as e:
-        logger.error(f"💥 SMS processing failed for {phone_number}: {traceback.format_exc()}")
+        logger.error(f"💥 SMS processing failed: {traceback.format_exc()}")
         
-        # Send error response to user
         error_response = "Sorry, I'm having technical issues right now. Please try again in a moment! 🔧"
         
         if twilio_service:
@@ -1079,18 +1015,18 @@ async def process_sms_with_hybrid_agent(message_body: str, phone_number: str) ->
         
         return error_response
 
-# ===== FALLBACK FUNCTIONS (For when hybrid agent is not available) =====
+# ===== FALLBACK FUNCTIONS =====
 
 def analyze_message_intent_fallback(message: str) -> dict:
-    """Fallback regex-based intent analysis with improved symbol extraction"""
+    """Fallback intent analysis"""
     import re
     
     message_lower = message.lower()
     
-    # Enhanced symbol extraction with comprehensive filtering
+    # Symbol extraction
     potential_symbols = re.findall(r'\b[A-Z]{2,5}\b', message.upper())
     
-    # Company names to symbols mapping
+    # Company mappings
     company_mappings = {
         'plug power': 'PLUG', 'apple': 'AAPL', 'tesla': 'TSLA', 'microsoft': 'MSFT',
         'amazon': 'AMZN', 'google': 'GOOGL', 'facebook': 'META', 'meta': 'META',
@@ -1098,65 +1034,32 @@ def analyze_message_intent_fallback(message: str) -> dict:
         'palantir': 'PLTR', 'gamestop': 'GME', 'amc': 'AMC'
     }
     
-    # Check for company names in the message
     for company, symbol in company_mappings.items():
         if company in message_lower:
             potential_symbols.append(symbol)
     
-    # COMPREHENSIVE exclude_words list to prevent false positives
+    # Filter false positives
     exclude_words = {
-        # Basic words
         'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'HER', 'WAS', 'ONE',
         'OUR', 'HAD', 'BY', 'DO', 'GET', 'MAY', 'NEW', 'NOW', 'OLD', 'SEE', 'WAY', 'WHO',
-        'BOY', 'DID', 'ITS', 'LET', 'PUT', 'SAY', 'SHE', 'TOO', 'USE', 'HOW', 'WHAT',
-        'WHEN', 'WHERE', 'WHY', 'WILL', 'WITH', 'HAS', 'HIS', 'HIM',
-        
-        # CRITICAL: Casual words that were causing false positives
         'YO', 'HEY', 'SO', 'OH', 'AH', 'UM', 'UH', 'YEP', 'NAH', 'LOL', 'OMG', 'WOW',
         'BRO', 'FAM', 'THO', 'TBH', 'NGL', 'SMH', 'FML', 'IRL', 'BTW', 'TBF', 'IDK',
-        
-        # Basic prepositions and particles
         'TO', 'AT', 'IN', 'ON', 'OR', 'OF', 'IS', 'IT', 'BE', 'GO', 'UP', 'MY', 'AS',
         'IF', 'NO', 'WE', 'ME', 'HE', 'AN', 'AM', 'US', 'A', 'I',
-        
-        # Questions and responses
-        'YES', 'YET', 'OUT', 'OFF', 'BAD',
-        
-        # Trading terms that aren't symbols
-        'BUY', 'SELL', 'HOLD', 'CALL', 'PUT', 'BULL', 'BEAR', 'MOON', 'DIP', 'RIP',
-        'YOLO', 'HODL', 'FOMO', 'ATH', 'RSI', 'MACD', 'EMA', 'SMA', 'PE', 'DD',
-        
-        # Time references
-        'TODAY', 'THEN', 'SOON', 'LATER', 'WEEK',
-        
-        # Geographic/org abbreviations
-        'AI', 'API', 'CEO', 'CFO', 'IPO', 'ETF', 'SEC', 'FDA', 'FBI', 'CIA', 'NYC',
-        'LA', 'SF', 'DC', 'UK', 'US', 'EU', 'JP', 'CN', 'IN', 'CA', 'TX', 'FL',
-        
-        # Units and currencies
-        'K', 'M', 'B', 'T', 'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF',
-        
-        # Internet slang
-        'AF', 'FR', 'NM', 'WTF', 'LMAO', 'ROFL', 'TTYL', 'SWAG', 'LIT',
-        
-        # Common typos/variations
-        'UR', 'CUZ', 'PLZ', 'THX', 'NP', 'YA', 'IM', 'ILL', 'WONT', 'CANT'
+        'BUY', 'SELL', 'HOLD', 'CALL', 'PUT', 'BULL', 'BEAR', 'MOON', 'DIP', 'RIP'
     }
     
-    # Filter symbols with enhanced validation
     valid_symbols = []
     for symbol in potential_symbols:
         if (symbol not in exclude_words and 
             len(symbol) >= 2 and 
             len(symbol) <= 5 and
-            symbol.isalpha() and  # Only letters, no numbers
-            not symbol.lower() in ['yo', 'hey', 'so', 'oh']):  # Extra protection
+            symbol.isalpha()):
             valid_symbols.append(symbol)
     
-    # Remove duplicates while preserving order
     symbols = list(dict.fromkeys(valid_symbols))
     
-    # Enhanced Intent detection with fundamental analysis support
+    # Intent detection
     if any(word in message_lower for word in ['portfolio', 'positions', 'holdings']):
         intent = "portfolio"
         requires_tools = ["portfolio_check"]
@@ -1174,7 +1077,7 @@ def analyze_message_intent_fallback(message: str) -> dict:
         requires_tools = ["technical_analysis", "news_sentiment", "fundamental_analysis"]
     elif symbols:
         intent = "analyze"
-        requires_tools = ["technical_analysis", "news_sentiment"]  # Default to TA + News
+        requires_tools = ["technical_analysis", "news_sentiment"]
     else:
         intent = "general"
         requires_tools = []
@@ -1182,13 +1085,13 @@ def analyze_message_intent_fallback(message: str) -> dict:
     return {
         "intent": intent,
         "symbols": symbols,
-        "confidence": 0.4,  # Lower confidence for fallback
+        "confidence": 0.4,
         "requires_tools": requires_tools,
         "fallback": True
     }
 
 async def execute_tools_fallback(intent_data: dict, user_phone: str) -> dict:
-    """Fallback tool execution without ToolExecutor"""
+    """Fallback tool execution"""
     results = {}
     
     try:
@@ -1198,17 +1101,17 @@ async def execute_tools_fallback(intent_data: dict, user_phone: str) -> dict:
         # Technical Analysis
         if "technical_analysis" in requires_tools and symbols:
             if ta_service:
-                for symbol in symbols[:2]:  # Limit to 2 symbols
+                for symbol in symbols[:2]:
                     ta_data = await ta_service.analyze_symbol(symbol.upper())
                     if ta_data:
                         if "technical_analysis" not in results:
                             results["technical_analysis"] = {}
                         results["technical_analysis"][symbol] = ta_data
         
-        # News Sentiment Analysis
+        # News Sentiment
         if "news_sentiment" in requires_tools and symbols:
             if news_service:
-                for symbol in symbols[:2]:  # Limit to 2 symbols
+                for symbol in symbols[:2]:
                     try:
                         news_data = await news_service.get_sentiment(symbol.upper())
                         if news_data and not news_data.get('error'):
@@ -1221,9 +1124,8 @@ async def execute_tools_fallback(intent_data: dict, user_phone: str) -> dict:
         # Fundamental Analysis
         if "fundamental_analysis" in requires_tools and symbols:
             if fundamental_tool:
-                for symbol in symbols[:2]:  # Limit to 2 symbols
+                for symbol in symbols[:2]:
                     try:
-                        # Get user tier for analysis depth
                         user_profile = personality_engine.get_user_profile(user_phone)
                         depth = "comprehensive" if user_profile.get("plan_type") == "pro" else "standard"
                         
@@ -1239,11 +1141,7 @@ async def execute_tools_fallback(intent_data: dict, user_phone: str) -> dict:
                             results["fundamental_analysis"][symbol] = fundamental_result["analysis_result"]
                     except Exception as e:
                         logger.warning(f"Fundamental analysis failed for {symbol}: {e}")
-            
-            if not results.get("fundamental_analysis"):
-                results["fundamental_analysis_unavailable"] = True
         
-        # If no tools succeeded, mark as unavailable
         if not results:
             results["market_data_unavailable"] = True
         
@@ -1254,12 +1152,11 @@ async def execute_tools_fallback(intent_data: dict, user_phone: str) -> dict:
     return results
 
 def generate_fallback_response(intent_data: dict, tool_results: dict, user_profile: dict) -> str:
-    """Generate simple fallback response based on user personality"""
+    """Generate fallback response"""
     
     intent = intent_data["intent"]
     symbols = intent_data.get("symbols", [])
     
-    # Try to get user's communication style for personalization
     style = user_profile.get("communication_style", {}) if user_profile else {}
     formality = style.get("formality", "casual")
     energy = style.get("energy", "moderate")
@@ -1269,7 +1166,6 @@ def generate_fallback_response(intent_data: dict, tool_results: dict, user_profi
         if tool_results.get("fundamental_analysis", {}).get(symbol):
             fundamental_data = tool_results["fundamental_analysis"][symbol]
             
-            # Format response based on user style
             if formality == "casual" and energy == "high":
                 response = f"{symbol} Fundamentals looking good! 💪 "
             elif formality == "professional":
@@ -1277,13 +1173,10 @@ def generate_fallback_response(intent_data: dict, tool_results: dict, user_profi
             else:
                 response = f"{symbol} fundamentals: "
                 
-            # Add key fundamental metrics
             if hasattr(fundamental_data, 'overall_score'):
                 response += f"Score: {fundamental_data.overall_score:.0f}/100"
             if hasattr(fundamental_data, 'financial_health'):
                 response += f" | Health: {fundamental_data.financial_health.value.title()}"
-            if hasattr(fundamental_data, 'ratios') and fundamental_data.ratios.pe_ratio:
-                response += f" | P/E: {fundamental_data.ratios.pe_ratio:.1f}"
             
             return response
         else:
@@ -1300,7 +1193,6 @@ def generate_fallback_response(intent_data: dict, tool_results: dict, user_profi
         else:
             response = f"{symbol} Comprehensive Analysis:\n"
         
-        # Add available analysis components
         if has_ta:
             ta_data = has_ta
             price_data = ta_data.get("price", {})
@@ -1329,7 +1221,6 @@ def generate_fallback_response(intent_data: dict, tool_results: dict, user_profi
         if tool_results.get("technical_analysis", {}).get(symbol):
             ta_data = tool_results["technical_analysis"][symbol]
             
-            # Format response based on user's style
             if formality == "casual" and energy == "high":
                 response = f"{symbol} looking good! 🚀 "
             elif formality == "professional":
@@ -1337,7 +1228,6 @@ def generate_fallback_response(intent_data: dict, tool_results: dict, user_profi
             else:
                 response = f"Here's {symbol}: "
                 
-            # Add price data if available
             price_data = ta_data.get("price", {})
             if price_data.get("current"):
                 response += f"${price_data['current']}"
@@ -1368,12 +1258,7 @@ def generate_fallback_response(intent_data: dict, tool_results: dict, user_profi
         else:
             return "I'm here to help with trading questions! Try asking about a stock symbol like 'AAPL fundamentals' or 'How is TSLA doing?'"
 
-# ===== ENHANCED PERSONALITY RESPONSE GENERATION =====
-
-async def generate_hyper_personalized_response(user_message: str, phone_number: str) -> str:
-    """DEPRECATED: Use process_sms_with_hybrid_agent instead"""
-    # This function is kept for backward compatibility but redirects to the new hybrid system
-    return await process_sms_with_hybrid_agent(user_message, phone_number)
+# ===== REMAINING ENDPOINTS =====
 
 @app.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
@@ -1387,70 +1272,9 @@ async def stripe_webhook(request: Request):
         logger.error(f"❌ Stripe webhook error: {e}")
         return {"status": "error", "message": str(e)}
 
-# ===== REMAINING ENDPOINTS =====
-
-@app.get("/debug/test-fundamental/{symbol}")
-async def test_fundamental_analysis(symbol: str, depth: str = "standard"):
-    """Test the fundamental analysis engine"""
-    try:
-        if not fundamental_service and not fundamental_tool:
-            return {
-                "symbol": symbol.upper(),
-                "fundamental_service_available": False,
-                "error": "Fundamental Analysis Engine not initialized",
-                "recommendation": "Check EODHD_API_KEY environment variable and restart"
-            }
-        
-        # Test fundamental analysis
-        if fundamental_tool:
-            result = await fundamental_tool.execute({
-                "symbol": symbol.upper(),
-                "depth": depth,
-                "user_style": "casual"
-            })
-            
-            if result.get("success"):
-                analysis_result = result["analysis_result"]
-                
-                return {
-                    "symbol": symbol.upper(),
-                    "fundamental_analysis": {
-                        "available": True,
-                        "overall_score": getattr(analysis_result, 'overall_score', None),
-                        "financial_health": getattr(analysis_result, 'financial_health', None),
-                        "data_completeness": getattr(analysis_result, 'data_completeness', None),
-                        "cache_status": "weekly_cache",
-                        "analysis_depth": depth
-                    },
-                    "sms_response": result["sms_response"],
-                    "service_status": "working",
-                    "weekly_caching": True
-                }
-            else:
-                return {
-                    "symbol": symbol.upper(),
-                    "fundamental_analysis": {"available": False},
-                    "error": result.get("error", "Unknown error"),
-                    "service_status": "error"
-                }
-        else:
-            return {
-                "symbol": symbol.upper(),
-                "fundamental_analysis": {"available": False},
-                "error": "Fundamental tool not initialized"
-            }
-            
-    except Exception as e:
-        logger.error(f"Fundamental analysis test error: {e}")
-        return {
-            "symbol": symbol.upper(),
-            "error": str(e),
-            "recommendation": "Check EODHD API key and service configuration"
-        }
-
 @app.get("/admin")
 async def admin_dashboard():
-    """Comprehensive admin dashboard"""
+    """Admin dashboard"""
     try:
         user_stats = {"total_users": len(personality_engine.user_profiles), "active_today": 0, "messages_today": 0}
         scheduler_status = {"status": "active" if scheduler_task and not scheduler_task.done() else "inactive"}
@@ -1475,8 +1299,7 @@ async def admin_dashboard():
             "scheduler": scheduler_status,
             "metrics": system_metrics,
             "configuration": settings.get_capability_summary(),
-            "plan_limits": PLAN_LIMITS,
-            "popular_tickers": {"count": len(POPULAR_TICKERS), "sample": POPULAR_TICKERS[:10]}
+            "plan_limits": PLAN_LIMITS
         }
     except Exception as e:
         logger.error(f"❌ Admin dashboard error: {e}")
@@ -1519,12 +1342,12 @@ async def get_metrics():
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_interface():
-    """Simple test interface for SMS webhook testing"""
+    """Test interface"""
     return """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SMS Trading Bot - Complete Intelligence Suite Test Interface</title>
+    <title>SMS Trading Bot - Complete Intelligence Suite Test</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
         .form-group { margin-bottom: 15px; }
@@ -1535,14 +1358,13 @@ async def test_interface():
         .result { margin-top: 20px; padding: 15px; border-radius: 4px; }
         .success { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
         .error { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
-        .agent-badge { background: #007bff; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
         .engines { background: #e2e3e5; padding: 10px; border-radius: 4px; margin: 10px 0; }
     </style>
 </head>
 <body>
     <h1>🤖 Complete Intelligence Suite SMS Trading Bot</h1>
     <div class="engines">
-        <strong>Available Analysis Engines:</strong> Technical Analysis + News Sentiment + Fundamental Analysis + Hybrid LLM Agent + Personality Learning
+        <strong>Available:</strong> Technical Analysis + News Sentiment + Fundamental Analysis + Hybrid LLM Agent + Personality Learning
     </div>
     
     <form onsubmit="testSMS(event)">
@@ -1560,9 +1382,8 @@ async def test_interface():
     </form>
     
     <div class="form-group" style="margin-top: 20px;">
-        <label>Quick Test Messages:</label>
         <button type="button" onclick="setMessage('TSLA fundamentals')">Fundamental Analysis</button>
-        <button type="button" onclick="setMessage('yo what\\'s NVDA doing? thinking about calls 🚀')">Technical + News</button>
+        <button type="button" onclick="setMessage('yo what\\'s NVDA doing? 🚀')">Technical + News</button>
         <button type="button" onclick="setMessage('complete breakdown of MSFT')">All Engines</button>
     </div>
     
@@ -1597,11 +1418,9 @@ async def test_interface():
                     const result = await response.text();
                     resultDiv.innerHTML = `<div class="result success">
                         <h3>✅ Success!</h3>
-                        <p>SMS webhook processed successfully with <span class="agent-badge">Complete Intelligence Suite</span></p>
+                        <p>SMS processed with Complete Intelligence Suite</p>
                         <pre>${result}</pre>
-                        <p><strong>🧠 The system intelligently parsed intent, executed multiple analysis engines, and generated a personalized response!</strong></p>
-                        <p><strong>📊 Analysis Engines: Technical Analysis + News Sentiment + Fundamental Analysis</strong></p>
-                        <p><strong>🤖 Hybrid LLM Agent coordinated everything with personality learning active.</strong></p>
+                        <p><strong>🧠 Hybrid LLM Agent + All Analysis Engines Active</strong></p>
                     </div>`;
                 } else {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -1618,6 +1437,244 @@ async def test_interface():
 </html>
 """
 
+# ===== DEBUG ENDPOINTS =====
+
+@app.get("/debug/test-fundamental/{symbol}")
+async def test_fundamental_analysis(symbol: str, depth: str = "standard"):
+    """Test fundamental analysis"""
+    try:
+        if not fundamental_service and not fundamental_tool:
+            return {
+                "symbol": symbol.upper(),
+                "fundamental_service_available": False,
+                "error": "Fundamental Analysis Engine not initialized",
+                "recommendation": "Check EODHD_API_KEY environment variable"
+            }
+        
+        if fundamental_tool:
+            result = await fundamental_tool.execute({
+                "symbol": symbol.upper(),
+                "depth": depth,
+                "user_style": "casual"
+            })
+            
+            if result.get("success"):
+                analysis_result = result["analysis_result"]
+                
+                return {
+                    "symbol": symbol.upper(),
+                    "fundamental_analysis": {
+                        "available": True,
+                        "overall_score": getattr(analysis_result, 'overall_score', None),
+                        "financial_health": getattr(analysis_result, 'financial_health', None),
+                        "data_completeness": getattr(analysis_result, 'data_completeness', None),
+                        "analysis_depth": depth
+                    },
+                    "sms_response": result["sms_response"],
+                    "service_status": "working"
+                }
+            else:
+                return {
+                    "symbol": symbol.upper(),
+                    "fundamental_analysis": {"available": False},
+                    "error": result.get("error", "Unknown error"),
+                    "service_status": "error"
+                }
+        else:
+            return {
+                "symbol": symbol.upper(),
+                "fundamental_analysis": {"available": False},
+                "error": "Fundamental tool not initialized"
+            }
+            
+    except Exception as e:
+        logger.error(f"Fundamental analysis test error: {e}")
+        return {
+            "symbol": symbol.upper(),
+            "error": str(e),
+            "recommendation": "Check EODHD API key and service configuration"
+        }
+
+@app.get("/debug/diagnose-services")
+async def diagnose_services():
+    """Comprehensive service diagnosis"""
+    diagnosis = {
+        "timestamp": datetime.now().isoformat(),
+        "environment_variables": {},
+        "service_availability": {},
+        "connection_tests": {},
+        "personality_engine": {},
+        "hybrid_agent": {},
+        "recommendations": []
+    }
+    
+    # Check environment variables
+    env_vars = {
+        "EODHD_API_KEY": "Set" if os.getenv('EODHD_API_KEY') else None,
+        "OPENAI_API_KEY": "Set" if os.getenv('OPENAI_API_KEY') else None,
+        "MARKETAUX_API_KEY": "Set" if os.getenv('MARKETAUX_API_KEY') else None,
+        "MONGODB_URL": "Set" if os.getenv('MONGODB_URL') else None,
+    }
+    diagnosis["environment_variables"] = env_vars
+    
+    # Check service initialization
+    diagnosis["service_availability"] = {
+        "openai_service": openai_service is not None,
+        "db_service": db_service is not None,
+        "message_handler": message_handler is not None,
+        "twilio_service": twilio_service is not None,
+        "ta_service": ta_service is not None,
+        "news_service": news_service is not None,
+        "fundamental_service": fundamental_service is not None,
+        "personality_engine": True,
+        "trading_agent": trading_agent is not None,
+        "tool_executor": tool_executor is not None
+    }
+    
+    # Test personality engine
+    diagnosis["personality_engine"] = {
+        "total_profiles": len(personality_engine.user_profiles),
+        "learning_active": True,
+        "features": ["communication_style", "trading_personality", "context_memory"]
+    }
+    
+    # Test hybrid agent system
+    if trading_agent:
+        try:
+            test_intent = await trading_agent.parse_intent("test message", "+1555TEST")
+            diagnosis["hybrid_agent"] = {
+                "trading_agent": {
+                    "available": True,
+                    "intent_parsing": True,
+                    "test_successful": test_intent is not None
+                },
+                "tool_executor": {
+                    "available": tool_executor is not None,
+                    "ta_integration": ta_service is not None,
+                    "news_integration": news_service is not None,
+                    "fundamental_integration": fundamental_service is not None
+                }
+            }
+        except Exception as e:
+            diagnosis["hybrid_agent"] = {
+                "trading_agent": {
+                    "available": True,
+                    "intent_parsing": False,
+                    "error": str(e)
+                }
+            }
+    else:
+        diagnosis["hybrid_agent"] = {
+            "trading_agent": {
+                "available": False,
+                "reason": "OpenAI service not available or failed to initialize"
+            }
+        }
+    
+    # Test all analysis services
+    analysis_tests = {}
+    
+    # Test TA Service
+    if ta_service:
+        try:
+            test_ta_result = await ta_service.analyze_symbol("AAPL")
+            analysis_tests["technical_analysis"] = {
+                "working": True,
+                "test_successful": test_ta_result is not None,
+                "data_source": test_ta_result.get('source', 'unknown') if test_ta_result else None
+            }
+        except Exception as e:
+            analysis_tests["technical_analysis"] = {"working": False, "error": str(e)}
+    else:
+        analysis_tests["technical_analysis"] = {"working": False, "error": "Service not initialized"}
+    
+    # Test News Service
+    if news_service:
+        try:
+            test_news_result = await news_service.get_sentiment("AAPL")
+            analysis_tests["news_sentiment"] = {
+                "working": True,
+                "test_successful": test_news_result is not None and not test_news_result.get('error')
+            }
+        except Exception as e:
+            analysis_tests["news_sentiment"] = {"working": False, "error": str(e)}
+    else:
+        analysis_tests["news_sentiment"] = {"working": False, "error": "Service not initialized"}
+    
+    # Test Fundamental Service
+    if fundamental_tool:
+        try:
+            test_fund_result = await fundamental_tool.execute({
+                "symbol": "AAPL",
+                "depth": "basic",
+                "user_style": "casual"
+            })
+            analysis_tests["fundamental_analysis"] = {
+                "working": True,
+                "test_successful": test_fund_result.get("success", False)
+            }
+        except Exception as e:
+            analysis_tests["fundamental_analysis"] = {"working": False, "error": str(e)}
+    else:
+        analysis_tests["fundamental_analysis"] = {"working": False, "error": "Service not initialized"}
+    
+    diagnosis["connection_tests"] = analysis_tests
+    
+    # Test OpenAI if available
+    if openai_service:
+        try:
+            # Simple test without calling actual method
+            diagnosis["connection_tests"]["openai"] = {
+                "available": True,
+                "service_initialized": True
+            }
+        except Exception as e:
+            diagnosis["connection_tests"]["openai"] = {
+                "available": True,
+                "test_successful": False,
+                "error": str(e)
+            }
+    else:
+        diagnosis["connection_tests"]["openai"] = {
+            "available": False,
+            "error": "OpenAI service not initialized"
+        }
+    
+    # Generate recommendations
+    recommendations = []
+    
+    if not env_vars["EODHD_API_KEY"]:
+        recommendations.append("❌ Set EODHD_API_KEY for Technical Analysis + Fundamental Analysis")
+    
+    if not env_vars["MARKETAUX_API_KEY"]:
+        recommendations.append("❌ Set MARKETAUX_API_KEY for News Sentiment Analysis")
+    
+    if not env_vars["OPENAI_API_KEY"]:
+        recommendations.append("❌ Set OPENAI_API_KEY for Hybrid LLM Agent")
+    elif not trading_agent:
+        recommendations.append("❌ Hybrid LLM Agent failed to initialize")
+    
+    # Check working services
+    working_services = []
+    if analysis_tests.get("technical_analysis", {}).get("working"):
+        working_services.append("Technical Analysis")
+    if analysis_tests.get("news_sentiment", {}).get("working"):
+        working_services.append("News Sentiment")
+    if analysis_tests.get("fundamental_analysis", {}).get("working"):
+        working_services.append("Fundamental Analysis")
+    
+    if len(working_services) == 3:
+        recommendations.append("✅ Complete Intelligence Suite operational!")
+    elif working_services:
+        recommendations.append(f"⚠️ Partial setup: {', '.join(working_services)} working.")
+    
+    if not recommendations:
+        recommendations.append("🚀 Perfect setup - All systems operational!")
+    
+    diagnosis["recommendations"] = recommendations
+    
+    return diagnosis
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Complete Intelligence Suite SMS Trading Bot on port {port}")
@@ -1627,7 +1684,7 @@ if __name__ == "__main__":
     logger.info(f"📈 Technical Analysis: {'Available' if TechnicalAnalysisService else 'Unavailable'}")
     logger.info(f"📰 News Sentiment: {'Available' if NewsSentimentService else 'Unavailable'}")
     logger.info(f"📊 Fundamental Analysis: {'Available' if FundamentalAnalysisEngine else 'Unavailable'}")
-    logger.info(f"🤖 Hybrid LLM Agent: {'Available' if TradingAgent else 'Unavailable - check OPENAI_API_KEY'}")
+    logger.info(f"🤖 Hybrid LLM Agent: {'Available' if TradingAgent else 'Unavailable'}")
     
     uvicorn.run(
         "main:app",
