@@ -125,20 +125,6 @@ except ImportError:
     MessageHandler = None
     logger.warning("MessageHandler not available")
 
-# Add news service
-try:
-    news_service = NewsSentimentService(
-        redis_client=redis_client,
-        openai_service=openai_service
-    )
-except ImportError:
-    news_service = None
-
-
-
-# Import integrated technical analysis service
-
-
 
 
 # Configure logging
@@ -545,13 +531,14 @@ scheduler_task = None
 ta_service = None  # Integrated TA service
 trading_agent = None  # Hybrid LLM agent
 tool_executor = None  # Tool execution engine
+news_service = None
 
 # Add this to your lifespan function in main.py
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown"""
-    global db_service, openai_service, twilio_service, message_handler, ta_service, trading_agent, tool_executor
+    global db_service, openai_service, twilio_service, message_handler, ta_service, trading_agent, tool_executor, news_service
     
     logger.info("🚀 Starting SMS Trading Bot with Hybrid LLM Agent...")
     
@@ -588,34 +575,33 @@ async def lifespan(app: FastAPI):
         if TechnicalAnalysisService:
             try:
                 ta_service = TechnicalAnalysisService()
-                # Note: Don't call initialize() if it requires parameters you don't have
-                # await ta_service.initialize()  # Comment out if causing issues
                 logger.info("✅ Technical Analysis service initialized")
             except Exception as e:
                 logger.error(f"❌ Technical Analysis service failed: {e}")
                 ta_service = None
 
-               try:
-    if NewsSentimentService:
-        news_service = NewsSentimentService(
-            redis_client=redis_client if 'redis_client' in locals() else None,
-            openai_service=openai_service if openai_service else None
-        )
-        logger.info("✅ News Sentiment Service initialized")
-    else:
-        news_service = None
-        logger.warning("❌ NewsSentimentService class not available")
-except Exception as e:
-    news_service = None
-    logger.warning(f"❌ News Sentiment Service initialization failed: {e}")
-
+        # ===== ADD NEWS SERVICE INITIALIZATION HERE =====
+        # Initialize News Sentiment Service (AFTER OpenAI service is ready)
+        news_service = None  # Initialize as None first
+        if NewsSentimentService:
+            try:
+                news_service = NewsSentimentService(
+                    redis_client=None,  # We don't have Redis client initialized yet, but that's OK
+                    openai_service=openai_service  # NOW this exists
+                )
+                logger.info("✅ News Sentiment Service initialized")
+            except Exception as e:
+                logger.error(f"❌ News Sentiment Service failed: {e}")
+                news_service = None
+        else:
+            logger.warning("❌ NewsSentimentService class not available")
         
         # Initialize Trading Agent (FIXED CONSTRUCTOR CALL)
         if TradingAgent and openai_service:
             try:
                 trading_agent = TradingAgent(
-                    openai_client=openai_service,  # Fixed: pass the client
-                    personality_engine=personality_engine  # Fixed: pass personality_engine
+                    openai_client=openai_service,
+                    personality_engine=personality_engine
                 )
                 logger.info("✅ Trading agent initialized")
             except Exception as e:
@@ -623,15 +609,15 @@ except Exception as e:
                 trading_agent = None
         
         # Initialize Tool Executor (FIXED CONSTRUCTOR CALL) 
-        if ToolExecutor and ta_service:
+        if ToolExecutor:
             try:
                 tool_executor = ToolExecutor(
                     ta_service=ta_service,
-                    portfolio_service=None,  # Optional for now
-                    screener_service=None,    # Optional for now
-                    news_service=news_service  # Add this
+                    portfolio_service=None,
+                    screener_service=None,
+                    news_service=news_service  # NOW this exists
                 )
-                logger.info("✅ Tool executor initialized")
+                logger.info("✅ Tool executor initialized with news service")
             except Exception as e:
                 logger.error(f"❌ Tool executor failed: {e}")
                 tool_executor = None
@@ -643,7 +629,6 @@ except Exception as e:
                     db_service=db_service,
                     openai_service=openai_service, 
                     twilio_service=twilio_service
-                    # Removed ta_service parameter that was causing the error
                 )
                 logger.info("✅ Message handler initialized")
             except Exception as e:
@@ -652,7 +637,7 @@ except Exception as e:
         
         # Check if hybrid agent is working
         if trading_agent and tool_executor:
-            logger.info("🎯 Hybrid LLM Agent system ready")
+            logger.info("🎯 Hybrid LLM Agent system ready with News Sentiment")
         else:
             logger.warning("⚠️ Falling back to regex parsing - hybrid agent unavailable")
         
@@ -671,6 +656,9 @@ except Exception as e:
         # Close services gracefully
         if hasattr(ta_service, 'close'):
             await ta_service.close()
+        
+        if news_service and hasattr(news_service, 'close'):
+            await news_service.close()
         
         if db_service and hasattr(db_service, 'mongo_client'):
             if db_service.mongo_client:
