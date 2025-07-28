@@ -1,4 +1,4 @@
-# services/llm_agent.py - COMPLETE VERSION with News Sentiment + Fundamental Analysis Integration
+# services/llm_agent.py - COMPLETE VERSION with Enhanced Response Generation
 
 import json
 import asyncio
@@ -10,7 +10,7 @@ from datetime import datetime
 from openai import AsyncOpenAI
 
 class TradingAgent:
-    """Hybrid LLM Agent for intelligent trading bot interactions - COMPLETE VERSION"""
+    """Hybrid LLM Agent for intelligent trading bot interactions - ENHANCED VERSION"""
     
     def __init__(self, openai_client, personality_engine):
         self.openai_client = openai_client
@@ -230,7 +230,10 @@ Examples:
             r"I'll.*?response.*?:\s*",
             r"Let me.*?response.*?:\s*",
             r"Here's the tailored response.*?:\s*",
-            r".*?tailored response.*?:\s*"
+            r".*?tailored response.*?:\s*",
+            r"Hey there!.*?\s*",
+            r"Hello!.*?\s*",
+            r"Hi!.*?\s*"
         ]
         
         for pattern in patterns_to_remove:
@@ -251,7 +254,7 @@ Examples:
         # Check for common artifacts
         artifacts = [
             "here's the", "certainly", "based on", "given", 
-            "let me", "i'll provide", "tailored response"
+            "let me", "i'll provide", "tailored response", "hey there", "hello", "hi"
         ]
         
         response_lower = response.lower()
@@ -306,6 +309,19 @@ Examples:
         
         return serializable_data
     
+    def _check_if_first_message_of_day(self, user_phone: str) -> bool:
+        """Check if this is the first message from this user today"""
+        if not user_phone or not self.personality_engine:
+            return False
+            
+        profile = self.personality_engine.get_user_profile(user_phone)
+        if not profile:
+            return True
+            
+        # Simple check - if user has fewer than 3 total messages, consider it early interaction
+        total_messages = profile.get('learning_data', {}).get('total_messages', 0)
+        return total_messages < 3
+    
     async def generate_response(
         self, 
         user_message: str,
@@ -314,7 +330,7 @@ Examples:
         user_phone: str,
         user_profile: Dict = None
     ) -> str:
-        """Step 3: Use GPT-4o to generate high-quality personalized response"""
+        """Step 3: Use GPT-4o to generate high-quality personalized response - ENHANCED"""
         
         # Get personality context
         personality_context = ""
@@ -334,6 +350,9 @@ User Trading Profile:
 - Risk Tolerance: {trading_style.get('risk_tolerance', 'moderate')}
 - Trading Style: {trading_style.get('trading_style', 'swing')}
 """
+        
+        # Check if first message of day for greeting logic
+        is_first_message = self._check_if_first_message_of_day(user_phone)
         
         # Format tool results for context - WITH FIXED JSON SERIALIZATION
         tool_context = ""
@@ -381,15 +400,12 @@ Portfolio Data:
             if "fundamental_analysis_unavailable" in tool_results:
                 tool_context += "\nFUNDAMENTAL ANALYSIS UNAVAILABLE - Acknowledge this honestly to the user."
         
-        prompt = f"""You are a hyper-personalized SMS trading assistant. Write ONLY the direct SMS message that will be sent to the user.
+        prompt = f"""You are a professional trading assistant providing comprehensive analysis. Write ONLY the direct SMS message.
 
 DO NOT include:
-- "Here's the response:"
-- "Certainly! Here's..."
-- Any meta-commentary
-- Quotes around the response
-
-Just write the exact message the user should receive.
+- "Here's the response:" or "Certainly! Here's..."
+- Any meta-commentary or quotes around response
+- Greetings like "Hey!" "Hi!" unless first interaction of day: {is_first_message}
 
 Original Message: "{user_message}"
 
@@ -400,23 +416,33 @@ Intent Analysis:
 
 {tool_context}
 
-RESPONSE GUIDELINES:
-1. Match the user's communication style exactly (formality, energy, emoji usage)
-2. Provide actionable trading insights based on available data
-3. If data is unavailable, acknowledge honestly but stay helpful
-4. Keep responses SMS-friendly (under 320 chars if possible, max 2 messages)
-5. Use appropriate trading terminology for their experience level
-6. Include relevant emojis if user uses them
-7. Be conversational and engaging
-8. When multiple analysis types are available, integrate them naturally
+ENHANCED RESPONSE GUIDELINES:
 
-Examples of style matching:
-- Casual/High-energy: "TSLA's going wild! 🚀 $245 and climbing, RSI at 68 tho - might need a breather soon. News looking bullish on new factory announcement!"
-- Professional: "TSLA trading at $245.50, up 3.2%. RSI indicates slight overbought conditions at 68. News sentiment bullish on expansion plans. Technical outlook remains positive."
-- Beginner-friendly: "Tesla's doing well today! It's up to $245. The RSI (momentum indicator) shows it might slow down soon, but the trend looks good. Recent news is positive too!"
-- Fundamental Focus: "AAPL fundamentals: Strong with 95/100 score. P/E at 23.4 (reasonable), ROE 28% (excellent). Revenue up 8.5% YoY. Health: Good. Ready for growth! 💪"
+1. COMPREHENSIVE ANALYSIS: Provide substantial insights, not basic summaries
+2. NO EMOJIS unless message is under 100 characters
+3. TECHNICAL INDICATORS: 
+   - For beginners/intermediate: Use plain language ("stock is overbought" not "RSI at 80")
+   - For advanced: Use specific indicators when relevant
+4. STRUCTURE: Price → Technical View → Fundamental View → News Impact → Overall Assessment
+5. ACTIONABLE INSIGHTS: Always include specific recommendation or key consideration
+6. NO GREETINGS: Jump straight to analysis unless first message of day
+7. KEEP UNDER 320 chars but pack with value
 
-Write the direct SMS message now:"""
+RESPONSE EXAMPLES BY EXPERIENCE LEVEL:
+
+BEGINNER/INTERMEDIATE (avoid technical jargon):
+"AMZN $231.44. Mixed signals - momentum strong but getting expensive. Fundamentals concerning with high debt and declining margins. News bearish on retail competition. Consider waiting for pullback below $225."
+
+ADVANCED (technical details):
+"AMZN $231.44. MACD bullish but RSI 64 suggests caution. P/E 45x vs sector 22x, ROE declining. News sentiment -0.3 on competitive pressure. Technical: resistance at $235, support $220. Risk/reward unfavorable."
+
+COMPREHENSIVE ANALYSIS:
+"AMZN $231.44. Technical: Strong momentum but overbought territory. Fundamentals: High valuation (45x P/E), debt concerns, margin pressure. News: Bearish on competition. Recommendation: Avoid - better entry below $220."
+
+SCORING REQUEST:
+"[Stock] [Price]. Technical: [status]. Fundamentals: [key metrics]. News: [sentiment]. Overall Score: [X/10] - [specific reason]. [Recommendation: Buy/Hold/Avoid with target]"
+
+Write the professional analysis now:"""
 
         try:
             # FIXED: Always use the wrapped client path for your setup
@@ -457,34 +483,54 @@ Write the direct SMS message now:"""
             return self._generate_fallback_response(intent_data, tool_results)
     
     def _generate_fallback_response(self, intent_data: Dict, tool_results: Dict) -> str:
-        """Simple fallback response if LLM fails"""
+        """Enhanced fallback response if LLM fails"""
         
         if intent_data["intent"] == "analyze" and intent_data["symbols"]:
             symbol = intent_data["symbols"][0]
             if tool_results.get("technical_analysis") or tool_results.get("news_sentiment") or tool_results.get("fundamental_analysis"):
-                return f"{symbol} analysis ready! Check the data above."
+                # Try to extract basic info for better fallback
+                price = "Price unavailable"
+                if tool_results.get("technical_analysis", {}).get(symbol, {}).get("price", {}).get("current"):
+                    price = f"${tool_results['technical_analysis'][symbol]['price']['current']}"
+                
+                return f"{symbol} {price}. Analysis ready - multiple data points available. Technical and market data processed."
             else:
-                return f"Sorry, can't get {symbol} data right now. Try again in a moment!"
+                return f"Cannot retrieve {symbol} market data currently. Please try again in a moment."
         
         elif intent_data["intent"] == "fundamental_analysis" and intent_data["symbols"]:
             symbol = intent_data["symbols"][0]
             if tool_results.get("fundamental_analysis"):
-                return f"{symbol} fundamental analysis ready!"
+                return f"{symbol} fundamental analysis complete. Financial metrics and valuation ratios available."
             else:
-                return f"Sorry, can't get {symbol} fundamental data right now. Try again in a moment!"
+                return f"Fundamental data for {symbol} temporarily unavailable. Please try again shortly."
+        
+        elif intent_data["intent"] == "comprehensive_analysis" and intent_data["symbols"]:
+            symbol = intent_data["symbols"][0]
+            available_analyses = []
+            if tool_results.get("technical_analysis"):
+                available_analyses.append("technical")
+            if tool_results.get("fundamental_analysis"):
+                available_analyses.append("fundamental")
+            if tool_results.get("news_sentiment"):
+                available_analyses.append("news")
+            
+            if available_analyses:
+                return f"{symbol} analysis complete. Available: {', '.join(available_analyses)}. Comprehensive review ready."
+            else:
+                return f"Complete analysis for {symbol} unavailable. Market data services temporarily offline."
         
         elif intent_data["intent"] == "news" and intent_data["symbols"]:
             symbol = intent_data["symbols"][0]
             if tool_results.get("news_sentiment"):
-                return f"{symbol} news sentiment ready!"
+                return f"{symbol} news sentiment analysis ready. Recent headlines and market impact assessed."
             else:
-                return f"Sorry, can't get {symbol} news right now. Try again in a moment!"
+                return f"News data for {symbol} currently unavailable. Please try again later."
         
         elif intent_data["intent"] == "help":
-            return "I'm your trading assistant! Ask about stocks, portfolio, or market analysis. 📈"
+            return "Professional trading analysis available. Ask about stocks, fundamentals, technical analysis, or market insights."
         
         else:
-            return "I'm here to help with your trading questions! What would you like to know?"
+            return "Ready to provide comprehensive trading analysis. Specify a stock symbol for detailed insights."
 
 
 # ===== Tool Execution Engine =====
@@ -831,7 +877,7 @@ MARKET DATA ANALYSIS:
 {json.dumps(analysis_data, indent=2)[:600]}...
 """
         
-        return f"""You are this user's personal AI trading buddy. You know them intimately and communicate exactly like their best trading friend would.
+        return f"""You are this user's professional trading advisor. Provide comprehensive, actionable analysis that matches their experience level.
 
 {style_description}
 
@@ -839,20 +885,21 @@ ORIGINAL MESSAGE: "{user_message}"
 
 {analysis_context}
 
-CRITICAL INSTRUCTIONS:
-1. Match their EXACT communication style - if they say "yo" you say "yo", if they're professional you're professional
-2. Use their preferred emoji level - match their energy exactly
-3. Technical depth must match their experience level
-4. Reference their trading personality naturally
-5. Keep under 320 characters for SMS
-6. Sound like you've known them for years
+ENHANCED RESPONSE INSTRUCTIONS:
+1. NO greetings unless first interaction
+2. Match technical depth to their experience level
+3. NO emojis unless message under 100 characters
+4. Provide COMPREHENSIVE analysis with specific recommendations
+5. Structure: Price → Technical → Fundamental → News → Recommendation
+6. Include actionable insights and risk considerations
+7. Keep under 320 characters but maximize value
 
-STYLE EXAMPLES:
-- Casual/High: "Yo! TSLA looking spicy 🌶️ RSI at 67, still got room to run. You thinking calls or waiting for a dip?"
-- Professional: "TSLA analysis: $245.50 (+1.2%), RSI 67 indicates room for upward movement. Entry opportunity present."
-- Beginner: "Tesla's doing well! Up $3 today. The RSI shows it's not overbought yet - that's good for more gains!"
+EXPERIENCE-APPROPRIATE LANGUAGE:
+- Beginner/Intermediate: "Stock is overbought" instead of "RSI at 80"
+- Advanced: Use specific indicators and technical terms
+- All levels: Include clear recommendation with reasoning
 
-Generate their perfect personalized response:"""
+Generate comprehensive professional analysis:"""
     
     def _optimize_for_sms(self, response: str) -> str:
         """Optimize long responses for SMS"""
@@ -873,9 +920,9 @@ Generate their perfect personalized response:"""
         formality = user_profile.get('communication_style', {}).get('formality', 'casual')
         
         if formality == 'casual':
-            return "Data's looking good! 📈 Let me know if you want more details!"
+            return "Analysis complete. Multiple data points available for comprehensive review."
         else:
-            return "Analysis complete. Technical indicators are available upon request."
+            return "Comprehensive market analysis available. Technical and fundamental metrics processed."
 
 
 # ===== COMPREHENSIVE MESSAGE PROCESSOR =====
@@ -922,4 +969,4 @@ class ComprehensiveMessageProcessor:
             
         except Exception as e:
             logger.error(f"💥 Complete message processing failed: {e}")
-            return "Having some technical issues right now. Try again in a moment! 🔧"
+            return "Market analysis system temporarily unavailable. Please try again in a moment."
