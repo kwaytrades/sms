@@ -262,6 +262,50 @@ Examples:
         
         return response
     
+    def _serialize_fundamental_data(self, fundamental_data: Dict) -> Dict:
+        """Convert FundamentalAnalysisResult objects to JSON-serializable format"""
+        serializable_data = {}
+        
+        for symbol, analysis_result in fundamental_data.items():
+            try:
+                if hasattr(analysis_result, 'symbol'):
+                    # This is a FundamentalAnalysisResult object
+                    serializable_data[symbol] = {
+                        "symbol": analysis_result.symbol,
+                        "overall_score": analysis_result.overall_score,
+                        "financial_health": analysis_result.financial_health.value if hasattr(analysis_result.financial_health, 'value') else str(analysis_result.financial_health),
+                        "current_price": analysis_result.current_price,
+                        "strength_areas": analysis_result.strength_areas,
+                        "concern_areas": analysis_result.concern_areas,
+                        "bull_case": analysis_result.bull_case,
+                        "bear_case": analysis_result.bear_case,
+                        "data_completeness": analysis_result.data_completeness
+                    }
+                    
+                    # Add ratios if available
+                    if analysis_result.ratios:
+                        serializable_data[symbol]["ratios"] = {
+                            "pe_ratio": getattr(analysis_result.ratios, 'pe_ratio', None),
+                            "roe": getattr(analysis_result.ratios, 'roe', None),
+                            "debt_to_equity": getattr(analysis_result.ratios, 'debt_to_equity', None),
+                            "current_ratio": getattr(analysis_result.ratios, 'current_ratio', None)
+                        }
+                    
+                    # Add growth metrics if available
+                    if analysis_result.growth:
+                        serializable_data[symbol]["growth"] = {
+                            "revenue_growth_1y": getattr(analysis_result.growth, 'revenue_growth_1y', None),
+                            "earnings_growth_1y": getattr(analysis_result.growth, 'earnings_growth_1y', None)
+                        }
+                else:
+                    # Already serializable
+                    serializable_data[symbol] = analysis_result
+            except Exception as e:
+                # Fallback: just include basic info
+                serializable_data[symbol] = {"error": f"Serialization failed: {str(e)}"}
+        
+        return serializable_data
+    
     async def generate_response(
         self, 
         user_message: str,
@@ -291,7 +335,7 @@ User Trading Profile:
 - Trading Style: {trading_style.get('trading_style', 'swing')}
 """
         
-        # Format tool results for context
+        # Format tool results for context - WITH FIXED JSON SERIALIZATION
         tool_context = ""
         if tool_results:
             if "technical_analysis" in tool_results:
@@ -313,9 +357,11 @@ News Sentiment Results:
             if "fundamental_analysis" in tool_results:
                 fundamental_data = tool_results["fundamental_analysis"]
                 if fundamental_data:
+                    # FIXED: Convert FundamentalAnalysisResult objects to serializable format
+                    serializable_data = self._serialize_fundamental_data(fundamental_data)
                     tool_context += f"""
 Fundamental Analysis Results:
-{json.dumps(fundamental_data, indent=2)[:500]}...
+{json.dumps(serializable_data, indent=2)[:500]}...
 """
             
             if "portfolio_check" in tool_results:
