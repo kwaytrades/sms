@@ -119,6 +119,17 @@ except ImportError:
     MessageHandler = None
     logger.warning("MessageHandler not available")
 
+# Add news service
+try:
+    news_service = NewsSentimentService(
+        redis_client=redis_client,
+        openai_service=openai_service
+    )
+except ImportError:
+    news_service = None
+
+
+
 # Import integrated technical analysis service
 
 
@@ -597,6 +608,7 @@ async def lifespan(app: FastAPI):
                     ta_service=ta_service,
                     portfolio_service=None,  # Optional for now
                     screener_service=None    # Optional for now
+                    news_service=news_service  # Add this
                 )
                 logger.info("✅ Tool executor initialized")
             except Exception as e:
