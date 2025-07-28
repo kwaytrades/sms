@@ -108,6 +108,12 @@ except Exception as e:
     logger.error(f"Full traceback: {traceback.format_exc()}")
 
 try:
+    from services.news_sentiment import NewsSentimentService
+except ImportError:
+    NewsSentimentService = None
+    logger.warning("NewsSentimentService not available")
+
+try:
     from services.weekly_scheduler import WeeklyScheduler
 except ImportError:
     WeeklyScheduler = None
@@ -588,6 +594,21 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"❌ Technical Analysis service failed: {e}")
                 ta_service = None
+
+               try:
+    if NewsSentimentService:
+        news_service = NewsSentimentService(
+            redis_client=redis_client if 'redis_client' in locals() else None,
+            openai_service=openai_service if openai_service else None
+        )
+        logger.info("✅ News Sentiment Service initialized")
+    else:
+        news_service = None
+        logger.warning("❌ NewsSentimentService class not available")
+except Exception as e:
+    news_service = None
+    logger.warning(f"❌ News Sentiment Service initialization failed: {e}")
+
         
         # Initialize Trading Agent (FIXED CONSTRUCTOR CALL)
         if TradingAgent and openai_service:
