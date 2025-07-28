@@ -552,14 +552,17 @@ async def lifespan(app: FastAPI):
     
     try:
         # Initialize Database Service
-        if DatabaseService:
-            try:
-                db_service = DatabaseService()
-                await db_service.initialize()
-                logger.info("✅ Database service initialized")
-            except Exception as e:
-                logger.error(f"❌ Database service failed: {e}")
-                db_service = None
+          db_service = DatabaseService()
+        try:
+            await db_service.initialize()
+            logger.info("✅ Database service initialized")
+        except Exception as e:
+            logger.error(f"❌ Database service failed: {e}")
+            # Log the specific error details
+            logger.error(f"MongoDB URL: {settings.mongodb_url[:50]}...")
+            logger.error(f"Redis URL: {settings.redis_url[:30]}...")
+            db_service = None
+        
         
         # Initialize OpenAI Service
         if OpenAIService:
