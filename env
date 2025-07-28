@@ -6,8 +6,11 @@ ENVIRONMENT=development
 LOG_LEVEL=INFO
 
 # Database (Required)
-MONGODB_URL=mongodb+srv://username:password@cluster.mongodb.net/sms_trading_bot
-REDIS_URL=redis://localhost:6379
+MONGODB_URL=mongodb+srv://kcotfia90:Kway8890@cluster0.dpxhhmu.mongodb.net/ai?retryWrites=true&w=majority&appName=Cluster0
+
+# Redis URL - Use the full URL from Upstash
+REDIS_URL=redis://:default:AdygAAIjcDEyNGI2N2OZDkZjczOTFmMDQ2ODM4NTQ5nAxMAmworking-pipefish-56480.upstash.io:6379
+
 
 # OpenAI API (Required for AI responses)
 OPENAI_API_KEY=sk-your-openai-api-key-here
