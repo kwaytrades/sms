@@ -585,35 +585,42 @@ async def lifespan(app: FastAPI):
                 logger.error(f"❌ Technical Analysis service failed: {e}")
                 ta_service = None
         
-            # Initialize News Sentiment Service
-if NewsSentimentService:
-    try:
-        news_service = NewsSentimentService(
-            marketaux_api_key=getattr(settings, 'marketaux_api_key', None),
-            redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
-            openai_service=openai_service
-        )
-        logger.info("✅ News Sentiment Service initialized")
-    except Exception as e:
-        logger.error(f"❌ News Sentiment service failed: {e}")
-        news_service = None
-
-# Initialize Fundamental Analysis Service  
-if FundamentalAnalysisEngine:
-    try:
-        eodhd_key = getattr(settings, 'eodhd_api_key', None)
-        if eodhd_key:
-            fundamental_service = FundamentalAnalysisEngine(
-                eodhd_api_key=eodhd_key,
-                redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
-                cache_ttl=3600 if db_service and hasattr(db_service, 'redis') else 604800
-            )
-            
-            if FundamentalAnalysisTool:
-                fundamental_tool = FundamentalAnalysisTool(fundamental_service)
-                logger.info("✅ Fundamental Analysis Tool initialized")
-            
-            logger.info("✅ Fundamental Analysis Engine initialized")
+        # Initialize News Sentiment Service
+        if NewsSentimentService:
+            try:
+                news_service = NewsSentimentService(
+                    marketaux_api_key=getattr(settings, 'marketaux_api_key', None),
+                    redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
+                    openai_service=openai_service
+                )
+                logger.info("✅ News Sentiment Service initialized")
+            except Exception as e:
+                logger.error(f"❌ News Sentiment service failed: {e}")
+                news_service = None
+        
+        # Initialize Fundamental Analysis Service
+        if FundamentalAnalysisEngine:
+            try:
+                eodhd_key = getattr(settings, 'eodhd_api_key', None)
+                if eodhd_key:
+                    fundamental_service = FundamentalAnalysisEngine(
+                        eodhd_api_key=eodhd_key,
+                        redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
+                        cache_ttl=3600 if db_service and hasattr(db_service, 'redis') else 604800
+                    )
+                    
+                    # Initialize Fundamental Analysis Tool
+                    if FundamentalAnalysisTool:
+                        fundamental_tool = FundamentalAnalysisTool(fundamental_service)
+                        logger.info("✅ Fundamental Analysis Tool initialized")
+                    
+                    logger.info("✅ Fundamental Analysis Engine initialized")
+                else:
+                    logger.warning("⚠️ EODHD_API_KEY not set - Fundamental Analysis unavailable")
+                    fundamental_service = None
+            except Exception as e:
+                logger.error(f"❌ Fundamental Analysis service failed: {e}")
+                fundamental_service = None
         
         # Initialize Trading Agent (Hybrid LLM Agent)
         if TradingAgent:
