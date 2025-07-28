@@ -548,7 +548,7 @@ fundamental_tool = None     # Fundamental analysis tool
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown"""
-    global db_service, openai_service, twilio_service, message_handler, ta_service, trading_agent, tool_executor, news_service, fundamental_service, fundamental_tool
+    global db_service, openai_service, twilio_service, message_handler, ta_service, trading_agent, tool_executor, news_service, fundamental_service, fundamental_tool, scheduler_task
     
     logger.info("🚀 Starting SMS Trading Bot with Hybrid LLM Agent + Fundamental Analysis...")
     
@@ -728,8 +728,7 @@ async def lifespan(app: FastAPI):
     
     logger.info("✅ Shutdown complete")
     
-    # Clear global variables
-    global trading_agent, tool_executor
+    # Clear global variables (they are already declared as global at the top)
     trading_agent = None
     tool_executor = None
 
