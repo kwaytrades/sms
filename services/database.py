@@ -148,7 +148,7 @@ class DatabaseService:
     async def update_user_activity(self, phone_number: str):
         """Update user activity timestamp"""
         try:
-            if self.db:
+            if self.db is not None:
                 await self.db.users.update_one(
                     {"phone": phone_number},
                     {
@@ -160,6 +160,39 @@ class DatabaseService:
                 logger.info(f"✅ Updated user activity for {phone_number}")
         except Exception as e:
             logger.error(f"❌ Failed to update user activity: {e}")
+    
+    # NEW: MISSING store_conversation METHOD - THIS IS THE FIX!
+    async def store_conversation(self, phone_number: str, user_message: str, bot_response: str, 
+                               intent: Dict, tool_results: Dict) -> bool:
+        """Store conversation - wrapper around save_enhanced_message for backward compatibility"""
+        try:
+            # Extract symbols from intent or tool results
+            symbols = intent.get("symbols", []) if intent else []
+            
+            # If no symbols in intent, try to extract from tool_results
+            if not symbols and tool_results:
+                for tool_name, tool_data in tool_results.items():
+                    if isinstance(tool_data, dict):
+                        # Check if tool_data has symbols as keys (common pattern)
+                        if any(isinstance(key, str) and key.isupper() and len(key) <= 5 
+                              for key in tool_data.keys()):
+                            symbols.extend([key for key in tool_data.keys() 
+                                          if isinstance(key, str) and key.isupper() and len(key) <= 5])
+                            break
+            
+            # Use the existing save_enhanced_message method
+            return await self.save_enhanced_message(
+                phone_number=phone_number,
+                user_message=user_message,
+                bot_response=bot_response,
+                intent_data=intent,
+                symbols=symbols,
+                context_used=tool_results
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Error storing conversation for {phone_number}: {e}")
+            return False
     
     async def close(self):
         """Close database connections"""
