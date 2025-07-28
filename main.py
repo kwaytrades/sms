@@ -2258,3 +2258,195 @@ async def debug_openai_client_structure():
             "error": str(e),
             "error_type": str(type(e))
         }
+@app.get("/debug/test-news/{symbol}")
+async def test_news_sentiment(symbol: str, mode: str = "cached"):
+    """Test the news sentiment service"""
+    try:
+        if not news_service:
+            return {
+                "symbol": symbol.upper(),
+                "error": "News sentiment service not available",
+                "recommendation": "Set MARKETAUX_API_KEY environment variable and restart"
+            }
+        
+        # Test news sentiment analysis
+        sentiment_data = await news_service.get_sentiment(symbol.upper(), mode=mode)
+        
+        return {
+            "symbol": symbol.upper(),
+            "mode": mode,
+            "sentiment_analysis": sentiment_data,
+            "service_status": "working" if sentiment_data and not sentiment_data.get('error') else "error",
+            "cache_available": news_service.redis_client is not None,
+            "openai_available": news_service.openai_service is not None
+        }
+        
+    except Exception as e:
+        logger.error(f"News sentiment test error: {e}")
+        return {
+            "symbol": symbol.upper(),
+            "error": str(e),
+            "recommendation": "Check your MarketAux API key and service configuration"
+        }
+
+@app.get("/debug/test-integration/{symbol}")
+async def test_full_integration(symbol: str):
+    """Test full TA + News Sentiment integration"""
+    try:
+        test_message = f"analyze {symbol}"
+        test_phone = "+1234567890"
+        
+        # Test hybrid agent intent parsing
+        if trading_agent:
+            intent = await trading_agent.parse_intent(test_message, test_phone)
+            agent_working = True
+        else:
+            intent = {"intent": "analyze", "symbols": [symbol], "requires_tools": ["technical_analysis", "news_sentiment"]}
+            agent_working = False
+        
+        # Execute tools (both TA and News Sentiment)
+        if tool_executor:
+            tool_results = await tool_executor.execute_tools(intent, test_phone)
+        else:
+            tool_results = {}
+        
+        # Update personality engine
+        personality_engine.learn_from_message(test_phone, test_message, intent)
+        user_profile = personality_engine.get_user_profile(test_phone)
+        
+        # Generate enhanced response
+        if trading_agent and tool_results:
+            ai_response = await trading_agent.generate_response(
+                user_message=test_message,
+                intent_data=intent,
+                tool_results=tool_results,
+                user_phone=test_phone,
+                user_profile=user_profile
+            )
+        else:
+            ai_response = "Integration test failed - check service availability"
+        
+        return {
+            "symbol": symbol.upper(),
+            "integration_test": {
+                "intent_parsing": agent_working,
+                "tool_execution": len(tool_results) > 0,
+                "ta_available": "technical_analysis" in tool_results,
+                "news_available": "news_sentiment" in tool_results,
+                "personality_learning": True
+            },
+            "tool_results": {
+                "technical_analysis": tool_results.get("technical_analysis", {}),
+                "news_sentiment": tool_results.get("news_sentiment", {})
+            },
+            "enhanced_response": ai_response,
+            "user_profile": user_profile["communication_style"],
+            "recommendation": _get_integration_status_recommendation(tool_results)
+        }
+        
+    except Exception as e:
+        logger.error(f"Integration test error: {e}")
+        return {
+            "symbol": symbol.upper(),
+            "integration_test": "failed",
+            "error": str(e),
+            "recommendation": "Check service initialization and API keys"
+        }
+
+def _get_integration_status_recommendation(tool_results: Dict) -> str:
+    """Get recommendation based on integration test results"""
+    ta_working = "technical_analysis" in tool_results and not tool_results.get("technical_analysis_unavailable")
+    news_working = "news_sentiment" in tool_results and not tool_results.get("news_sentiment_unavailable")
+    
+    if ta_working and news_working:
+        return "✅ Full integration working! TA + News Sentiment + Personality learning active."
+    elif ta_working and not news_working:
+        return "⚠️ TA working, News Sentiment needs setup. Set MARKETAUX_API_KEY and restart."
+    elif not ta_working and news_working:
+        return "⚠️ News working, TA needs setup. Check EODHD_API_KEY and restart."
+    else:
+        return "❌ Both services need setup. Check EODHD_API_KEY and MARKETAUX_API_KEY."
+
+# ===== ADD TO EXISTING SERVICE DIAGNOSIS ENDPOINT =====
+# Update your existing diagnose_services endpoint to include news sentiment:
+
+@app.get("/debug/diagnose-services")
+async def diagnose_services():
+    """Enhanced service diagnosis including news sentiment"""
+    try:
+        services_status = {
+            "timestamp": datetime.now().isoformat(),
+            "services": {
+                "openai_service": openai_service is not None,
+                "db_service": db_service is not None,
+                "twilio_service": twilio_service is not None,
+                "technical_analysis": ta_service is not None,
+                "news_sentiment": news_service is not None,  # ADD THIS
+                "personality_engine": personality_engine is not None,
+                "trading_agent": trading_agent is not None,
+                "tool_executor": tool_executor is not None
+            },
+            "environment_variables": {
+                "OPENAI_API_KEY": "Set" if os.getenv('OPENAI_API_KEY') else "Missing",
+                "EODHD_API_KEY": "Set" if os.getenv('EODHD_API_KEY') else "Missing",
+                "MARKETAUX_API_KEY": "Set" if os.getenv('MARKETAUX_API_KEY') else "Missing",  # ADD THIS
+                "MONGODB_URL": "Set" if os.getenv('MONGODB_URL') else "Missing",
+                "REDIS_URL": "Set" if os.getenv('REDIS_URL') else "Optional"
+            },
+            "integration_status": {
+                "ta_integration": ta_service is not None and os.getenv('EODHD_API_KEY'),
+                "news_integration": news_service is not None and os.getenv('MARKETAUX_API_KEY'),  # ADD THIS
+                "llm_integration": trading_agent is not None and tool_executor is not None
+            }
+        }
+        
+        # Add specific diagnostics
+        issues = []
+        if not os.getenv('MARKETAUX_API_KEY'):
+            issues.append("❌ Set MARKETAUX_API_KEY environment variable for news sentiment")
+        if not news_service:
+            issues.append("❌ News sentiment service failed to initialize")
+        if news_service and not news_service.openai_service:
+            issues.append("⚠️ News sentiment fallback mode (OpenAI unavailable)")
+        
+        services_status["issues"] = issues
+        services_status["recommendations"] = _get_service_recommendations(services_status)
+        
+        return services_status
+        
+    except Exception as e:
+        logger.error(f"Service diagnosis error: {e}")
+        return {"error": str(e), "timestamp": datetime.now().isoformat()}
+
+def _get_service_recommendations(status: Dict) -> List[str]:
+    """Get service setup recommendations"""
+    recommendations = []
+    
+    env_vars = status.get("environment_variables", {})
+    
+    if env_vars.get("MARKETAUX_API_KEY") == "Missing":
+        recommendations.append("1. Get MarketAux API key from https://www.marketaux.com/")
+        recommendations.append("2. Add MARKETAUX_API_KEY=your_key to .env file")
+    
+    if not status.get("services", {}).get("news_sentiment"):
+        recommendations.append("3. Restart application after setting MARKETAUX_API_KEY")
+    
+    if status.get("integration_status", {}).get("news_integration"):
+        recommendations.append("✅ News sentiment ready! Test with /debug/test-news/AAPL")
+    
+    return recommendations
+
+# ===== SAMPLE SMS TESTING =====
+# Test these SMS messages once everything is set up:
+
+"""
+Sample SMS Test Messages:
+1. "analyze AAPL" - Should return TA + News Sentiment
+2. "TSLA news" - Should return just news sentiment  
+3. "what's the news on NVDA?" - Should return news sentiment
+4. "how is MSFT doing?" - Should return TA + News Sentiment
+
+Expected Enhanced Responses:
+- "AAPL 📈 $185.50 (+2.1%) | RSI: 65.2 (neutral) | 🐂 News: Bullish (impact: 0.8) - Strong earnings beat driving momentum"
+- "🐂 TSLA News: Recent developments show bullish sentiment | Top Headlines: 1. Tesla beats delivery expectations... 2. New Gigafactory announced... (5 articles analyzed)"
+"""
