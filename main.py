@@ -543,7 +543,7 @@ news_service = None
 fundamental_service = None  # Fundamental analysis engine
 fundamental_tool = None     # Fundamental analysis tool
 
-        @asynccontextmanager
+       @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown"""
     global db_service, openai_service, twilio_service, message_handler, ta_service, trading_agent, tool_executor, news_service, fundamental_service, fundamental_tool
@@ -552,13 +552,12 @@ async def lifespan(app: FastAPI):
     
     try:
         # Initialize Database Service
-        db_service = DatabaseService()  # ← Fixed indentation here
+        db_service = DatabaseService()
         try:
             await db_service.initialize()
             logger.info("✅ Database service initialized")
         except Exception as e:
             logger.error(f"❌ Database service failed: {e}")
-            # Log the specific error details
             logger.error(f"MongoDB URL: {settings.mongodb_url[:50]}...")
             logger.error(f"Redis URL: {settings.redis_url[:30]}...")
             db_service = None
