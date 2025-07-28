@@ -47,6 +47,39 @@ class OpenAIService:
         except Exception as e:
             logger.error(f"❌ OpenAI API call failed: {e}")
             return self._get_smart_fallback_response(user_query)
+
+# ===== ADD THIS METHOD TO YOUR EXISTING services/openai_service.py =====
+
+# Add this method to your existing OpenAIService class:
+
+async def get_completion(
+    self, 
+    prompt: str, 
+    max_tokens: int = 300,
+    temperature: float = 0.3,
+    model: str = "gpt-4o-mini"
+) -> str:
+    """Simple completion method for news sentiment analysis"""
+    
+    if not self.api_key or not self.client:
+        logger.warning("No OpenAI API key, raising exception for fallback")
+        raise Exception("OpenAI API not available")
+    
+    try:
+        response = await self.client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        
+        return response.choices[0].message.content.strip()
+        
+    except Exception as e:
+        logger.error(f"OpenAI get_completion failed: {e}")
+        raise
     
     def _build_personalized_prompt(
         self, 
@@ -84,9 +117,9 @@ User Communication Style:
 {market_info}
 
 Guidelines:
-- Keep response under 160 characters for SMS
+- Keep response under 320 characters for SMS
 - Match their communication style exactly
-- If they like casual/high energy, use phrases like "yo", "crushing it", add 🚀
+- If they like casual/high energy, use phrases like "yo", "crushing it"
 - If they prefer professional, use formal language with technical terms
 - If they're a beginner, explain things simply
 - If they're advanced, use technical analysis terminology
