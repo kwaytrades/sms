@@ -1694,3 +1694,156 @@ if __name__ == "__main__":
         reload=settings.environment == "development",
         log_level=settings.log_level.lower()
     )
+
+# ===== ADD THESE ENDPOINTS TO YOUR main.py =====
+
+@app.post("/api/test/sms-with-response")
+async def test_sms_with_response(request: Request):
+    """Test SMS processing and return response"""
+    try:
+        form_data = await request.form()
+        from_number = form_data.get('From', '+1555TEST')
+        message_body = form_data.get('Body', 'test message')
+        
+        # Process with hybrid agent system
+        bot_response = await process_sms_with_hybrid_agent(message_body, from_number)
+        
+        return {
+            "success": True,
+            "user_message": message_body,
+            "bot_response": bot_response,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Test SMS processing failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+@app.get("/debug/test-ta/{symbol}")
+async def test_technical_analysis(symbol: str):
+    """Test technical analysis for a symbol"""
+    try:
+        if not ta_service:
+            return {
+                "symbol": symbol.upper(),
+                "technical_analysis": {"available": False},
+                "error": "Technical Analysis service not initialized"
+            }
+        
+        ta_data = await ta_service.analyze_symbol(symbol.upper())
+        
+        return {
+            "symbol": symbol.upper(),
+            "technical_analysis": {
+                "available": True,
+                "data": ta_data,
+                "service_status": "working"
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Technical analysis test error: {e}")
+        return {
+            "symbol": symbol.upper(),
+            "error": str(e),
+            "recommendation": "Check EODHD API key and service configuration"
+        }
+
+@app.post("/debug/test-message")
+async def test_message_processing(request: Request):
+    """Test complete message processing pipeline"""
+    try:
+        data = await request.json()
+        message = data.get('message', 'test AAPL')
+        phone = data.get('phone', '+1555TEST')
+        
+        # Process message
+        response = await process_sms_with_hybrid_agent(message, phone)
+        
+        return {
+            "success": True,
+            "input_message": message,
+            "phone_number": phone,
+            "bot_response": response,
+            "services_status": {
+                "ta_service": ta_service is not None,
+                "news_service": news_service is not None,
+                "fundamental_service": fundamental_service is not None,
+                "trading_agent": trading_agent is not None
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Message processing test failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+@app.get("/debug/test-full-flow/{symbol}")
+async def test_full_analysis_flow(symbol: str):
+    """Test complete analysis flow for a symbol"""
+    try:
+        results = {}
+        
+        # Test Technical Analysis
+        if ta_service:
+            try:
+                ta_result = await ta_service.analyze_symbol(symbol.upper())
+                results["technical_analysis"] = {"success": True, "data": ta_result}
+            except Exception as e:
+                results["technical_analysis"] = {"success": False, "error": str(e)}
+        else:
+            results["technical_analysis"] = {"success": False, "error": "Service not available"}
+        
+        # Test News Sentiment
+        if news_service:
+            try:
+                news_result = await news_service.get_sentiment(symbol.upper())
+                results["news_sentiment"] = {"success": True, "data": news_result}
+            except Exception as e:
+                results["news_sentiment"] = {"success": False, "error": str(e)}
+        else:
+            results["news_sentiment"] = {"success": False, "error": "Service not available"}
+        
+        # Test Fundamental Analysis
+        if fundamental_tool:
+            try:
+                fund_result = await fundamental_tool.execute({
+                    "symbol": symbol.upper(),
+                    "depth": "basic",
+                    "user_style": "casual"
+                })
+                results["fundamental_analysis"] = {"success": fund_result.get("success", False), "data": fund_result}
+            except Exception as e:
+                results["fundamental_analysis"] = {"success": False, "error": str(e)}
+        else:
+            results["fundamental_analysis"] = {"success": False, "error": "Service not available"}
+        
+        # Test Trading Agent
+        if trading_agent:
+            try:
+                intent = await trading_agent.parse_intent(f"analyze {symbol}", "+1555TEST")
+                results["trading_agent"] = {"success": True, "intent": intent}
+            except Exception as e:
+                results["trading_agent"] = {"success": False, "error": str(e)}
+        else:
+            results["trading_agent"] = {"success": False, "error": "Service not available"}
+        
+        return {
+            "symbol": symbol.upper(),
+            "full_analysis_test": results,
+            "overall_status": "Complete Intelligence Suite" if all(
+                r.get("success") for r in results.values()
+            ) else "Partial functionality"
+        }
+        
+    except Exception as e:
+        logger.error(f"Full flow test failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
