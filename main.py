@@ -602,15 +602,23 @@ async def lifespan(app: FastAPI):
                 else:
                     logger.warning("⚠️ Redis unavailable for fundamental analysis: Using weekly caching fallback")
                 
-                fundamental_service = FundamentalAnalysisEngine(
-                    eodhd_api_key=getattr(settings, 'eodhd_api_key', None),
-                    redis_client=db_service.redis if redis_available else None,
-                    cache_ttl=3600 if redis_available else 604800  # 1 hour with Redis, 1 week without
-                )
-                logger.info("✅ Fundamental Analysis Engine initialized with weekly caching")
+                eodhd_key = getattr(settings, 'eodhd_api_key', None)
+                if eodhd_key:
+                    fundamental_service = FundamentalAnalysisEngine(
+                        eodhd_api_key=eodhd_key,
+                        redis_client=db_service.redis if redis_available else None,
+                        cache_ttl=3600 if redis_available else 604800  # 1 hour with Redis, 1 week without
+                    )
+                    logger.info("✅ Fundamental Analysis Engine initialized with weekly caching")
+                else:
+                    logger.warning("⚠️ EODHD_API_KEY not set - Fundamental Analysis unavailable")
+                    fundamental_service = None
             except Exception as e:
                 logger.error(f"❌ Fundamental Analysis service failed: {e}")
+                logger.error(f"Error details: {traceback.format_exc()}")
                 fundamental_service = None
+        else:
+            logger.warning("❌ FundamentalAnalysisEngine class not available - check imports")
         
         # Initialize News Sentiment Service
         if NewsSentimentService:
@@ -625,7 +633,10 @@ async def lifespan(app: FastAPI):
                 logger.info(f"✅ OpenAI service available: {openai_service is not None}")
             except Exception as e:
                 logger.error(f"❌ News Sentiment service failed: {e}")
+                logger.error(f"Error details: {traceback.format_exc()}")
                 news_service = None
+        else:
+            logger.warning("❌ NewsSentimentService class not available - check imports")
         
         # Initialize Trading Agent (Hybrid LLM Agent)
         if TradingAgent:
@@ -675,8 +686,21 @@ async def lifespan(app: FastAPI):
         # Initialize Message Handler
         if MessageHandler:
             try:
-                message_handler = MessageHandler()
-                logger.info("✅ Enhanced message handler initialized with context support")
+                if db_service and openai_service and twilio_service:
+                    message_handler = MessageHandler(
+                        db_service=db_service,
+                        openai_service=openai_service,
+                        twilio_service=twilio_service
+                    )
+                    logger.info("✅ Enhanced message handler initialized with context support")
+                else:
+                    # Initialize with available services (graceful degradation)
+                    message_handler = MessageHandler(
+                        db_service=db_service,
+                        openai_service=openai_service,
+                        twilio_service=twilio_service
+                    )
+                    logger.warning("⚠️ Message handler initialized with some services missing")
             except Exception as e:
                 logger.error(f"❌ Message handler failed: {e}")
                 message_handler = None
@@ -882,7 +906,7 @@ async def health_check():
                 "redis": {"status": "not_initialized"}
             }
         
-        # Check service availability
+        # Check service availability for health endpoint
         health_status["services"] = {
             "database": "available" if db_service is not None else "unavailable",
             "openai": "available" if openai_service is not None else "unavailable", 
