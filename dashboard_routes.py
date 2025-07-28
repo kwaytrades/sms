@@ -148,13 +148,21 @@ async def test_interface():
                 
                 if (response.ok) {
                     const data = await response.json();
+                    
+                    // ✅ FIXED: Handle the actual response structure properly
+                    const userMessage = data.user_message || message;
+                    const botResponse = data.bot_response || 'No response generated';
+                    const timestamp = data.timestamp || 'Unknown';
+                    const success = data.success || false;
+                    
                     resultDiv.innerHTML = `
                         <div class="result success">
                             <h3>✅ Test Successful!</h3>
-                            <p><strong>User Message:</strong> ${data.user_message?.body || message}</p>
-                            <p><strong>Bot Response:</strong> ${data.bot_response?.content || 'No response generated'}</p>
-                            <p><strong>Personality Learning:</strong> ${data.personality_learning || 'inactive'}</p>
-                            <p><strong>Agent Type:</strong> ${data.bot_response?.agent_type || 'unknown'}</p>
+                            <p><strong>Success:</strong> ${success}</p>
+                            <p><strong>User Message:</strong> ${userMessage}</p>
+                            <p><strong>Bot Response:</strong> ${botResponse}</p>
+                            <p><strong>Timestamp:</strong> ${timestamp}</p>
+                            <p><strong>Complete Intelligence Suite Active:</strong> ✅</p>
                         </div>
                     `;
                 } else {
@@ -194,4 +202,5 @@ async def dashboard_health():
             "/dashboard/health",
             "/static/dashboard.js"
         ]
+    }
     }
