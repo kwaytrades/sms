@@ -123,6 +123,106 @@ Examples:
             logger.error(f"Intent parsing failed: {e}")
             return self._fallback_intent_parsing(message)
     
+    def _validate_intent(self, intent_data: Dict, original_message: str) -> Dict:
+        """Validate and clean the parsed intent"""
+        
+        # Ensure required fields exist
+        if "intent" not in intent_data:
+            intent_data["intent"] = "general"
+        
+        if "symbols" not in intent_data:
+            intent_data["symbols"] = []
+        
+        if "confidence" not in intent_data:
+            intent_data["confidence"] = 0.5
+        
+        if "requires_tools" not in intent_data:
+            intent_data["requires_tools"] = []
+        
+        # Clean symbols (remove duplicates, validate format)
+        if intent_data["symbols"]:
+            cleaned_symbols = []
+            for symbol in intent_data["symbols"]:
+                if isinstance(symbol, str) and 1 <= len(symbol) <= 5 and symbol.isalpha():
+                    cleaned_symbols.append(symbol.upper())
+            intent_data["symbols"] = list(dict.fromkeys(cleaned_symbols))  # Remove duplicates
+        
+        # Auto-determine required tools based on intent
+        if intent_data["intent"] == "analyze" and intent_data["symbols"]:
+            if "technical_analysis" not in intent_data["requires_tools"]:
+                intent_data["requires_tools"].append("technical_analysis")
+            if "news_sentiment" not in intent_data["requires_tools"]:
+                intent_data["requires_tools"].append("news_sentiment")
+        
+        if intent_data["intent"] == "fundamental_analysis" and intent_data["symbols"]:
+            if "fundamental_analysis" not in intent_data["requires_tools"]:
+                intent_data["requires_tools"].append("fundamental_analysis")
+        
+        if intent_data["intent"] == "comprehensive_analysis" and intent_data["symbols"]:
+            required_tools = ["technical_analysis", "news_sentiment", "fundamental_analysis"]
+            for tool in required_tools:
+                if tool not in intent_data["requires_tools"]:
+                    intent_data["requires_tools"].append(tool)
+        
+        if intent_data["intent"] == "news" and intent_data["symbols"]:
+            if "news_sentiment" not in intent_data["requires_tools"]:
+                intent_data["requires_tools"].append("news_sentiment")
+        
+        if intent_data["intent"] == "portfolio":
+            if "portfolio_check" not in intent_data["requires_tools"]:
+                intent_data["requires_tools"].append("portfolio_check")
+        
+        return intent_data
+    
+    def _fallback_intent_parsing(self, message: str) -> Dict:
+        """Fallback with SIMPLE company name mapping - no complex regex"""
+        
+        message_lower = message.lower()
+        
+        # SIMPLE company mapping - let LLM handle complex cases
+        simple_mappings = {
+            'google': 'GOOGL', 'tesla': 'TSLA', 'apple': 'AAPL', 
+            'microsoft': 'MSFT', 'amazon': 'AMZN', 'meta': 'META',
+            'facebook': 'META', 'nvidia': 'NVDA', 'netflix': 'NFLX',
+            'silver etf': 'SLV', 'silver': 'SLV'
+        }
+        
+        symbols = []
+        for company, symbol in simple_mappings.items():
+            if company in message_lower:
+                symbols.append(symbol)
+        
+        # Enhanced intent detection with fundamental analysis support
+        if any(word in message_lower for word in ['fundamental', 'fundamentals', 'valuation', 'ratios', 'pe ratio', 'financial', 'earnings', 'revenue']):
+            intent = "fundamental_analysis"
+            required_tools = ["fundamental_analysis"]
+        elif any(word in message_lower for word in ['complete', 'full', 'comprehensive', 'detailed', 'deep dive']):
+            intent = "comprehensive_analysis"
+            required_tools = ["technical_analysis", "news_sentiment", "fundamental_analysis"]
+        elif any(word in message_lower for word in ['news', 'headlines', 'sentiment']):
+            intent = "news"
+            required_tools = ["news_sentiment"]
+        elif any(word in message_lower for word in ['portfolio', 'positions', 'holdings']):
+            intent = "portfolio"
+            required_tools = ["portfolio_check"]
+        elif any(word in message_lower for word in ['find', 'screen', 'search', 'discover']):
+            intent = "screener"
+            required_tools = ["stock_screener"]
+        elif symbols:
+            intent = "analyze"
+            required_tools = ["technical_analysis", "news_sentiment"]
+        else:
+            intent = "general"
+            required_tools = []
+        
+        return {
+            "intent": intent,
+            "symbols": symbols,
+            "confidence": 0.4,  # Lower confidence for fallback
+            "requires_tools": required_tools,
+            "fallback": True
+        }
+    
     def _detect_conversation_context(self, message: str, user_profile: Dict) -> Dict:
         """Detect the human conversation context and emotional subtext"""
         
@@ -235,6 +335,10 @@ Generate the perfect human response:"""
             
             # Apply human-like post-processing
             generated_response = self._humanize_response(generated_response, user_profile, conversation_context)
+            
+            # Clean and validate response
+            generated_response = self._clean_response(generated_response)
+            generated_response = self._validate_response(generated_response)
             
             # SMS optimization
             if len(generated_response) > 320:
