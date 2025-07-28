@@ -550,8 +550,9 @@ async def lifespan(app: FastAPI):
     
     logger.info("🚀 Starting SMS Trading Bot with Hybrid LLM Agent + Fundamental Analysis...")
     
+    try:
         # Initialize Database Service
-          db_service = DatabaseService()
+        db_service = DatabaseService()  # ← Fixed indentation here
         try:
             await db_service.initialize()
             logger.info("✅ Database service initialized")
@@ -562,33 +563,163 @@ async def lifespan(app: FastAPI):
             logger.error(f"Redis URL: {settings.redis_url[:30]}...")
             db_service = None
         
-        
         # Initialize OpenAI Service
-        if OpenAIService:
-            try:
-                openai_service = OpenAIService()
-                logger.info("✅ OpenAI service initialized")
-            except Exception as e:
-                logger.error(f"❌ OpenAI service failed: {e}")
-                openai_service = None
+        try:
+            openai_service = OpenAIService()
+            logger.info("✅ OpenAI service initialized")
+        except Exception as e:
+            logger.error(f"❌ OpenAI service failed: {e}")
+            openai_service = None
         
         # Initialize Twilio Service
-        if TwilioService:
-            try:
-                twilio_service = TwilioService()
-                logger.info("✅ Twilio service initialized")
-            except Exception as e:
-                logger.error(f"❌ Twilio service failed: {e}")
-                twilio_service = None
+        try:
+            twilio_service = TwilioService()
+            logger.info("✅ Twilio service initialized")
+        except Exception as e:
+            logger.error(f"❌ Twilio service failed: {e}")
+            twilio_service = None
         
         # Initialize Technical Analysis Service
-        if TechnicalAnalysisService:
-            try:
-                ta_service = TechnicalAnalysisService()
-                logger.info("✅ Technical Analysis service initialized")
-            except Exception as e:
-                logger.error(f"❌ Technical Analysis service failed: {e}")
-                ta_service = None
+        try:
+            ta_service = TechnicalAnalysisService()
+            logger.info("✅ TA Service initialized with API key: {'Set' if settings.eodhd_api_key else 'Missing'}")
+        except Exception as e:
+            logger.error(f"❌ Technical Analysis service failed: {e}")
+            ta_service = None
+        
+        # Initialize Fundamental Analysis Service
+        try:
+            # Check if Redis is available for caching
+            redis_available = db_service and db_service.redis
+            if redis_available:
+                logger.info("✅ Redis available for fundamental analysis caching")
+            else:
+                logger.warning("⚠️ Redis unavailable for fundamental analysis: Using weekly caching fallback")
+            
+            fundamental_service = FundamentalAnalysisEngine(
+                eodhd_api_key=settings.eodhd_api_key,
+                redis_client=db_service.redis if redis_available else None,
+                cache_ttl=3600 if redis_available else 604800  # 1 hour with Redis, 1 week without
+            )
+            logger.info("✅ Fundamental Analysis Engine initialized with weekly caching")
+        except Exception as e:
+            logger.error(f"❌ Fundamental Analysis service failed: {e}")
+            fundamental_service = None
+        
+        # Initialize News Sentiment Service
+        try:
+            news_service = NewsSentimentService(
+                marketaux_api_key=settings.marketaux_api_key,
+                redis_client=db_service.redis if db_service else None,
+                openai_service=openai_service
+            )
+            logger.info("✅ News Sentiment Service initialized with MarketAux API: {'Set' if settings.marketaux_api_key else 'Missing'}")
+            logger.info(f"✅ Redis available: {db_service and db_service.redis is not None}")
+            logger.info(f"✅ OpenAI service available: {openai_service is not None}")
+        except Exception as e:
+            logger.error(f"❌ News Sentiment service failed: {e}")
+            news_service = None
+        
+        # Initialize Trading Agent (Hybrid LLM Agent)
+        try:
+            if openai_service and personality_engine:
+                trading_agent = TradingAgent(
+                    openai_client=openai_service,
+                    personality_engine=personality_engine,
+                    database_service=db_service  # Pass database service for context
+                )
+                logger.info("✅ Trading agent initialized")
+            else:
+                logger.warning("⚠️ Trading agent not initialized - missing OpenAI service or personality engine")
+                trading_agent = None
+        except Exception as e:
+            logger.error(f"❌ Trading agent failed: {e}")
+            trading_agent = None
+        
+        # Initialize Fundamental Analysis Tool
+        try:
+            if fundamental_service:
+                fundamental_tool = FundamentalAnalysisTool(fundamental_service)
+                logger.info("✅ Fundamental Analysis Tool initialized")
+            else:
+                fundamental_tool = None
+                logger.warning("⚠️ Fundamental Analysis Tool not available")
+        except Exception as e:
+            logger.error(f"❌ Fundamental Analysis Tool failed: {e}")
+            fundamental_tool = None
+        
+        # Initialize Tool Executor
+        try:
+            tool_executor = ToolExecutor(
+                ta_service=ta_service,
+                portfolio_service=None,  # Not implemented yet
+                screener_service=None,   # Not implemented yet
+                news_service=news_service,
+                fundamental_tool=fundamental_tool
+            )
+            logger.info("✅ Tool executor initialized with TA + News + Fundamental Analysis")
+        except Exception as e:
+            logger.error(f"❌ Tool executor failed: {e}")
+            tool_executor = None
+        
+        # Initialize Message Handler
+        try:
+            message_handler = MessageHandler()
+            logger.info("✅ Enhanced message handler initialized with context support")
+        except Exception as e:
+            logger.error(f"❌ Message handler failed: {e}")
+            message_handler = None
+        
+        # Final status report
+        logger.info("🎯 Complete Intelligence Suite: TA + News + Fundamental Analysis + LLM Agent")
+        
+        # Log available analysis engines
+        available_engines = []
+        if ta_service:
+            available_engines.append("Technical Analysis")
+        if news_service:
+            available_engines.append("News Sentiment")
+        if fundamental_service:
+            available_engines.append("Fundamental Analysis")
+        
+        logger.info(f"📊 Available Analysis Engines: {', '.join(available_engines) if available_engines else 'None'}")
+        logger.info("✅ SMS Trading Bot startup completed")
+        
+    except Exception as e:
+        logger.error(f"❌ Startup failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        if not settings.testing_mode:
+            # Don't raise in development mode to allow partial functionality
+            logger.warning("⚠️ Continuing in degraded mode")
+    
+    yield
+    
+    # Shutdown
+    logger.info("🛑 Shutting down SMS Trading Bot...")
+    
+    try:
+        # Close services that need cleanup
+        if ta_service and hasattr(ta_service, 'close'):
+            await ta_service.close()
+            logger.info("✅ Technical Analysis service closed")
+        
+        if news_service and hasattr(news_service, 'close'):
+            await news_service.close()
+            logger.info("✅ News Sentiment service closed")
+        
+        if db_service and hasattr(db_service, 'close'):
+            await db_service.close()
+            logger.info("✅ Database service closed")
+        
+    except Exception as e:
+        logger.error(f"❌ Shutdown error: {e}")
+    
+    logger.info("✅ Shutdown complete")
+    
+    # Clear global variables
+    trading_agent = None
+    tool_executor = None
 
         # ===== INITIALIZE FUNDAMENTAL ANALYSIS ENGINE =====
         if FundamentalAnalysisEngine and os.getenv('EODHD_API_KEY'):
