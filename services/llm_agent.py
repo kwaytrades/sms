@@ -243,8 +243,14 @@ Examples:
         """Detect the human conversation context and emotional subtext"""
         
         msg_lower = message.lower()
+        
+        # Detect if user actually greeted
+        greeting_words = ['hey', 'hi', 'hello', 'yo', 'sup', 'what\'s up', 'howdy']
+        user_greeted = any(msg_lower.startswith(word) or f" {word}" in f" {msg_lower}" for word in greeting_words)
+        
         context = {
-            "is_greeting": any(word in msg_lower for word in ['hey', 'yo', 'sup', 'hi', 'hello']),
+            "user_greeted_first": user_greeted,
+            "is_direct_question": message.count('?') > 0 or any(word in msg_lower for word in ['analyze', 'analysis', 'assessment', 'thoughts', 'technical', 'what\'s', 'how\'s']),
             "is_celebrating": any(word in msg_lower for word in ['moon', 'rocket', '🚀', 'lfg', 'holy', 'damn']),
             "is_worried": any(word in msg_lower for word in ['dump', 'sell', 'scared', 'worried', 'shit', 'fuck']),
             "is_seeking_validation": message.count('?') > 0 and any(word in msg_lower for word in ['thoughts', 'think', 'should i', 'good pick']),
@@ -480,7 +486,18 @@ TYPICAL CONCERNS: {', '.join(context_memory.get('concerns_expressed', [])[:3]) i
         """Determine the human response strategy based on context"""
         
         emotional_state = intent_data.get('emotional_state', 'neutral')
-        response_tone = intent_data.get('response_tone', 'analytical')
+        
+        # Check if user actually greeted first
+        if conversation_context.get('user_greeted_first'):
+            total_messages = user_profile.get('learning_data', {}).get('total_messages', 0) if user_profile else 0
+            if total_messages == 0:
+                return "WELCOME MODE - they greeted first, so greet back and get them started"
+            else:
+                return "FRIENDLY GREETING - they greeted, so greet back then dive into analysis"
+        
+        # For direct questions/analysis requests - NO GREETINGS
+        if conversation_context.get('is_direct_question'):
+            return "DIRECT ANALYSIS MODE - they want analysis, jump straight to it with no greetings"
         
         if conversation_context.get('is_celebrating'):
             return "CELEBRATION MODE - match their excitement, validate their success, but gently mention risks"
@@ -494,15 +511,8 @@ TYPICAL CONCERNS: {', '.join(context_memory.get('concerns_expressed', [])[:3]) i
         elif conversation_context.get('has_fomo'):
             return "FOMO CHECK - help them think rationally, provide perspective on timing"
         
-        elif conversation_context.get('is_greeting'):
-            total_messages = user_profile.get('learning_data', {}).get('total_messages', 0) if user_profile else 0
-            if total_messages == 0:
-                return "WELCOME MODE - be friendly, introduce yourself naturally, get them started"
-            else:
-                return "CATCHUP MODE - welcome them back, reference previous conversations"
-        
         else:
-            return "ANALYTICAL MODE - provide solid analysis with personality"
+            return "ANALYTICAL MODE - provide solid analysis with personality, no unnecessary greetings"
     
     def _humanize_response(self, response: str, user_profile: Dict, conversation_context: Dict) -> str:
         """Apply final human touches to the response"""
