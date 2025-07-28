@@ -585,31 +585,34 @@ async def lifespan(app: FastAPI):
                 logger.error(f"❌ Technical Analysis service failed: {e}")
                 ta_service = None
         
-        # Initialize News Sentiment Service
+        # Initialize News Sentiment Service - FIXED PARAMETERS
         if NewsSentimentService:
             try:
                 news_service = NewsSentimentService(
-    redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
-    openai_service=openai_service
-)
+                    redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
+                    openai_service=openai_service
+                )
                 logger.info("✅ News Sentiment Service initialized")
             except Exception as e:
                 logger.error(f"❌ News Sentiment service failed: {e}")
                 news_service = None
         
-        # Initialize Fundamental Analysis Service
+        # Initialize Fundamental Analysis Service - FIXED PARAMETERS
         if FundamentalAnalysisEngine:
             try:
                 eodhd_key = getattr(settings, 'eodhd_api_key', None)
                 if eodhd_key:
-                   fundamental_service = FundamentalAnalysisEngine(
-    eodhd_api_key=eodhd_key,
-    redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None
-)
+                    fundamental_service = FundamentalAnalysisEngine(
+                        eodhd_api_key=eodhd_key,
+                        redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None
+                    )
                     
-                    # Initialize Fundamental Analysis Tool
+                    # Initialize Fundamental Analysis Tool - FIXED PARAMETERS
                     if FundamentalAnalysisTool:
-                        fundamental_tool = FundamentalAnalysisTool(fundamental_service)
+                        fundamental_tool = FundamentalAnalysisTool(
+                            eodhd_api_key=eodhd_key,
+                            redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None
+                        )
                         logger.info("✅ Fundamental Analysis Tool initialized")
                     
                     logger.info("✅ Fundamental Analysis Engine initialized")
