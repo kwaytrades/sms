@@ -721,7 +721,7 @@ async def lifespan(app: FastAPI):
     tool_executor = None
 
         # ===== INITIALIZE FUNDAMENTAL ANALYSIS ENGINE =====
-        if FundamentalAnalysisEngine and os.getenv('EODHD_API_KEY'):
+    if FundamentalAnalysisEngine and os.getenv('EODHD_API_KEY'):
             try:
                 # Use basic Redis client for caching
                 import redis
