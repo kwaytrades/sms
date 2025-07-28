@@ -117,7 +117,7 @@ class NewsSentimentService:
                 'filter_entities': 'true',
                 'language': 'en',
                 'limit': 10,  # Get last 10 articles
-                'published_after': (datetime.now() - timedelta(hours=24)).isoformat()  # Last 24 hours
+                'published_after': (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')  # Last 24 hours in correct format
             }
             
             async with aiohttp.ClientSession() as session:
