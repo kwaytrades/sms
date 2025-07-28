@@ -102,7 +102,7 @@ class NewsSentimentService:
             logger.error(f"Cache storage error for {symbol}: {e}")
     
     async def _fetch_marketaux_news(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Fetch news from MarketAux API"""
+        """Fetch news from MarketAux API with broader timeframe and relevance ranking"""
         if not self.marketaux_api_key:
             logger.error("MarketAux API key not available")
             return None
@@ -115,25 +115,49 @@ class NewsSentimentService:
                 'api_token': self.marketaux_api_key,
                 'symbols': symbol,
                 'filter_entities': 'true',
+                'must_have_entities': 'true',  # Ensure articles mention the symbol
                 'language': 'en',
-                'limit': 10,  # Get last 10 articles
-                'published_after': (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')  # Last 24 hours in correct format
+                'limit': 25,  # Get more articles to choose from
+                'published_after': (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'),  # Last 30 days
+                'sort': 'entity_sentiment_score',  # Sort by sentiment relevance
+                'sort_order': 'desc'  # Most impactful first
             }
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, params=params, timeout=15) as response:
-                    if response.status != 200:
-                        logger.error(f"MarketAux API error {response.status} for {symbol}")
+                    response_text = await response.text()
+                    
+                    if response.status == 400:
+                        logger.error(f"MarketAux 400 Bad Request for {symbol}: {response_text}")
+                        return None
+                    elif response.status == 401:
+                        logger.error(f"MarketAux 401 Unauthorized - Check API key")
+                        return None
+                    elif response.status == 403:
+                        logger.error(f"MarketAux 403 Forbidden - Check plan permissions")
+                        return None
+                    elif response.status != 200:
+                        logger.error(f"MarketAux API error {response.status} for {symbol}: {response_text}")
                         return None
                     
-                    data = await response.json()
+                    try:
+                        data = json.loads(response_text)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Invalid JSON response for {symbol}: {e}")
+                        return None
                     
                     if not data.get('data'):
-                        logger.warning(f"No news data returned for {symbol}")
+                        logger.warning(f"No news data returned for {symbol} in last 30 days")
                         return None
                     
-                    logger.info(f"✅ Fetched {len(data['data'])} news articles for {symbol}")
-                    return {'articles': data['data']}
+                    articles = data['data']
+                    logger.info(f"✅ Fetched {len(articles)} news articles for {symbol}")
+                    
+                    # Rank articles by relevance and recency
+                    ranked_articles = self._rank_articles_by_importance(articles, symbol)
+                    
+                    logger.info(f"📊 Ranked top {len(ranked_articles)} most relevant articles for {symbol}")
+                    return {'articles': ranked_articles}
                     
         except asyncio.TimeoutError:
             logger.error(f"MarketAux API timeout for {symbol}")
@@ -142,25 +166,89 @@ class NewsSentimentService:
             logger.error(f"MarketAux API error for {symbol}: {e}")
             return None
     
+    def _rank_articles_by_importance(self, articles: List[Dict], symbol: str) -> List[Dict]:
+        """Rank articles by relevance, sentiment impact, and recency"""
+        
+        def calculate_importance_score(article: Dict) -> float:
+            """Calculate importance score for ranking articles"""
+            score = 0.0
+            
+            # 1. Recency score (0-30 points) - newer is better
+            try:
+                pub_date = datetime.fromisoformat(article.get('published_at', '').replace('Z', '+00:00'))
+                days_old = (datetime.now(pub_date.tzinfo) - pub_date).days
+                recency_score = max(0, 30 - days_old)  # Full points for today, decreases daily
+                score += recency_score
+            except:
+                score += 0  # No points if date parsing fails
+            
+            # 2. Entity sentiment score (0-25 points) - strong sentiment is important
+            entities = article.get('entities', [])
+            symbol_entities = [e for e in entities if e.get('symbol') == symbol]
+            if symbol_entities:
+                sentiment_score = abs(symbol_entities[0].get('sentiment_score', 0)) * 25
+                score += sentiment_score
+            
+            # 3. Entity match score (0-20 points) - how relevant is the mention
+            if symbol_entities:
+                match_score = symbol_entities[0].get('match_score', 0) * 20
+                score += match_score
+            
+            # 4. Title relevance (0-15 points) - symbol in title is more important
+            title = article.get('title', '').upper()
+            if symbol in title:
+                score += 15
+            elif any(word in title for word in [symbol.lower(), 'earnings', 'revenue', 'profit']):
+                score += 10
+            
+            # 5. Source credibility (0-10 points) - trusted sources get boost
+            source = article.get('source', '').lower()
+            trusted_sources = ['reuters', 'bloomberg', 'wsj', 'cnbc', 'marketwatch', 'yahoo', 'sec']
+            if any(trusted in source for trusted in trusted_sources):
+                score += 10
+            elif any(domain in source for domain in ['finance', 'business', 'market']):
+                score += 5
+            
+            return score
+        
+        # Calculate scores and sort
+        scored_articles = []
+        for article in articles:
+            importance_score = calculate_importance_score(article)
+            article['_importance_score'] = importance_score
+            scored_articles.append(article)
+        
+        # Sort by importance score (highest first) and return top 10
+        ranked_articles = sorted(scored_articles, key=lambda x: x['_importance_score'], reverse=True)[:10]
+        
+        # Log top articles for debugging
+        if ranked_articles:
+            logger.info(f"🔝 Top article for {symbol}: {ranked_articles[0].get('title', 'No title')[:100]} (score: {ranked_articles[0]['_importance_score']:.1f})")
+        
+        return ranked_articles
+    
     async def _analyze_sentiment_batch(self, symbol: str, articles: List[Dict]) -> Dict[str, Any]:
         """Analyze sentiment using GPT-4o-mini batch processing"""
         if not self.openai_service:
             return self._create_fallback_sentiment(symbol, articles)
         
         try:
-            # Prepare articles for analysis (limit to top 5 most recent)
-            recent_articles = sorted(articles, key=lambda x: x.get('published_at', ''), reverse=True)[:5]
+            # Use top 5 most important articles for analysis
+            top_articles = articles[:5]
             
-            # Create batch prompt
+            # Create batch prompt with ranked articles
             articles_text = "\n\n".join([
+                f"Article {i+1} (Importance Score: {article.get('_importance_score', 0):.1f}):\n"
                 f"Headline: {article.get('title', 'N/A')}\n"
-                f"Summary: {article.get('description', 'N/A')[:200]}...\n"
-                f"Published: {article.get('published_at', 'N/A')}"
-                for article in recent_articles
+                f"Summary: {article.get('description', 'N/A')[:300]}...\n"
+                f"Published: {article.get('published_at', 'N/A')}\n"
+                f"Source: {article.get('source', 'N/A')}"
+                for i, article in enumerate(top_articles)
             ])
             
             prompt = f"""
-            Analyze the following financial news articles for {symbol} and provide sentiment analysis:
+            Analyze the following ranked financial news articles for {symbol} and provide sentiment analysis.
+            These articles are ranked by importance, relevance, and recency:
 
             {articles_text}
 
@@ -169,16 +257,17 @@ class NewsSentimentService:
                 "sentiment": "bullish" | "bearish" | "neutral",
                 "impact_score": 0.1-1.0,
                 "confidence": 0.1-1.0,
-                "key_drivers": ["reason1", "reason2"],
-                "summary": "Brief explanation in 1-2 sentences"
+                "key_drivers": ["reason1", "reason2", "reason3"],
+                "summary": "Brief explanation in 1-2 sentences focusing on most important news"
             }}
 
             Guidelines:
-            - sentiment: bullish (positive), bearish (negative), neutral (mixed/unclear)
-            - impact_score: How much price movement expected (0.1=minor, 1.0=major)
-            - confidence: How reliable is this sentiment (0.1=low, 1.0=high)
-            - key_drivers: Main reasons for the sentiment (max 3)
-            - summary: Concise explanation for SMS response
+            - sentiment: bullish (positive outlook), bearish (negative outlook), neutral (mixed/unclear)
+            - impact_score: Expected price impact (0.1=minor, 0.5=moderate, 1.0=major market-moving news)
+            - confidence: How reliable is this sentiment (0.1=low, 1.0=high confidence)
+            - key_drivers: Main reasons driving the sentiment (prioritize recent/high-impact events)
+            - summary: Concise explanation focusing on the most important developments
+            - Weight more recent and higher-scored articles more heavily in your analysis
             """
             
             # Use GPT-4o-mini for cost efficiency
@@ -201,9 +290,11 @@ class NewsSentimentService:
                     'confidence': float(sentiment_data.get('confidence', 0.5)),
                     'key_drivers': sentiment_data.get('key_drivers', []),
                     'summary': sentiment_data.get('summary', 'Mixed market sentiment'),
-                    'article_count': len(recent_articles)
+                    'article_count': len(top_articles),
+                    'analysis_period': '30_days',
+                    'top_headline': top_articles[0].get('title', 'N/A') if top_articles else 'N/A'
                 },
-                'headlines': [article.get('title', 'N/A') for article in recent_articles[:3]],
+                'headlines': [article.get('title', 'N/A') for article in top_articles[:3]],
                 'source': 'marketaux_api',
                 'timestamp': datetime.now().isoformat(),
                 'analysis_mode': 'gpt4o_mini'
