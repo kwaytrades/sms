@@ -589,10 +589,9 @@ async def lifespan(app: FastAPI):
         if NewsSentimentService:
             try:
                 news_service = NewsSentimentService(
-                    marketaux_api_key=getattr(settings, 'marketaux_api_key', None),
-                    redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
-                    openai_service=openai_service
-                )
+    redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
+    openai_service=openai_service
+)
                 logger.info("✅ News Sentiment Service initialized")
             except Exception as e:
                 logger.error(f"❌ News Sentiment service failed: {e}")
@@ -603,11 +602,10 @@ async def lifespan(app: FastAPI):
             try:
                 eodhd_key = getattr(settings, 'eodhd_api_key', None)
                 if eodhd_key:
-                    fundamental_service = FundamentalAnalysisEngine(
-                        eodhd_api_key=eodhd_key,
-                        redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None,
-                        cache_ttl=3600 if db_service and hasattr(db_service, 'redis') else 604800
-                    )
+                   fundamental_service = FundamentalAnalysisEngine(
+    eodhd_api_key=eodhd_key,
+    redis_client=db_service.redis if db_service and hasattr(db_service, 'redis') else None
+)
                     
                     # Initialize Fundamental Analysis Tool
                     if FundamentalAnalysisTool:
