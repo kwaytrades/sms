@@ -1,4 +1,4 @@
-# services/llm_agent.py - ENHANCED HUMAN-LIKE VERSION
+# services/llm_agent.py - COMPLETE ENHANCED HUMAN-LIKE VERSION
 
 import json
 import asyncio
@@ -63,6 +63,7 @@ HUMAN CONVERSATION RULES:
 - "NVDA to the moon! 🚀🚀" = they're excited, want to celebrate/get validation
 - "ugh my portfolio is bleeding" = they're frustrated, need reassurance + analysis
 - "thoughts on META earnings?" = they want your opinion on upcoming catalyst
+- "is Silver etf a good pick?" = they want analysis of SLV, treat as analyze intent
 
 SYMBOL EXTRACTION - NATURAL LANGUAGE:
 - "google" → "GOOGL" (obvious)
@@ -70,7 +71,15 @@ SYMBOL EXTRACTION - NATURAL LANGUAGE:
 - "the fruit company" → "AAPL"
 - "that AI chip company" → "NVDA"
 - "zuck's thing" → "META"
+- "silver etf" → "SLV"
 - "my FAANG positions" → extract multiple if mentioned
+
+INTENT CLASSIFICATION:
+- If they mention a specific stock/ETF and want to know about it → "analyze" (NOT "general")
+- If they ask "is X a good pick/investment" → "analyze" 
+- If they want fundamentals specifically → "fundamental_analysis"
+- If they want portfolio info → "portfolio"
+- General chat without stock mentions → "general"
 
 EMOTIONAL CONTEXT DETECTION:
 - Detect: excited, worried, frustrated, curious, FOMO, celebrating, seeking validation
@@ -78,11 +87,11 @@ EMOTIONAL CONTEXT DETECTION:
 
 Return JSON:
 {{
-    "intent": "analyze|celebrate|worry_check|validation_seeking|fomo_check|earnings_play|general",
-    "symbols": ["AAPL"],
+    "intent": "analyze|celebrate|worry_check|validation_seeking|fomo_check|earnings_play|general|fundamental_analysis",
+    "symbols": ["SLV"],
     "emotional_state": "excited|worried|frustrated|curious|celebrating|neutral",
     "confidence_level": "high|medium|low", 
-    "human_subtext": "they want validation for their bullish thesis",
+    "human_subtext": "they want validation for their investment thesis",
     "requires_tools": ["technical_analysis", "news_sentiment"],
     "response_tone": "celebratory|reassuring|analytical|validating",
     "urgency": "low|medium|high"
@@ -92,6 +101,7 @@ Examples:
 - "TSLA fucking mooning! 🚀" → {{"intent": "celebrate", "emotional_state": "excited", "response_tone": "celebratory"}}
 - "shit should I sell my NVDA?" → {{"intent": "worry_check", "emotional_state": "worried", "response_tone": "reassuring"}}
 - "thoughts on AAPL earnings?" → {{"intent": "earnings_play", "emotional_state": "curious", "response_tone": "analytical"}}
+- "is Silver etf a good pick?" → {{"intent": "analyze", "symbols": ["SLV"], "emotional_state": "curious", "requires_tools": ["technical_analysis", "news_sentiment"]}}
 """
 
         try:
@@ -147,7 +157,7 @@ Examples:
                     cleaned_symbols.append(symbol.upper())
             intent_data["symbols"] = list(dict.fromkeys(cleaned_symbols))  # Remove duplicates
         
-        # Auto-determine required tools based on intent
+        # CRITICAL FIX: Auto-determine required tools based on intent AND symbols
         if intent_data["intent"] == "analyze" and intent_data["symbols"]:
             if "technical_analysis" not in intent_data["requires_tools"]:
                 intent_data["requires_tools"].append("technical_analysis")
@@ -171,6 +181,12 @@ Examples:
         if intent_data["intent"] == "portfolio":
             if "portfolio_check" not in intent_data["requires_tools"]:
                 intent_data["requires_tools"].append("portfolio_check")
+        
+        # CRITICAL FIX: If we have symbols but no tools, auto-add analysis tools
+        if intent_data["symbols"] and not intent_data["requires_tools"]:
+            intent_data["requires_tools"] = ["technical_analysis", "news_sentiment"]
+            if intent_data["intent"] == "general":
+                intent_data["intent"] = "analyze"  # Fix intent if we have symbols
         
         return intent_data
     
@@ -208,7 +224,7 @@ Examples:
         elif any(word in message_lower for word in ['find', 'screen', 'search', 'discover']):
             intent = "screener"
             required_tools = ["stock_screener"]
-        elif symbols:
+        elif symbols or any(word in message_lower for word in ['good pick', 'investment', 'buy', 'sell', 'analyze']):
             intent = "analyze"
             required_tools = ["technical_analysis", "news_sentiment"]
         else:
@@ -231,7 +247,7 @@ Examples:
             "is_greeting": any(word in msg_lower for word in ['hey', 'yo', 'sup', 'hi', 'hello']),
             "is_celebrating": any(word in msg_lower for word in ['moon', 'rocket', '🚀', 'lfg', 'holy', 'damn']),
             "is_worried": any(word in msg_lower for word in ['dump', 'sell', 'scared', 'worried', 'shit', 'fuck']),
-            "is_seeking_validation": message.count('?') > 0 and any(word in msg_lower for word in ['thoughts', 'think', 'should i']),
+            "is_seeking_validation": message.count('?') > 0 and any(word in msg_lower for word in ['thoughts', 'think', 'should i', 'good pick']),
             "has_fomo": any(word in msg_lower for word in ['fomo', 'missing out', 'too late', 'should i buy']),
             "energy_indicators": {
                 "high": message.count('!') + message.count('🚀') + len([w for w in msg_lower.split() if w.isupper()]),
@@ -301,12 +317,12 @@ RESPONSE TYPES BY EMOTION:
 - "yeah I'm seeing the same signals you are. Technical setup's pretty clean"
 
 **ANALYTICAL** (just want data):
-- "MSFT sitting at $420, RSI 52 so room to run. Earnings coming up tho, might see some chop"
+- "SLV sitting at $21.47, RSI 52 so room to run. Mixed news flow tho, might see some chop"
 
 STYLE MATCHING:
-- **Casual/High Energy**: "yooo TSLA's going MENTAL! 🚀 $245 breaking out hard, RSI at 68 tho might cool off"
-- **Professional**: "Tesla's performing well at $245, though RSI suggests we're approaching overbought territory"
-- **Anxious Beginner**: "don't worry, Tesla's doing good! Up to $245 today, that's solid growth for ya"
+- **Casual/High Energy**: "yooo SLV's going MENTAL! 🚀 $21.47 but overbought af, might cool off"
+- **Professional**: "Silver ETF performing well at $21.47, though RSI suggests we're approaching overbought territory"
+- **Anxious Beginner**: "don't worry, SLV's doing good! $21.47 today, that's solid movement for silver"
 
 SMS OPTIMIZATION:
 - Keep under 300 chars but pack maximum value
@@ -521,6 +537,110 @@ TYPICAL CONCERNS: {', '.join(context_memory.get('concerns_expressed', [])[:3]) i
         # Fallback: just truncate
         return response[:317] + "..."
     
+    def _clean_response(self, response: str) -> str:
+        """Clean LLM response artifacts that shouldn't go to users"""
+        
+        # Remove meta-instructions
+        patterns_to_remove = [
+            r"Certainly!.*?for the user:\s*",
+            r"Here's the.*?response.*?:\s*",
+            r"Based on.*?here's.*?:\s*",
+            r"Given.*?here's.*?:\s*",
+            r"I'll.*?response.*?:\s*",
+            r"Let me.*?response.*?:\s*",
+            r"Here's the tailored response.*?:\s*",
+            r".*?tailored response.*?:\s*",
+            r"Hey there!.*?\s*",
+            r"Hello!.*?\s*",
+            r"Hi!.*?\s*"
+        ]
+        
+        for pattern in patterns_to_remove:
+            response = re.sub(pattern, "", response, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Remove quotes around the entire response
+        if response.startswith('"') and response.endswith('"'):
+            response = response[1:-1]
+        
+        # Remove extra whitespace and newlines at start
+        response = response.strip()
+        
+        return response
+    
+    def _validate_response(self, response: str) -> str:
+        """Validate response doesn't contain artifacts"""
+        
+        # Check for common artifacts
+        artifacts = [
+            "here's the", "certainly", "based on", "given", 
+            "let me", "i'll provide", "tailored response", "hey there", "hello", "hi"
+        ]
+        
+        response_lower = response.lower()
+        if any(artifact in response_lower for artifact in artifacts):
+            logger.warning(f"Response contains artifacts: {response[:50]}...")
+            # Apply cleaning
+            response = self._clean_response(response)
+        
+        return response
+    
+    def _serialize_fundamental_data(self, fundamental_data: Dict) -> Dict:
+        """Convert FundamentalAnalysisResult objects to JSON-serializable format"""
+        serializable_data = {}
+        
+        for symbol, analysis_result in fundamental_data.items():
+            try:
+                if hasattr(analysis_result, 'symbol'):
+                    # This is a FundamentalAnalysisResult object
+                    serializable_data[symbol] = {
+                        "symbol": analysis_result.symbol,
+                        "overall_score": analysis_result.overall_score,
+                        "financial_health": analysis_result.financial_health.value if hasattr(analysis_result.financial_health, 'value') else str(analysis_result.financial_health),
+                        "current_price": analysis_result.current_price,
+                        "strength_areas": analysis_result.strength_areas,
+                        "concern_areas": analysis_result.concern_areas,
+                        "bull_case": analysis_result.bull_case,
+                        "bear_case": analysis_result.bear_case,
+                        "data_completeness": analysis_result.data_completeness
+                    }
+                    
+                    # Add ratios if available
+                    if analysis_result.ratios:
+                        serializable_data[symbol]["ratios"] = {
+                            "pe_ratio": getattr(analysis_result.ratios, 'pe_ratio', None),
+                            "roe": getattr(analysis_result.ratios, 'roe', None),
+                            "debt_to_equity": getattr(analysis_result.ratios, 'debt_to_equity', None),
+                            "current_ratio": getattr(analysis_result.ratios, 'current_ratio', None)
+                        }
+                    
+                    # Add growth metrics if available
+                    if analysis_result.growth:
+                        serializable_data[symbol]["growth"] = {
+                            "revenue_growth_1y": getattr(analysis_result.growth, 'revenue_growth_1y', None),
+                            "earnings_growth_1y": getattr(analysis_result.growth, 'earnings_growth_1y', None)
+                        }
+                else:
+                    # Already serializable
+                    serializable_data[symbol] = analysis_result
+            except Exception as e:
+                # Fallback: just include basic info
+                serializable_data[symbol] = {"error": f"Serialization failed: {str(e)}"}
+        
+        return serializable_data
+    
+    def _check_if_first_message_of_day(self, user_phone: str) -> bool:
+        """Check if this is the first message from this user today"""
+        if not user_phone or not self.personality_engine:
+            return False
+            
+        profile = self.personality_engine.get_user_profile(user_phone)
+        if not profile:
+            return True
+            
+        # Simple check - if user has fewer than 3 total messages, consider it early interaction
+        total_messages = profile.get('learning_data', {}).get('total_messages', 0)
+        return total_messages < 3
+    
     def _generate_human_fallback(self, intent_data: Dict, tool_results: Dict, user_profile: Dict, conversation_context: Dict) -> str:
         """Generate human-like fallback when AI fails"""
         
@@ -611,16 +731,16 @@ RESPOND LIKE A REAL HUMAN:
 RESPONSE EXAMPLES BY THEIR STYLE:
 
 **Casual/Excited Friend**:
-"yooo TSLA absolutely sending it! 🚀 $245 breaking out with conviction, RSI at 68 tho so might need a breather soon. you holding or taking profits?"
+"yooo SLV absolutely sending it! 🚀 $21.47 but overbought af, RSI at 72. might need a breather soon. you holding or taking profits?"
 
 **Chill/Casual Buddy**:
-"AAPL looking solid rn, sitting at $185 with room to run. RSI only at 55 so not overbought yet. earnings coming up tho, might see some chop before then"
+"SLV looking solid rn, sitting at $21.47 with room to run. RSI only at 55 so not overbought yet. mixed news tho, might see some chop"
 
 **Professional Friend**:
-"Microsoft's performing well at $420, technically sound with RSI at 52 indicating room for continued upside. However, approaching quarterly earnings on the 24th may introduce volatility."
+"Silver ETF performing well at $21.47, technically sound with RSI at 55 indicating room for continued upside. However, mixed sentiment may introduce volatility."
 
 **Worried/Supportive**:
-"hey don't panic on NVDA - yeah it's down to $800 but that's just healthy pullback after the run. fundamentals still rock solid, just market being market"
+"hey don't panic on SLV - yeah it's volatile but that's just silver being silver. fundamentals still solid, just market being market"
 
 Generate their perfect response (under 320 chars):"""
 
