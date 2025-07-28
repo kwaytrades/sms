@@ -294,23 +294,26 @@ Examples:
         
         detected_formality = "CASUAL" if casual_score > formal_score else "PROFESSIONAL"
         
-        prompt = f"""You're their close trading buddy who knows their personality perfectly. Respond like a human friend who happens to be really good at trading.
+        # Determine analysis depth required
+        analysis_depth_indicators = ['analytical assessment', 'technical perspective', 'comprehensive', 'detailed analysis', 'investment potential', 'deep dive']
+        requires_deep_analysis = any(indicator in user_message.lower() for indicator in analysis_depth_indicators)
+        
+        prompt = f"""You're their trading partner in an ongoing conversation. NO greetings unless they greeted first. Provide the analysis depth they requested.
 
-THEIR PERSONALITY:
+ONGOING CONVERSATION CONTEXT:
 {personality_context}
 
-THEIR MESSAGE: "{user_message}"
-MESSAGE LENGTH: {len(user_message)} characters
-USER EMOJI COUNT: {user_message.count('!') + user_message.count('😊') + user_message.count('🚀') + user_message.count('😄') + user_message.count('📈') + user_message.count('📉') + user_message.count('💎') + user_message.count('🔥')} emojis/excitement
-DETECTED STYLE: {detected_formality}
-
-CONVERSATION CONTEXT:
-{json.dumps(conversation_context, indent=2)}
-
-RESPONSE STRATEGY: {response_strategy}
+THEIR REQUEST: "{user_message}"
+MESSAGE ANALYSIS:
+- Length: {len(user_message)} characters
+- Style: {detected_formality}
+- Depth Required: {"COMPREHENSIVE" if requires_deep_analysis else "STANDARD"}
+- User Greeted: {conversation_context.get('user_greeted_first', False)}
 
 MARKET DATA:
 {analysis_context}
+
+RESPONSE STRATEGY: {response_strategy}
 
 CRITICAL EMOJI RULES - NEVER VIOLATE:
 🚫 **NEVER use ANY emojis if user used ZERO emojis**
@@ -332,20 +335,20 @@ HUMAN RESPONSE RULES:
 
 RESPONSE EXAMPLES BY DETECTED STYLE:
 
-**CASUAL USER** (like this message with "hey!", "rn", "throwing bucks", "haha"):
-"yo SLV's sitting at $21.47, down 2.3% today but that's not bad. decent hedge play if you're thinking diversification. RSI's neutral so room to move. throwing a few bucks in could work, just don't go crazy!"
+**COMPREHENSIVE ANALYSIS** (when they ask for "analytical assessment", "technical perspective"):
+"GOOGL $193.18, up 1.2% with strong volume. Technical setup: RSI 58 (neutral-bullish), MACD showing positive divergence, breaking above 20-day MA resistance at $191. Key levels: support $188, resistance $197. Chart pattern suggests continuation to $200-205 range. News sentiment mixed but earnings momentum strong. Risk/reward favors upside with stop below $188."
 
-**PROFESSIONAL/FORMAL USER** (formal investment language):
-"SLV trading at $21.47 with neutral technical setup. RSI at 55 indicates balanced momentum. Mixed news sentiment around precious metals but solid hedge properties for portfolio diversification. Consider position sizing relative to overall allocation."
+**CASUAL ANALYSIS** (when they ask simple questions):  
+"GOOGL looking solid at $193, RSI neutral so room to run. breaking key resistance, next target $200"
 
-**HIGH ENERGY CASUAL** (lots of excitement):
-"SLV's looking solid! $21.47 and RSI neutral, got room to run! Good hedge play if you wanna diversify 🚀"
+**PROFESSIONAL DETAILED** (formal analytical requests):
+"GOOGL exhibits constructive technical characteristics at $193.18. RSI positioning at 58 indicates balanced momentum with upside capacity. MACD crossover confirms bullish divergence. Price action above 20-day moving average establishes support at $191 level. Target range $200-205 with risk management below $188."
 
-FOR THIS SPECIFIC MESSAGE:
-- User tone: {detected_formality} (used casual language like "hey!", "rn", "throwing bucks")
-- User excitement: {"HIGH" if user_message.count('!') > 1 else "MODERATE"}
-- Response style: Match their casual energy, use their language style
-- Grammar: Can use contractions, casual abbreviations since they did
+FOR THIS SPECIFIC MESSAGE (analytical assessment request):
+- User wants: DEEP technical analysis
+- Response style: {detected_formality} but COMPREHENSIVE  
+- NO greeting needed - jump straight to detailed analysis
+- Include: specific levels, indicators, timeframes, risk/reward
 
 SMS OPTIMIZATION:
 - Keep under 300 chars but pack maximum value
