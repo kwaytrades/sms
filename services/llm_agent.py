@@ -1,4 +1,4 @@
-# services/llm_agent.py - COMPLETE VERSION with ONLY symbol processing changed
+# services/llm_agent.py - COMPLETE VERSION with News Sentiment Integration
 
 import json
 import asyncio
@@ -8,6 +8,7 @@ from loguru import logger
 import openai
 from datetime import datetime
 from openai import AsyncOpenAI
+from services.news_sentiment import NewsSentimentService  # ADD THIS IMPORT
 
 class TradingAgent:
     """Hybrid LLM Agent for intelligent trading bot interactions - COMPLETE VERSION"""
@@ -73,6 +74,7 @@ Examples:
 - "find me cheap tech stocks" → {{"intent": "screener", "parameters": {{"sector": "tech"}}, "requires_tools": ["stock_screener"]}}
 - "how's my portfolio?" → {{"intent": "portfolio", "requires_tools": ["portfolio_check"]}}
 - "AAPL calls looking good" → {{"intent": "analyze", "symbols": ["AAPL"], "confidence": 0.95}}
+- "any news on tesla?" → {{"intent": "news", "symbols": ["TSLA"], "requires_tools": ["news_sentiment"]}}
 """
 
         try:
@@ -138,6 +140,12 @@ Examples:
         if intent_data["intent"] == "analyze" and intent_data["symbols"]:
             if "technical_analysis" not in intent_data["requires_tools"]:
                 intent_data["requires_tools"].append("technical_analysis")
+            if "news_sentiment" not in intent_data["requires_tools"]:
+                intent_data["requires_tools"].append("news_sentiment")
+        
+        if intent_data["intent"] == "news" and intent_data["symbols"]:
+            if "news_sentiment" not in intent_data["requires_tools"]:
+                intent_data["requires_tools"].append("news_sentiment")
         
         if intent_data["intent"] == "portfolio":
             if "portfolio_check" not in intent_data["requires_tools"]:
@@ -163,20 +171,27 @@ Examples:
                 symbols.append(symbol)
         
         # Basic intent detection
-        if any(word in message_lower for word in ['portfolio', 'positions', 'holdings']):
+        if any(word in message_lower for word in ['news', 'headlines', 'sentiment']):
+            intent = "news"
+            required_tools = ["news_sentiment"]
+        elif any(word in message_lower for word in ['portfolio', 'positions', 'holdings']):
             intent = "portfolio"
+            required_tools = ["portfolio_check"]
         elif any(word in message_lower for word in ['find', 'screen', 'search', 'discover']):
             intent = "screener"
+            required_tools = ["stock_screener"]
         elif symbols:
             intent = "analyze"
+            required_tools = ["technical_analysis", "news_sentiment"]
         else:
             intent = "general"
+            required_tools = []
         
         return {
             "intent": intent,
             "symbols": symbols,
             "confidence": 0.4,  # Lower confidence for fallback
-            "requires_tools": ["technical_analysis"] if symbols else [],
+            "requires_tools": required_tools,
             "fallback": True
         }
     
@@ -264,6 +279,14 @@ Technical Analysis Results:
 {json.dumps(ta_data, indent=2)[:500]}...
 """
             
+            if "news_sentiment" in tool_results:
+                news_data = tool_results["news_sentiment"]
+                if news_data:
+                    tool_context += f"""
+News Sentiment Results:
+{json.dumps(news_data, indent=2)[:500]}...
+"""
+            
             if "portfolio_check" in tool_results:
                 portfolio_data = tool_results["portfolio_check"]
                 if portfolio_data:
@@ -274,6 +297,9 @@ Portfolio Data:
             
             if "market_data_unavailable" in tool_results:
                 tool_context += "\nMARKET DATA UNAVAILABLE - Acknowledge this honestly to the user."
+            
+            if "news_sentiment_unavailable" in tool_results:
+                tool_context += "\nNEWS SENTIMENT UNAVAILABLE - Acknowledge this honestly to the user."
         
         prompt = f"""You are a hyper-personalized SMS trading assistant. Write ONLY the direct SMS message that will be sent to the user.
 
@@ -302,11 +328,12 @@ RESPONSE GUIDELINES:
 5. Use appropriate trading terminology for their experience level
 6. Include relevant emojis if user uses them
 7. Be conversational and engaging
+8. When both TA and news sentiment are available, integrate them naturally
 
 Examples of style matching:
-- Casual/High-energy: "TSLA's going wild! 🚀 $245 and climbing, RSI at 68 tho - might need a breather soon. You thinking calls?"
-- Professional: "TSLA trading at $245.50, up 3.2%. RSI indicates slight overbought conditions at 68. Technical outlook remains bullish."
-- Beginner-friendly: "Tesla's doing well today! It's up to $245. The RSI (momentum indicator) shows it might slow down soon, but the trend looks good overall."
+- Casual/High-energy: "TSLA's going wild! 🚀 $245 and climbing, RSI at 68 tho - might need a breather soon. News looking bullish on new factory announcement!"
+- Professional: "TSLA trading at $245.50, up 3.2%. RSI indicates slight overbought conditions at 68. News sentiment bullish on expansion plans. Technical outlook remains positive."
+- Beginner-friendly: "Tesla's doing well today! It's up to $245. The RSI (momentum indicator) shows it might slow down soon, but the trend looks good. Recent news is positive too!"
 
 Write the direct SMS message now:"""
 
@@ -353,10 +380,17 @@ Write the direct SMS message now:"""
         
         if intent_data["intent"] == "analyze" and intent_data["symbols"]:
             symbol = intent_data["symbols"][0]
-            if tool_results.get("technical_analysis"):
+            if tool_results.get("technical_analysis") or tool_results.get("news_sentiment"):
                 return f"{symbol} analysis ready! Check the data above."
             else:
                 return f"Sorry, can't get {symbol} data right now. Try again in a moment!"
+        
+        elif intent_data["intent"] == "news" and intent_data["symbols"]:
+            symbol = intent_data["symbols"][0]
+            if tool_results.get("news_sentiment"):
+                return f"{symbol} news sentiment ready!"
+            else:
+                return f"Sorry, can't get {symbol} news right now. Try again in a moment!"
         
         elif intent_data["intent"] == "help":
             return "I'm your trading assistant! Ask about stocks, portfolio, or market analysis. 📈"
@@ -370,10 +404,11 @@ Write the direct SMS message now:"""
 class ToolExecutor:
     """Handles execution of various trading tools based on intent"""
     
-    def __init__(self, ta_service, portfolio_service=None, screener_service=None):
+    def __init__(self, ta_service, portfolio_service=None, screener_service=None, news_service=None):
         self.ta_service = ta_service
         self.portfolio_service = portfolio_service
         self.screener_service = screener_service
+        self.news_service = news_service  # ADD NEWS SERVICE
     
     async def execute_tools(self, intent_data: Dict, user_phone: str) -> Dict[str, Any]:
         """Execute required tools based on parsed intent"""
@@ -386,6 +421,9 @@ class ToolExecutor:
         
         if "technical_analysis" in required_tools and intent_data.get("symbols"):
             tasks.append(self._execute_technical_analysis(intent_data["symbols"]))
+        
+        if "news_sentiment" in required_tools and intent_data.get("symbols"):  # ADD NEWS SENTIMENT
+            tasks.append(self._execute_news_sentiment(intent_data["symbols"]))
         
         if "portfolio_check" in required_tools:
             tasks.append(self._execute_portfolio_check(user_phone))
@@ -424,6 +462,24 @@ class ToolExecutor:
         except Exception as e:
             logger.error(f"Technical analysis failed: {e}")
             return {"market_data_unavailable": True}
+    
+    async def _execute_news_sentiment(self, symbols: List[str]) -> Dict:
+        """Execute news sentiment analysis for symbols"""
+        try:
+            if not self.news_service:
+                return {"news_sentiment_unavailable": True}
+            
+            sentiment_results = {}
+            for symbol in symbols[:3]:  # Limit to 3 symbols max
+                sentiment_data = await self.news_service.get_sentiment(symbol.upper(), mode="cached")
+                if sentiment_data and not sentiment_data.get('error'):
+                    sentiment_results[symbol.upper()] = sentiment_data
+            
+            return {"news_sentiment": sentiment_results} if sentiment_results else {"news_sentiment_unavailable": True}
+            
+        except Exception as e:
+            logger.error(f"News sentiment execution failed: {e}")
+            return {"news_sentiment_error": str(e)}
     
     async def _execute_portfolio_check(self, user_phone: str) -> Dict:
         """Execute portfolio check for user"""
@@ -697,9 +753,9 @@ Generate their perfect personalized response:"""
 class ComprehensiveMessageProcessor:
     """Complete message processing with all components integrated"""
     
-    def __init__(self, openai_client, ta_service, personality_engine):
+    def __init__(self, openai_client, ta_service, personality_engine, news_service=None):
         self.trading_agent = TradingAgent(openai_client, personality_engine)
-        self.tool_executor = ToolExecutor(ta_service)
+        self.tool_executor = ToolExecutor(ta_service, news_service=news_service)  # ADD NEWS SERVICE
         self.symbol_extractor = AdvancedSymbolExtractor()
         self.response_generator = PersonalityAwareResponseGenerator(openai_client)
         self.personality_engine = personality_engine
