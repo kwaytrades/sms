@@ -279,6 +279,15 @@ Examples:
         # Determine response strategy based on emotional state and context
         response_strategy = self._determine_response_strategy(intent_data, conversation_context, user_profile)
         
+        # Determine formality level from message content
+        casual_indicators = ['hey', 'yo', 'sup', 'haha', 'lol', 'rn', 'gonna', 'wanna', 'throwing', 'bucks', 'few bucks', 'thinking about']
+        formal_indicators = ['financial investment', 'analysis', 'recommendation', 'portfolio allocation', 'could you', 'would you']
+        
+        casual_score = sum(1 for indicator in casual_indicators if indicator in user_message.lower())
+        formal_score = sum(1 for indicator in formal_indicators if indicator in user_message.lower())
+        
+        detected_formality = "CASUAL" if casual_score > formal_score else "PROFESSIONAL"
+        
         prompt = f"""You're their close trading buddy who knows their personality perfectly. Respond like a human friend who happens to be really good at trading.
 
 THEIR PERSONALITY:
@@ -286,7 +295,8 @@ THEIR PERSONALITY:
 
 THEIR MESSAGE: "{user_message}"
 MESSAGE LENGTH: {len(user_message)} characters
-USER EMOJI COUNT: {user_message.count('😊') + user_message.count('🚀') + user_message.count('😄') + user_message.count('📈') + user_message.count('📉') + user_message.count('💎') + user_message.count('🔥')} emojis
+USER EMOJI COUNT: {user_message.count('!') + user_message.count('😊') + user_message.count('🚀') + user_message.count('😄') + user_message.count('📈') + user_message.count('📉') + user_message.count('💎') + user_message.count('🔥')} emojis/excitement
+DETECTED STYLE: {detected_formality}
 
 CONVERSATION CONTEXT:
 {json.dumps(conversation_context, indent=2)}
@@ -316,20 +326,20 @@ HUMAN RESPONSE RULES:
 
 RESPONSE EXAMPLES BY DETECTED STYLE:
 
-**PROFESSIONAL/FORMAL USER** (like this message):
+**CASUAL USER** (like this message with "hey!", "rn", "throwing bucks", "haha"):
+"yo SLV's sitting at $21.47, down 2.3% today but that's not bad. decent hedge play if you're thinking diversification. RSI's neutral so room to move. throwing a few bucks in could work, just don't go crazy!"
+
+**PROFESSIONAL/FORMAL USER** (formal investment language):
 "SLV trading at $21.47 with neutral technical setup. RSI at 55 indicates balanced momentum. Mixed news sentiment around precious metals but solid hedge properties for portfolio diversification. Consider position sizing relative to overall allocation."
 
-**CASUAL USER** (example):  
-"SLV looking decent at $21.47, RSI's neutral so room to move. News is mixed tho but it's a solid hedge. What's your target allocation?"
-
-**HIGH ENERGY USER** (example):
-"SLV's moving! $21.47 and RSI neutral, plenty of room to run! Good hedge play 🚀"
+**HIGH ENERGY CASUAL** (lots of excitement):
+"SLV's looking solid! $21.47 and RSI neutral, got room to run! Good hedge play if you wanna diversify 🚀"
 
 FOR THIS SPECIFIC MESSAGE:
-- User tone: PROFESSIONAL/FORMAL (used "financial investment")
-- User emojis: ZERO (so you use ZERO)  
-- Response style: Professional analysis, no slang, no greetings
-- Grammar: Proper English, no contractions
+- User tone: {detected_formality} (used casual language like "hey!", "rn", "throwing bucks")
+- User excitement: {"HIGH" if user_message.count('!') > 1 else "MODERATE"}
+- Response style: Match their casual energy, use their language style
+- Grammar: Can use contractions, casual abbreviations since they did
 
 SMS OPTIMIZATION:
 - Keep under 300 chars but pack maximum value
