@@ -1,8 +1,7 @@
-# services/analysis/fundamental_analysis.py
+# services/fundamental_analysis.py
 """
-SMS Trading Bot - Fundamental Analysis Engine
+SMS Trading Bot - Fundamental Analysis Engine (FIXED VERSION)
 Comprehensive financial statement analysis and valuation metrics system
-Integrates with existing ToolExecutor pattern for seamless orchestration
 """
 
 import asyncio
@@ -89,30 +88,44 @@ class ValuationAnalysis:
 
 @dataclass
 class FundamentalAnalysisResult:
-    """Complete fundamental analysis result"""
+    """Complete fundamental analysis result - FIXED PARAMETER ORDER"""
+    # Required fields first
     symbol: str
     analysis_timestamp: datetime
     current_price: float
     
-    # Core Analysis Components
-    ratios: FinancialRatios
-    growth: GrowthMetrics
-    valuation: ValuationAnalysis
+    # Core Analysis Components (all with defaults)
+    ratios: FinancialRatios = None
+    growth: GrowthMetrics = None
+    valuation: ValuationAnalysis = None
     
-    # Summary Assessments
-    financial_health: FinancialHealth
-    overall_score: float  # 0-100 composite score
-    strength_areas: List[str]
-    concern_areas: List[str]
+    # Summary Assessments (all with defaults)
+    financial_health: FinancialHealth = FinancialHealth.FAIR
+    overall_score: float = 50.0  # 0-100 composite score
+    strength_areas: List[str] = None
+    concern_areas: List[str] = None
     
-    # Investment Thesis
-    bull_case: str
-    bear_case: str
+    # Investment Thesis (all with defaults)
+    bull_case: str = "Analysis pending"
+    bear_case: str = "Analysis pending"
     analyst_consensus: Optional[str] = None
     
-    # Data Quality
-    data_completeness: float  # Percentage of available data
+    # Data Quality (all with defaults)
+    data_completeness: float = 0.0  # MOVED TO HAVE DEFAULT VALUE
     last_quarter_date: Optional[str] = None
+    
+    def __post_init__(self):
+        """Initialize default values after creation"""
+        if self.ratios is None:
+            self.ratios = FinancialRatios()
+        if self.growth is None:
+            self.growth = GrowthMetrics()
+        if self.valuation is None:
+            self.valuation = ValuationAnalysis()
+        if self.strength_areas is None:
+            self.strength_areas = []
+        if self.concern_areas is None:
+            self.concern_areas = []
     
     def to_sms_summary(self, user_style: str = "casual") -> str:
         """Convert to SMS-friendly format based on user personality"""
@@ -179,14 +192,18 @@ class FundamentalAnalysisResult:
             summary += f"Fair Value: ${self.valuation.intrinsic_value_estimate:.2f} ({discount:+.1f}%)"
         
         return summary
+    
+    def _standard_summary(self) -> str:
+        """Standard summary"""
+        return self._casual_summary()  # Use casual as default
 
 class FundamentalAnalysisEngine:
     """
     Advanced Fundamental Analysis Engine
-    Integrates with existing SMS bot architecture and ToolExecutor pattern
+    Integrates with existing SMS bot architecture
     """
     
-    def __init__(self, eodhd_api_key: str, redis_client: redis.Redis):
+    def __init__(self, eodhd_api_key: str, redis_client=None):
         self.eodhd_api_key = eodhd_api_key
         self.redis_client = redis_client
         self.base_url = "https://eodhd.com/api"
@@ -208,7 +225,7 @@ class FundamentalAnalysisEngine:
     
     async def analyze(self, symbol: str, analysis_depth: AnalysisDepth = AnalysisDepth.STANDARD) -> FundamentalAnalysisResult:
         """
-        Main analysis method - follows ToolExecutor integration pattern
+        Main analysis method
         """
         try:
             logger.info(f"Starting fundamental analysis for {symbol} at {analysis_depth.value} depth")
@@ -259,9 +276,6 @@ class FundamentalAnalysisEngine:
                 symbol=symbol,
                 analysis_timestamp=datetime.now(),
                 current_price=0.0,
-                ratios=FinancialRatios(),
-                growth=GrowthMetrics(),
-                valuation=ValuationAnalysis(),
                 financial_health=FinancialHealth.FAIR,
                 overall_score=50.0,
                 strength_areas=["Data unavailable"],
@@ -510,8 +524,7 @@ class FundamentalAnalysisEngine:
         
         return ValuationAnalysis(
             intrinsic_value_estimate=intrinsic_value,
-            discount_to_fair_value=discount_to_fair_value,
-            dividend_yield=self._safe_float(ratios.pe_ratio) if hasattr(ratios, 'dividend_yield') else None
+            discount_to_fair_value=discount_to_fair_value
         )
     
     def _assess_financial_health(self, ratios: FinancialRatios, growth: GrowthMetrics) -> FinancialHealth:
@@ -805,11 +818,26 @@ class FundamentalAnalysisEngine:
     async def _get_cached_result(self, cache_key: str) -> Optional[FundamentalAnalysisResult]:
         """Retrieve cached analysis result"""
         try:
+            if not self.redis_client:
+                return None
+                
             cached_data = self.redis_client.get(cache_key)
             if cached_data:
                 data = json.loads(cached_data)
-                # Reconstruct the result object
-                return FundamentalAnalysisResult(**data)
+                # Reconstruct the result object (simplified for this fix)
+                return FundamentalAnalysisResult(
+                    symbol=data.get("symbol", ""),
+                    analysis_timestamp=datetime.fromisoformat(data.get("analysis_timestamp", datetime.now().isoformat())),
+                    current_price=data.get("current_price", 0.0),
+                    financial_health=FinancialHealth(data.get("financial_health", "fair")),
+                    overall_score=data.get("overall_score", 50.0),
+                    strength_areas=data.get("strength_areas", []),
+                    concern_areas=data.get("concern_areas", []),
+                    bull_case=data.get("bull_case", ""),
+                    bear_case=data.get("bear_case", ""),
+                    data_completeness=data.get("data_completeness", 0.0),
+                    last_quarter_date=data.get("last_quarter_date")
+                )
             return None
         except Exception as e:
             logger.warning(f"Failed to retrieve cached result: {str(e)}")
@@ -818,14 +846,14 @@ class FundamentalAnalysisEngine:
     async def _cache_result(self, cache_key: str, result: FundamentalAnalysisResult):
         """Cache analysis result"""
         try:
+            if not self.redis_client:
+                return
+                
             # Convert result to dict for caching
             result_dict = {
                 "symbol": result.symbol,
                 "analysis_timestamp": result.analysis_timestamp.isoformat(),
                 "current_price": result.current_price,
-                "ratios": result.ratios.__dict__,
-                "growth": result.growth.__dict__,
-                "valuation": result.valuation.__dict__,
                 "financial_health": result.financial_health.value,
                 "overall_score": result.overall_score,
                 "strength_areas": result.strength_areas,
@@ -851,7 +879,7 @@ class FundamentalAnalysisTool:
     Provides the standard interface expected by the SMS bot system
     """
     
-    def __init__(self, eodhd_api_key: str, redis_client: redis.Redis):
+    def __init__(self, eodhd_api_key: str, redis_client=None):
         self.engine = FundamentalAnalysisEngine(eodhd_api_key, redis_client)
     
     async def execute(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
@@ -913,13 +941,15 @@ async def example_usage():
     """Example of how to use the Fundamental Analysis Engine"""
     import os
     
-    # Initialize Redis client (adjust connection as needed)
-    redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+    # Mock Redis client for demo
+    class MockRedis:
+        def get(self, key): return None
+        def setex(self, key, ttl, value): pass
     
     # Initialize the engine
     engine = FundamentalAnalysisEngine(
-        eodhd_api_key=os.getenv("EODHD_API_KEY"),
-        redis_client=redis_client
+        eodhd_api_key=os.getenv("EODHD_API_KEY", "demo"),
+        redis_client=MockRedis()
     )
     
     # Analyze a stock
