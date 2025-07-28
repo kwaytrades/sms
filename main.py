@@ -607,7 +607,7 @@ async def lifespan(app: FastAPI):
                 tool_executor = ToolExecutor(
                     ta_service=ta_service,
                     portfolio_service=None,  # Optional for now
-                    screener_service=None    # Optional for now
+                    screener_service=None,    # Optional for now
                     news_service=news_service  # Add this
                 )
                 logger.info("✅ Tool executor initialized")
