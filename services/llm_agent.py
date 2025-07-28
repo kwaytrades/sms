@@ -1,4 +1,4 @@
-# services/llm_agent.py - COMPLETE VERSION with News Sentiment Integration
+# services/llm_agent.py - COMPLETE VERSION with News Sentiment + Fundamental Analysis Integration
 
 import json
 import asyncio
@@ -8,7 +8,6 @@ from loguru import logger
 import openai
 from datetime import datetime
 from openai import AsyncOpenAI
-from services.news_sentiment import NewsSentimentService  # ADD THIS IMPORT
 
 class TradingAgent:
     """Hybrid LLM Agent for intelligent trading bot interactions - COMPLETE VERSION"""
@@ -52,28 +51,36 @@ SYMBOL EXTRACTION RULES:
 - Ignore casual words like "yo", "what's", "doing", "thinking", "about"
 - Only extract actual stock tickers or company names
 
+TOOL SELECTION RULES:
+- When users ask about "fundamentals", "financials", "valuation", "earnings", "pe ratio", "ratios" → include "fundamental_analysis"
+- When users ask for "complete", "full", "comprehensive", "everything" → include ALL tools
+- When users ask about "news", "sentiment", "headlines" → include "news_sentiment"
+- Default stock analysis → include "technical_analysis" and "news_sentiment"
+
 Return ONLY valid JSON in this exact format:
 {{
-    "intent": "analyze|price|compare|screener|portfolio|news|help|general",
+    "intent": "analyze|price|compare|screener|portfolio|news|help|general|fundamental_analysis|comprehensive_analysis",
     "symbols": ["AAPL", "TSLA"],
     "parameters": {{
         "timeframe": "1d|1w|1m|3m",
-        "analysis_type": "technical|fundamental|sentiment",
+        "analysis_type": "technical|fundamental|sentiment|comprehensive",
         "risk_level": "conservative|moderate|aggressive",
         "context": "buying_calls|swing_trading|long_term|day_trading"
     }},
-    "requires_tools": ["technical_analysis", "portfolio_check", "stock_screener", "news_sentiment"],
+    "requires_tools": ["technical_analysis", "portfolio_check", "stock_screener", "news_sentiment", "fundamental_analysis"],
     "confidence": 0.95,
     "user_emotion": "excited|cautious|frustrated|curious|neutral",
     "urgency": "low|medium|high"
 }}
 
 Examples:
-- "yo what's google doing?" → {{"intent": "analyze", "symbols": ["GOOGL"], "confidence": 0.9}}
-- "how's tesla and apple?" → {{"intent": "analyze", "symbols": ["TSLA", "AAPL"], "confidence": 0.9}}
+- "yo what's google doing?" → {{"intent": "analyze", "symbols": ["GOOGL"], "requires_tools": ["technical_analysis", "news_sentiment"], "confidence": 0.9}}
+- "how's tesla and apple?" → {{"intent": "analyze", "symbols": ["TSLA", "AAPL"], "requires_tools": ["technical_analysis", "news_sentiment"], "confidence": 0.9}}
+- "NVDA fundamentals?" → {{"intent": "fundamental_analysis", "symbols": ["NVDA"], "requires_tools": ["fundamental_analysis"], "confidence": 0.95}}
+- "complete analysis of AAPL" → {{"intent": "comprehensive_analysis", "symbols": ["AAPL"], "requires_tools": ["technical_analysis", "news_sentiment", "fundamental_analysis"], "confidence": 0.9}}
 - "find me cheap tech stocks" → {{"intent": "screener", "parameters": {{"sector": "tech"}}, "requires_tools": ["stock_screener"]}}
 - "how's my portfolio?" → {{"intent": "portfolio", "requires_tools": ["portfolio_check"]}}
-- "AAPL calls looking good" → {{"intent": "analyze", "symbols": ["AAPL"], "confidence": 0.95}}
+- "AAPL calls looking good" → {{"intent": "analyze", "symbols": ["AAPL"], "requires_tools": ["technical_analysis", "news_sentiment"], "confidence": 0.95}}
 - "any news on tesla?" → {{"intent": "news", "symbols": ["TSLA"], "requires_tools": ["news_sentiment"]}}
 """
 
@@ -143,6 +150,16 @@ Examples:
             if "news_sentiment" not in intent_data["requires_tools"]:
                 intent_data["requires_tools"].append("news_sentiment")
         
+        if intent_data["intent"] == "fundamental_analysis" and intent_data["symbols"]:
+            if "fundamental_analysis" not in intent_data["requires_tools"]:
+                intent_data["requires_tools"].append("fundamental_analysis")
+        
+        if intent_data["intent"] == "comprehensive_analysis" and intent_data["symbols"]:
+            required_tools = ["technical_analysis", "news_sentiment", "fundamental_analysis"]
+            for tool in required_tools:
+                if tool not in intent_data["requires_tools"]:
+                    intent_data["requires_tools"].append(tool)
+        
         if intent_data["intent"] == "news" and intent_data["symbols"]:
             if "news_sentiment" not in intent_data["requires_tools"]:
                 intent_data["requires_tools"].append("news_sentiment")
@@ -170,8 +187,14 @@ Examples:
             if company in message_lower:
                 symbols.append(symbol)
         
-        # Basic intent detection
-        if any(word in message_lower for word in ['news', 'headlines', 'sentiment']):
+        # Enhanced intent detection with fundamental analysis support
+        if any(word in message_lower for word in ['fundamental', 'fundamentals', 'valuation', 'ratios', 'pe ratio', 'financial', 'earnings', 'revenue']):
+            intent = "fundamental_analysis"
+            required_tools = ["fundamental_analysis"]
+        elif any(word in message_lower for word in ['complete', 'full', 'comprehensive', 'detailed', 'deep dive']):
+            intent = "comprehensive_analysis"
+            required_tools = ["technical_analysis", "news_sentiment", "fundamental_analysis"]
+        elif any(word in message_lower for word in ['news', 'headlines', 'sentiment']):
             intent = "news"
             required_tools = ["news_sentiment"]
         elif any(word in message_lower for word in ['portfolio', 'positions', 'holdings']):
@@ -287,6 +310,14 @@ News Sentiment Results:
 {json.dumps(news_data, indent=2)[:500]}...
 """
             
+            if "fundamental_analysis" in tool_results:
+                fundamental_data = tool_results["fundamental_analysis"]
+                if fundamental_data:
+                    tool_context += f"""
+Fundamental Analysis Results:
+{json.dumps(fundamental_data, indent=2)[:500]}...
+"""
+            
             if "portfolio_check" in tool_results:
                 portfolio_data = tool_results["portfolio_check"]
                 if portfolio_data:
@@ -300,6 +331,9 @@ Portfolio Data:
             
             if "news_sentiment_unavailable" in tool_results:
                 tool_context += "\nNEWS SENTIMENT UNAVAILABLE - Acknowledge this honestly to the user."
+            
+            if "fundamental_analysis_unavailable" in tool_results:
+                tool_context += "\nFUNDAMENTAL ANALYSIS UNAVAILABLE - Acknowledge this honestly to the user."
         
         prompt = f"""You are a hyper-personalized SMS trading assistant. Write ONLY the direct SMS message that will be sent to the user.
 
@@ -328,12 +362,13 @@ RESPONSE GUIDELINES:
 5. Use appropriate trading terminology for their experience level
 6. Include relevant emojis if user uses them
 7. Be conversational and engaging
-8. When both TA and news sentiment are available, integrate them naturally
+8. When multiple analysis types are available, integrate them naturally
 
 Examples of style matching:
 - Casual/High-energy: "TSLA's going wild! 🚀 $245 and climbing, RSI at 68 tho - might need a breather soon. News looking bullish on new factory announcement!"
 - Professional: "TSLA trading at $245.50, up 3.2%. RSI indicates slight overbought conditions at 68. News sentiment bullish on expansion plans. Technical outlook remains positive."
 - Beginner-friendly: "Tesla's doing well today! It's up to $245. The RSI (momentum indicator) shows it might slow down soon, but the trend looks good. Recent news is positive too!"
+- Fundamental Focus: "AAPL fundamentals: Strong with 95/100 score. P/E at 23.4 (reasonable), ROE 28% (excellent). Revenue up 8.5% YoY. Health: Good. Ready for growth! 💪"
 
 Write the direct SMS message now:"""
 
@@ -380,10 +415,17 @@ Write the direct SMS message now:"""
         
         if intent_data["intent"] == "analyze" and intent_data["symbols"]:
             symbol = intent_data["symbols"][0]
-            if tool_results.get("technical_analysis") or tool_results.get("news_sentiment"):
+            if tool_results.get("technical_analysis") or tool_results.get("news_sentiment") or tool_results.get("fundamental_analysis"):
                 return f"{symbol} analysis ready! Check the data above."
             else:
                 return f"Sorry, can't get {symbol} data right now. Try again in a moment!"
+        
+        elif intent_data["intent"] == "fundamental_analysis" and intent_data["symbols"]:
+            symbol = intent_data["symbols"][0]
+            if tool_results.get("fundamental_analysis"):
+                return f"{symbol} fundamental analysis ready!"
+            else:
+                return f"Sorry, can't get {symbol} fundamental data right now. Try again in a moment!"
         
         elif intent_data["intent"] == "news" and intent_data["symbols"]:
             symbol = intent_data["symbols"][0]
@@ -401,17 +443,15 @@ Write the direct SMS message now:"""
 
 # ===== Tool Execution Engine =====
 
-# ===== Updated ToolExecutor Class for services/llm_agent.py =====
-
 class ToolExecutor:
-    """Handles execution of various trading tools based on intent"""
+    """Handles execution of various trading tools based on intent - COMPLETE WITH ALL ANALYSIS ENGINES"""
     
     def __init__(self, ta_service, portfolio_service, screener_service=None, news_service=None, fundamental_tool=None):
         self.ta_service = ta_service
         self.portfolio_service = portfolio_service
         self.screener_service = screener_service
-        self.news_service = news_service  # ADD THIS
-        self.fundamental_tool = fundamental_tool  # ADD THIS
+        self.news_service = news_service  # ADD NEWS SERVICE
+        self.fundamental_tool = fundamental_tool  # ADD FUNDAMENTAL TOOL
     
     async def execute_tools(self, intent_data: Dict, user_phone: str) -> Dict[str, Any]:
         """Execute required tools based on parsed intent"""
@@ -527,27 +567,13 @@ class ToolExecutor:
             if not self.fundamental_tool:
                 return {"fundamental_analysis_unavailable": True}
             
-            # Get user profile to determine analysis depth
-            user_profile = {}
-            if hasattr(self, 'personality_engine') and self.personality_engine:
-                user_profile = self.personality_engine.get_user_profile(user_phone)
-            
-            # Determine analysis depth based on user plan
-            plan_type = user_profile.get("plan_type", "free")
-            if plan_type == "pro":
-                depth = "comprehensive"
-            elif plan_type == "paid":
-                depth = "standard"
-            else:
-                depth = "basic"
-            
-            # Determine user communication style
-            comm_style = user_profile.get("communication_style", {})
-            user_style = comm_style.get("formality", "casual")
-            
             fundamental_results = {}
             for symbol in symbols[:2]:  # Limit to 2 symbols max (fundamental analysis is more expensive)
                 try:
+                    # Determine analysis depth based on user (can be enhanced with user profile later)
+                    depth = "standard"  # Can be basic, standard, comprehensive
+                    user_style = "casual"  # Can be casual, professional, technical
+                    
                     fund_result = await self.fundamental_tool.execute({
                         "symbol": symbol.upper(),
                         "depth": depth,
@@ -811,9 +837,9 @@ Generate their perfect personalized response:"""
 class ComprehensiveMessageProcessor:
     """Complete message processing with all components integrated"""
     
-    def __init__(self, openai_client, ta_service, personality_engine, news_service=None):
+    def __init__(self, openai_client, ta_service, personality_engine, news_service=None, fundamental_tool=None):
         self.trading_agent = TradingAgent(openai_client, personality_engine)
-        self.tool_executor = ToolExecutor(ta_service, news_service=news_service)  # ADD NEWS SERVICE
+        self.tool_executor = ToolExecutor(ta_service, None, None, news_service, fundamental_tool)  # ALL SERVICES
         self.symbol_extractor = AdvancedSymbolExtractor()
         self.response_generator = PersonalityAwareResponseGenerator(openai_client)
         self.personality_engine = personality_engine
