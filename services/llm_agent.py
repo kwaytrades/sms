@@ -401,14 +401,17 @@ Write the direct SMS message now:"""
 
 # ===== Tool Execution Engine =====
 
+# ===== Updated ToolExecutor Class for services/llm_agent.py =====
+
 class ToolExecutor:
     """Handles execution of various trading tools based on intent"""
     
-    def __init__(self, ta_service, portfolio_service=None, screener_service=None, news_service=None):
+    def __init__(self, ta_service, portfolio_service, screener_service=None, news_service=None, fundamental_tool=None):
         self.ta_service = ta_service
         self.portfolio_service = portfolio_service
         self.screener_service = screener_service
-        self.news_service = news_service  # ADD NEWS SERVICE
+        self.news_service = news_service  # ADD THIS
+        self.fundamental_tool = fundamental_tool  # ADD THIS
     
     async def execute_tools(self, intent_data: Dict, user_phone: str) -> Dict[str, Any]:
         """Execute required tools based on parsed intent"""
@@ -422,14 +425,19 @@ class ToolExecutor:
         if "technical_analysis" in required_tools and intent_data.get("symbols"):
             tasks.append(self._execute_technical_analysis(intent_data["symbols"]))
         
-        if "news_sentiment" in required_tools and intent_data.get("symbols"):  # ADD NEWS SENTIMENT
-            tasks.append(self._execute_news_sentiment(intent_data["symbols"]))
-        
         if "portfolio_check" in required_tools:
             tasks.append(self._execute_portfolio_check(user_phone))
         
         if "stock_screener" in required_tools:
             tasks.append(self._execute_stock_screener(intent_data.get("parameters", {})))
+        
+        # ADD NEWS SENTIMENT ANALYSIS
+        if "news_sentiment" in required_tools and intent_data.get("symbols"):
+            tasks.append(self._execute_news_sentiment(intent_data["symbols"]))
+        
+        # ADD FUNDAMENTAL ANALYSIS
+        if "fundamental_analysis" in required_tools and intent_data.get("symbols"):
+            tasks.append(self._execute_fundamental_analysis(intent_data["symbols"], user_phone))
         
         # Wait for all tools to complete
         if tasks:
@@ -449,7 +457,7 @@ class ToolExecutor:
         """Execute technical analysis for symbols"""
         try:
             if not self.ta_service:
-                return {"market_data_unavailable": True}
+                return {"technical_analysis_unavailable": True}
             
             ta_results = {}
             for symbol in symbols[:3]:  # Limit to 3 symbols max
@@ -457,29 +465,11 @@ class ToolExecutor:
                 if ta_data:
                     ta_results[symbol] = ta_data
             
-            return {"technical_analysis": ta_results} if ta_results else {"market_data_unavailable": True}
+            return {"technical_analysis": ta_results} if ta_results else {"technical_analysis_unavailable": True}
             
         except Exception as e:
             logger.error(f"Technical analysis failed: {e}")
-            return {"market_data_unavailable": True}
-    
-    async def _execute_news_sentiment(self, symbols: List[str]) -> Dict:
-        """Execute news sentiment analysis for symbols"""
-        try:
-            if not self.news_service:
-                return {"news_sentiment_unavailable": True}
-            
-            sentiment_results = {}
-            for symbol in symbols[:3]:  # Limit to 3 symbols max
-                sentiment_data = await self.news_service.get_sentiment(symbol.upper(), mode="cached")
-                if sentiment_data and not sentiment_data.get('error'):
-                    sentiment_results[symbol.upper()] = sentiment_data
-            
-            return {"news_sentiment": sentiment_results} if sentiment_results else {"news_sentiment_unavailable": True}
-            
-        except Exception as e:
-            logger.error(f"News sentiment execution failed: {e}")
-            return {"news_sentiment_error": str(e)}
+            return {"technical_analysis_unavailable": True}
     
     async def _execute_portfolio_check(self, user_phone: str) -> Dict:
         """Execute portfolio check for user"""
@@ -488,25 +478,93 @@ class ToolExecutor:
                 return {"portfolio_unavailable": True}
             
             portfolio_data = await self.portfolio_service.get_user_portfolio(user_phone)
-            return {"portfolio_check": portfolio_data}
+            return {"portfolio": portfolio_data} if portfolio_data else {"portfolio_unavailable": True}
             
         except Exception as e:
             logger.error(f"Portfolio check failed: {e}")
             return {"portfolio_unavailable": True}
     
     async def _execute_stock_screener(self, parameters: Dict) -> Dict:
-        """Execute stock screener with parameters"""
+        """Execute stock screening with parameters"""
         try:
             if not self.screener_service:
                 return {"screener_unavailable": True}
             
-            screener_results = await self.screener_service.screen_stocks(parameters)
-            return {"stock_screener": screener_results}
+            screening_results = await self.screener_service.screen_stocks(parameters)
+            return {"screener_results": screening_results} if screening_results else {"screener_unavailable": True}
             
         except Exception as e:
-            logger.error(f"Stock screener failed: {e}")
+            logger.error(f"Stock screening failed: {e}")
             return {"screener_unavailable": True}
-
+    
+    # ADD NEW METHOD FOR NEWS SENTIMENT
+    async def _execute_news_sentiment(self, symbols: List[str]) -> Dict:
+        """Execute news sentiment analysis for symbols"""
+        try:
+            if not self.news_service:
+                return {"news_sentiment_unavailable": True}
+            
+            news_results = {}
+            for symbol in symbols[:3]:  # Limit to 3 symbols max
+                try:
+                    news_data = await self.news_service.get_sentiment(symbol.upper())
+                    if news_data and not news_data.get('error'):
+                        news_results[symbol] = news_data
+                except Exception as e:
+                    logger.warning(f"News sentiment failed for {symbol}: {e}")
+                    continue
+            
+            return {"news_sentiment": news_results} if news_results else {"news_sentiment_unavailable": True}
+            
+        except Exception as e:
+            logger.error(f"News sentiment analysis failed: {e}")
+            return {"news_sentiment_unavailable": True}
+    
+    # ADD NEW METHOD FOR FUNDAMENTAL ANALYSIS
+    async def _execute_fundamental_analysis(self, symbols: List[str], user_phone: str) -> Dict:
+        """Execute fundamental analysis for symbols"""
+        try:
+            if not self.fundamental_tool:
+                return {"fundamental_analysis_unavailable": True}
+            
+            # Get user profile to determine analysis depth
+            user_profile = {}
+            if hasattr(self, 'personality_engine') and self.personality_engine:
+                user_profile = self.personality_engine.get_user_profile(user_phone)
+            
+            # Determine analysis depth based on user plan
+            plan_type = user_profile.get("plan_type", "free")
+            if plan_type == "pro":
+                depth = "comprehensive"
+            elif plan_type == "paid":
+                depth = "standard"
+            else:
+                depth = "basic"
+            
+            # Determine user communication style
+            comm_style = user_profile.get("communication_style", {})
+            user_style = comm_style.get("formality", "casual")
+            
+            fundamental_results = {}
+            for symbol in symbols[:2]:  # Limit to 2 symbols max (fundamental analysis is more expensive)
+                try:
+                    fund_result = await self.fundamental_tool.execute({
+                        "symbol": symbol.upper(),
+                        "depth": depth,
+                        "user_style": user_style
+                    })
+                    
+                    if fund_result.get("success"):
+                        fundamental_results[symbol] = fund_result["analysis_result"]
+                except Exception as e:
+                    logger.warning(f"Fundamental analysis failed for {symbol}: {e}")
+                    continue
+            
+            return {"fundamental_analysis": fundamental_results} if fundamental_results else {"fundamental_analysis_unavailable": True}
+            
+        except Exception as e:
+            logger.error(f"Fundamental analysis failed: {e}")
+            return {"fundamental_analysis_unavailable": True}
 
 # ===== ADVANCED SYMBOL EXTRACTION =====
 
