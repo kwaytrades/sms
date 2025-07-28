@@ -1847,3 +1847,45 @@ async def test_full_analysis_flow(symbol: str):
             status_code=500,
             content={"error": str(e)}
         )
+
+# ===== ADD THIS TO YOUR main.py =====
+
+@app.get("/webhook/sms")
+async def sms_webhook_get():
+    """Handle GET requests to SMS webhook (for verification)"""
+    return {"status": "SMS webhook is active", "method": "GET", "message": "Use POST to send SMS"}
+
+@app.post("/webhook/sms")
+async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Handle incoming SMS messages - EXISTING CODE"""
+    try:
+        form_data = await request.form()
+        from_number = form_data.get('From')
+        message_body = form_data.get('Body', '').strip()
+        
+        if not from_number or not message_body:
+            return PlainTextResponse("Missing required fields", status_code=400)
+        
+        store_conversation(from_number, message_body)
+        
+        # Process with hybrid agent system
+        bot_response = await process_sms_with_hybrid_agent(message_body, from_number)
+        
+        store_conversation(from_number, message_body, bot_response)
+        
+        # Background processing
+        if message_handler:
+            background_tasks.add_task(
+                message_handler.process_incoming_message,
+                from_number,
+                message_body
+            )
+        
+        return PlainTextResponse(
+            '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
+            media_type="application/xml"
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ SMS webhook error: {e}")
+        return PlainTextResponse("Internal error", status_code=500)
