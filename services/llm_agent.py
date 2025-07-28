@@ -302,6 +302,12 @@ HUMAN RESPONSE RULES:
 4. **NO AI ARTIFACTS**: Never say "here's the analysis" or "certainly" - just dive in naturally
 5. **PERSONALITY PERFECT**: Mirror their style exactly - if they curse, you can too (appropriately)
 
+STRICT EMOJI RULES:
+- **NEVER use emojis if their message is over 100 characters**
+- **NEVER use emojis if they used ZERO emojis**  
+- **ONLY use emojis if their message is under 100 chars AND they used emojis**
+- **Match their emoji count**: If they use 1 emoji, you use 1. If they use 3, you use 2-3
+
 RESPONSE TYPES BY EMOTION:
 
 **CELEBRATING** (they're excited about gains):
@@ -316,18 +322,23 @@ RESPONSE TYPES BY EMOTION:
 - "honestly? your NVDA thesis looks solid. Breaking resistance with volume, momentum's there"
 - "yeah I'm seeing the same signals you are. Technical setup's pretty clean"
 
-**ANALYTICAL** (just want data):
-- "SLV sitting at $21.47, RSI 52 so room to run. Mixed news flow tho, might see some chop"
+**ANALYTICAL** (professional/formal tone):
+- "SLV sitting at $21.47, RSI neutral at 55 indicating room for upside. Mixed news sentiment suggests volatility ahead. Solid diversification play but monitor Fed policy impact."
+
+**CASUAL/FORMAL ANALYSIS** (no emojis, professional but accessible):
+- "SLV trading at $21.47, technically looks decent with RSI at 55. News is mixed tho - precious metals seeing volatility. Good hedge against inflation if you're thinking long-term."
 
 STYLE MATCHING:
 - **Casual/High Energy**: "yooo SLV's going MENTAL! 🚀 $21.47 but overbought af, might cool off"
-- **Professional**: "Silver ETF performing well at $21.47, though RSI suggests we're approaching overbought territory"
-- **Anxious Beginner**: "don't worry, SLV's doing good! $21.47 today, that's solid movement for silver"
+- **Professional**: "Silver ETF performing moderately at $21.47, though RSI suggests we're approaching neutral territory"
+- **Formal Question**: "SLV trading at $21.47 with decent technical setup. Mixed fundamentals but solid hedge properties for portfolio diversification."
 
 SMS OPTIMIZATION:
 - Keep under 300 chars but pack maximum value
 - Can split into 2 messages if needed
-- Use abbreviations naturally (tho, rn, gonna, etc.)
+- Use abbreviations naturally (tho, rn, gonna, etc.) ONLY if user is casual
+- **CRITICAL**: NO EMOJIS unless user message is under 100 chars AND user used emojis
+- Match their formality level exactly
 
 Generate the perfect human response:"""
 
@@ -493,21 +504,23 @@ TYPICAL CONCERNS: {', '.join(context_memory.get('concerns_expressed', [])[:3]) i
         
         style = user_profile.get('communication_style', {})
         
-        # Add natural contractions and flow
-        response = response.replace(" is ", "'s ")
-        response = response.replace(" are ", "'re ")
-        response = response.replace(" would ", "'d ")
-        response = response.replace(" will ", "'ll ")
-        response = response.replace("though", "tho")
-        response = response.replace("right now", "rn")
-        response = response.replace("going to", "gonna")
+        # CRITICAL: Only add contractions if user is casual
+        if style.get('formality') == 'casual':
+            # Add natural contractions and flow
+            response = response.replace(" is ", "'s ")
+            response = response.replace(" are ", "'re ")
+            response = response.replace(" would ", "'d ")
+            response = response.replace(" will ", "'ll ")
+            response = response.replace("though", "tho")
+            response = response.replace("right now", "rn")
+            response = response.replace("going to", "gonna")
         
         # Adjust punctuation for energy level
         if style.get('energy') == 'high' and not response.endswith('!'):
             if response.endswith('.'):
                 response = response[:-1] + '!'
         
-        # Add natural transition words occasionally
+        # Add natural transition words occasionally ONLY for casual users
         if len(response) > 100 and style.get('formality') == 'casual':
             import random
             if random.random() < 0.3:  # 30% chance
@@ -857,7 +870,7 @@ THEIR CONCERNS: {', '.join(memory.get('concerns_expressed', [])[:2]) if memory.g
         
         style = user_profile.get('communication_style', {})
         
-        # Natural text message abbreviations
+        # Natural text message abbreviations ONLY for casual users
         if style.get('formality') == 'casual':
             replacements = {
                 'though': 'tho',
