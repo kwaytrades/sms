@@ -550,7 +550,6 @@ async def lifespan(app: FastAPI):
     
     logger.info("🚀 Starting SMS Trading Bot with Hybrid LLM Agent + Fundamental Analysis...")
     
-    try:
         # Initialize Database Service
           db_service = DatabaseService()
         try:
