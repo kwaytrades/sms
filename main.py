@@ -543,7 +543,7 @@ news_service = None
 fundamental_service = None  # Fundamental analysis engine
 fundamental_tool = None     # Fundamental analysis tool
 
-    @asynccontextmanager
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown"""
     global db_service, openai_service, twilio_service, message_handler, ta_service, trading_agent, tool_executor, news_service, fundamental_service, fundamental_tool
