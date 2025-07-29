@@ -1,4 +1,57 @@
-async def get_stock_data_with_fallback(self, symbol: str, force_refresh: bool = False) -> Dict[str, Any]:
+# services/backgroundjob/data_pipeline.py
+import asyncio
+import aiohttp
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
+import json
+from motor.motor_asyncio import AsyncIOMotorClient
+import redis.asyncio as aioredis
+import schedule
+import time
+from threading import Thread
+
+logger = logging.getLogger(__name__)
+
+class BackgroundDataPipeline:
+    """Background job system for daily stock data refresh and weekly cleanup"""
+    
+    def __init__(self, mongodb_url: str, redis_url: str, eodhd_api_key: str, ta_service_url: str):
+        self.mongodb_url = mongodb_url
+        self.redis_url = redis_url
+        self.eodhd_api_key = eodhd_api_key
+        self.ta_service_url = ta_service_url
+        
+        # Database connections
+        self.mongo_client = None
+        self.db = None
+        self.redis_client = None
+        
+        # Stock universe - ensure this method exists
+        self.stock_universe = self._build_stock_universe()
+        
+        # Global crypto markets access
+        self.crypto_universe = self._build_crypto_universe()
+        
+        # Combined universe for total tracking
+        self.total_universe_size = len(self.stock_universe) + len(self.crypto_universe)
+        
+        # Job status tracking
+        self.job_status = {
+            "last_daily_run": None,
+            "last_weekly_cleanup": None,
+            "daily_job_running": False,
+            "cleanup_job_running": False,
+            "total_stocks_cached": 0,
+            "last_error": None,
+            "stocks_processed": {
+                "basic_data": 0,
+                "technical_data": 0,
+                "fundamental_data": 0
+            }
+        }
+    
+    async def get_stock_data_with_fallback(self, symbol: str, force_refresh: bool = False) -> Dict[str, Any]:
         """Get stock data with fallback API call if not in universe"""
         try:
             symbol = symbol.upper()
@@ -48,7 +101,7 @@ async def get_stock_data_with_fallback(self, symbol: str, force_refresh: bool = 
                 "data_source": "error"
             }
     
-async def _get_cached_stock_data(self, symbol: str) -> Optional[Dict]:
+    async def _get_cached_stock_data(self, symbol: str) -> Optional[Dict]:
         """Get cached stock data from Redis/MongoDB"""
         try:
             # Try Redis first (fastest)
@@ -404,56 +457,8 @@ async def _get_cached_stock_data(self, symbol: str) -> Optional[Dict]:
             return []
         except Exception as e:
             logger.error(f"❌ Error getting pending additions: {e}")
-            return []# services/backgroundjob/data_pipeline.py
-import asyncio
-import aiohttp
-import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
-import json
-from motor.motor_asyncio import AsyncIOMotorClient
-import redis.asyncio as aioredis
-import schedule
-import time
-from threading import Thread
+            return []
 
-logger = logging.getLogger(__name__)
-
-class BackgroundDataPipeline:
-    """Background job system for daily stock data refresh and weekly cleanup"""
-    
-    def __init__(self, mongodb_url: str, redis_url: str, eodhd_api_key: str, ta_service_url: str):
-        self.mongodb_url = mongodb_url
-        self.redis_url = redis_url
-        self.eodhd_api_key = eodhd_api_key
-        self.ta_service_url = ta_service_url
-        
-        # Database connections
-        self.mongo_client = None
-        self.db = None
-        self.redis_client = None
-        
-        # Global crypto markets access
-        self.crypto_universe = self._build_crypto_universe()
-        
-        # Combined universe for total tracking
-        self.total_universe_size = len(self.stock_universe) + len(self.crypto_universe)
-        
-        # Job status tracking
-        self.job_status = {
-            "last_daily_run": None,
-            "last_weekly_cleanup": None,
-            "daily_job_running": False,
-            "cleanup_job_running": False,
-            "total_stocks_cached": 0,
-            "last_error": None,
-            "stocks_processed": {
-                "basic_data": 0,
-                "technical_data": 0,
-                "fundamental_data": 0
-            }
-        }
-    
     async def initialize(self):
         """Initialize database connections"""
         try:
