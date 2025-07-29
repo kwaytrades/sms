@@ -1,4 +1,4 @@
-# services/llm_agent.py - CLEANED VERSION (Fixed Syntax)
+# services/llm_agent.py - FINAL COMPREHENSIVE ORCHESTRATOR AGENT
 
 import json
 import asyncio
@@ -9,27 +9,38 @@ import openai
 from datetime import datetime
 from openai import AsyncOpenAI
 
-# ===== COMPREHENSIVE ORCHESTRATOR =====
-
 class ComprehensiveOrchestrator:
-    """Advanced orchestrator that analyzes intent, selects engines, and creates structured instructions"""
+    """
+    Final comprehensive orchestrator that analyzes intent, selects engines, 
+    gathers context from cache, and creates structured instructions for response agent
+    """
     
     def __init__(self, openai_client, personality_engine, cache_service=None):
         self.openai_client = openai_client
         self.personality_engine = personality_engine
-        self.cache_service = cache_service
+        self.cache_service = cache_service  # Redis/cache service for fast context retrieval
         
     async def orchestrate(self, user_message: str, user_phone: str) -> Dict[str, Any]:
-        """Main orchestration method"""
+        """
+        Main orchestration method that returns structured JSON instructions
         
-        # Step 1: Gather user context from cache
+        Returns:
+        {
+            "intent_analysis": {...},
+            "engines_to_call": [...],
+            "user_context": {...},
+            "prompt_instructions": "Clean instruction for response LLM",
+            "chat_context": {...},
+            "original_message": "...",
+            "response_instructions": {...}
+        }
+        """
+        
+        # Step 1: Gather user context from cache (fast)
         user_context = await self._gather_user_context_from_cache(user_phone)
         
         # Step 2: Analyze intent with context
         intent_analysis = await self._analyze_intent_with_context(user_message, user_context)
-        
-        # Pass original message context to engine selection  
-        intent_analysis["original_message"] = user_message
         
         # Step 3: Determine engines to call based on intent
         engines_to_call = self._determine_engines(intent_analysis, user_context)
@@ -40,8 +51,10 @@ class ComprehensiveOrchestrator:
         # Step 5: Format chat history/context for response LLM
         chat_context = self._format_chat_context(user_context, user_message)
         
-        # Step 6: Create detailed response instructions
-        response_instructions = self._create_response_instructions(intent_analysis, user_context, user_message)
+        # Step 6: Create detailed response instructions (for internal use)
+        response_instructions = self._create_response_instructions(
+            intent_analysis, user_context, user_message
+        )
         
         # Step 7: Package everything for response agent
         orchestration_result = {
@@ -61,7 +74,7 @@ class ComprehensiveOrchestrator:
         return orchestration_result
     
     async def _gather_user_context_from_cache(self, user_phone: str) -> Dict[str, Any]:
-        """Gather comprehensive user context from cache"""
+        """Gather comprehensive user context from cache for maximum speed"""
         
         context = {
             "user_profile": {},
@@ -73,7 +86,7 @@ class ComprehensiveOrchestrator:
             "session_data": {}
         }
         
-        # Get user profile from personality engine
+        # Get user profile from personality engine (in-memory, fast)
         if self.personality_engine:
             profile = self.personality_engine.get_user_profile(user_phone)
             
@@ -94,66 +107,91 @@ class ComprehensiveOrchestrator:
                 "common_symbols": profile.get("trading_personality", {}).get("common_symbols", [])
             }
             
-            # Get recent symbols from personality engine
+            # Get recent symbols from personality engine context memory
             context_memory = profile.get("context_memory", {})
             context["recent_symbols"] = context_memory.get("last_discussed_stocks", [])[:5]
         
-        # Get recent conversation history from cache
+        # Get recent conversation history from cache (ultra-fast)
         if self.cache_service:
             try:
+                # Fast cache lookup for recent messages
                 cache_key = f"recent_messages:{user_phone}"
                 recent_messages = await self.cache_service.get_list(cache_key, limit=3)
                 context["conversation_history"] = recent_messages or []
                 
+                # Get additional recent symbols from cache
                 symbols_key = f"recent_symbols:{user_phone}"
                 cached_symbols = await self.cache_service.get_list(symbols_key, limit=5)
                 if cached_symbols:
+                    # Merge with personality engine symbols, remove duplicates
                     all_symbols = context["recent_symbols"] + cached_symbols
                     context["recent_symbols"] = list(dict.fromkeys(all_symbols))[:5]
                 
+                # Get today's session data
                 session_key = f"user_session:{user_phone}"
                 session_data = await self.cache_service.get(session_key)
                 context["session_data"] = session_data or {}
                 
             except Exception as e:
                 logger.warning(f"Failed to get cache data: {e}")
+                # Graceful degradation - continue without cache data
         
         return context
     
     async def _analyze_intent_with_context(self, user_message: str, user_context: Dict) -> Dict[str, Any]:
         """Analyze user intent with full context awareness"""
         
+        # Build context for LLM
         context_summary = self._build_context_summary(user_context)
         
-        orchestrator_prompt = f"""You are an expert trading assistant orchestrator. Analyze the user's message and context.
+        orchestrator_prompt = f"""You are an expert trading assistant orchestrator. Analyze the user's message and context to determine their intent and needs.
 
 USER CONTEXT:
 {context_summary}
 
 USER MESSAGE: "{user_message}"
 
-Return detailed intent analysis as JSON:
+Analyze this message and return detailed intent analysis as JSON:
 
 {{
-    "primary_intent": "analyze|screener|portfolio|help|general",
-    "emotional_state": "excited|worried|frustrated|curious|neutral",
-    "symbols_mentioned": ["AAPL"],
+    "primary_intent": "analyze|screener|portfolio|help|general|celebrate|worry_check|validation_seeking",
+    "emotional_state": "excited|worried|frustrated|curious|celebrating|neutral|anxious",
+    "symbols_mentioned": ["AAPL", "TSLA"],
     "urgency_level": "immediate|research|casual_inquiry",
     "complexity_required": "quick_check|detailed_analysis|comprehensive_research",
-    "confidence_score": 0.85
+    "user_subtext": "what they really want beyond the surface request",
+    "conversation_continuity": "new_topic|continuing_discussion|follow_up_question",
+    "confidence_score": 0.85,
+    "requires_greeting": true|false,
+    "market_timing_relevant": true|false
 }}
 
-INTENT RULES:
-- "analyze" = wants analysis of stocks
-- "screener" = wants to find stocks
-- "portfolio" = asking about holdings
-- "help" = asking how to use system
-- "general" = casual conversation
+INTENT CLASSIFICATION RULES:
+- "analyze" = wants analysis of specific stocks/symbols
+- "screener" = wants to find/discover stocks based on criteria  
+- "portfolio" = asking about their holdings/positions
+- "celebrate" = sharing wins, excited about gains
+- "worry_check" = concerned about losses/positions
+- "validation_seeking" = wants confirmation of their thesis
+- "help" = asking how to use the system
+- "general" = casual conversation, no specific trading request
 
-SYMBOL EXTRACTION:
-- Extract tickers: AAPL, TSLA, MSFT
-- Map companies: "apple" → "AAPL", "tesla" → "TSLA"
-- Extract ALL symbols mentioned"""
+SYMBOL EXTRACTION RULES:
+- Extract tickers: AAPL, TSLA, MSFT, etc.
+- Map company names: "apple" → "AAPL", "tesla" → "TSLA", "google" → "GOOGL"
+- Handle ETFs: "silver etf" → "SLV", "spy" → "SPY"
+- Extract ALL symbols mentioned, not just first one
+
+EMOTIONAL STATE DETECTION:
+- "excited" = 🚀, "moon", "LFG", multiple exclamation marks
+- "worried" = "should I sell", "dump", "concerned", "scared"
+- "frustrated" = "wtf", "ugh", "bleeding", negative language
+- "celebrating" = "killing it", gains mentions, success language
+
+URGENCY ASSESSMENT:
+- "immediate" = "now", "today", "urgent", "quick"
+- "research" = "thinking about", "considering", detailed questions
+- "casual_inquiry" = general interest, no time pressure"""
 
         try:
             response = await self.openai_client.chat.completions.create(
@@ -165,7 +203,10 @@ SYMBOL EXTRACTION:
             )
             
             intent_analysis = json.loads(response.choices[0].message.content)
+            
+            # Validate and enhance intent analysis
             intent_analysis = self._validate_intent_analysis(intent_analysis, user_message)
+            
             return intent_analysis
             
         except Exception as e:
@@ -182,46 +223,50 @@ SYMBOL EXTRACTION:
         emotional_state = intent_analysis.get("emotional_state", "neutral")
         recent_symbols = user_context.get("recent_symbols", [])
         
-        # Smart engine selection logic
+        # Smart engine selection logic based on intent
         if primary_intent == "analyze":
             if symbols:
                 # Specific symbols mentioned
                 engines.append({
                     "engine": "technical_analysis",
-                    "symbols": symbols[:3],
+                    "symbols": symbols[:3],  # Limit to 3 symbols
                     "priority": "high"
                 })
                 
-                if complexity in ["detailed_analysis", "comprehensive_research"]:
+                # Add news sentiment for comprehensive analysis or emotional states
+                if complexity in ["detailed_analysis", "comprehensive_research"] or emotional_state in ["worried", "excited"]:
                     engines.append({
                         "engine": "news_sentiment", 
                         "symbols": symbols[:3],
                         "priority": "medium"
                     })
                 
+                # Add fundamental analysis for comprehensive research only
                 if complexity == "comprehensive_research":
                     engines.append({
                         "engine": "fundamental_analysis",
-                        "symbols": symbols[:2],
+                        "symbols": symbols[:2],  # Limit fundamentals to 2 symbols
                         "priority": "low"
                     })
             else:
-                # Use conversation context
+                # 🧠 SMART: Use conversation context to infer symbols
                 contextual_symbols = recent_symbols[:2] if recent_symbols else ["SPY"]
                 
+                # Log what we're doing for debugging
                 if recent_symbols:
                     logger.info(f"🧠 Using conversation context: {contextual_symbols} (from recent: {recent_symbols})")
                 else:
                     logger.info(f"🔍 No context symbols, using market overview: {contextual_symbols}")
                 
+                # Use contextual symbols for analysis
                 engines.append({
                     "engine": "technical_analysis",
                     "symbols": contextual_symbols,
-                    "priority": "high"
+                    "priority": "high"  # High priority since user is continuing conversation
                 })
                 
-                # Check if they're asking about fundamentals
-                original_message = intent_analysis.get("original_message", "").lower()
+                # If they ask about fundamentals specifically, include fundamental analysis
+                original_message = intent_analysis.get("original_message", user_context.get("current_message", "")).lower()
                 if any(word in original_message for word in ["fundamental", "earnings", "revenue", "valuation", "pe", "financial"]):
                     engines.append({
                         "engine": "fundamental_analysis", 
@@ -229,7 +274,7 @@ SYMBOL EXTRACTION:
                         "priority": "high"
                     })
                 
-                # Add news for follow-up questions
+                # Add news if they're asking follow-up questions (shows continued interest)
                 if recent_symbols and complexity in ["detailed_analysis", "comprehensive_research"]:
                     engines.append({
                         "engine": "news_sentiment",
@@ -251,10 +296,33 @@ SYMBOL EXTRACTION:
                 "priority": "high"
             })
         
+        elif primary_intent in ["worry_check", "validation_seeking"] and (symbols or recent_symbols):
+            # For emotional support, get current data + news
+            target_symbols = symbols if symbols else recent_symbols[:2]
+            engines.append({
+                "engine": "technical_analysis",
+                "symbols": target_symbols,
+                "priority": "high"
+            })
+            engines.append({
+                "engine": "news_sentiment",
+                "symbols": target_symbols, 
+                "priority": "high"
+            })
+        
+        elif primary_intent == "celebrate" and (symbols or recent_symbols):
+            # For celebration, just need current price confirmation
+            target_symbols = symbols if symbols else recent_symbols[:1]
+            engines.append({
+                "engine": "technical_analysis",
+                "symbols": target_symbols,
+                "priority": "medium"
+            })
+        
         return engines
     
     def _create_prompt_instructions(self, intent_analysis: Dict, user_context: Dict) -> str:
-        """Create clean instructions for the response LLM"""
+        """Create clean, concise instructions for the response LLM"""
         
         primary_intent = intent_analysis.get("primary_intent", "general")
         emotional_state = intent_analysis.get("emotional_state", "neutral")
@@ -262,26 +330,26 @@ SYMBOL EXTRACTION:
         personality = user_context.get("personality_traits", {})
         recent_symbols = user_context.get("recent_symbols", [])
         
-        # Use contextual symbols if no explicit symbols mentioned
+        # 🧠 SMART: Use contextual symbols if no explicit symbols mentioned
         effective_symbols = symbols if symbols else recent_symbols[:2]
         
-        # Build instruction based on intent
+        # Build core instruction based on intent and emotion
         if primary_intent == "analyze":
             if symbols:
                 # Explicit symbols mentioned
                 if emotional_state == "worried":
-                    instruction = f"Provide reassuring analysis of {', '.join(symbols)} with clear support levels and risk assessment."
+                    instruction = f"Provide reassuring analysis of {', '.join(symbols)} with clear support levels and risk assessment to address their concerns."
                 elif emotional_state == "excited":
-                    instruction = f"Give balanced perspective on {', '.join(symbols)} momentum with realistic price targets."
+                    instruction = f"Give balanced perspective on {', '.join(symbols)} momentum while matching their enthusiasm with realistic price targets."
                 else:
-                    instruction = f"Analyze {', '.join(symbols)} with current price, key technical levels, and actionable insights."
+                    instruction = f"Analyze {', '.join(symbols)} with current price, key technical levels, and actionable trading insights."
             elif recent_symbols:
-                # Use conversation context
+                # 🧠 Use conversation context
                 context_stocks = ', '.join(recent_symbols[:2])
                 instruction = f"Continue analyzing {context_stocks} based on their follow-up question about"
                 
-                # Add specific context
-                original_message = intent_analysis.get("original_message", "").lower()
+                # Add specific context based on what they're asking about
+                original_message = intent_analysis.get("original_message", user_context.get("current_message", "")).lower()
                 if any(word in original_message for word in ["fundamental", "earnings", "revenue", "valuation"]):
                     instruction += " fundamentals. Provide fundamental analysis insights."
                 elif any(word in original_message for word in ["technical", "chart", "resistance", "support"]):
@@ -291,28 +359,38 @@ SYMBOL EXTRACTION:
                 else:
                     instruction += " their specific question. Provide comprehensive insights."
             else:
-                instruction = "Provide helpful market analysis and trading guidance."
+                # No context available
+                instruction = "Provide helpful market analysis and trading guidance addressing their question."
         
         elif primary_intent == "screener":
-            instruction = "Present top stock picks with clear selection criteria and brief analysis."
+            instruction = "Present top stock picks with clear selection criteria and brief analysis of why they're attractive opportunities."
         
         elif primary_intent == "portfolio":
-            instruction = "Review their portfolio positions with performance summary and suggestions."
+            instruction = "Review their portfolio positions with performance summary and any rebalancing suggestions needed."
+        
+        elif primary_intent == "celebrate":
+            instruction = f"Celebrate their {', '.join(effective_symbols) if effective_symbols else 'trading'} success while providing smart guidance on profit-taking or continuation."
+        
+        elif primary_intent == "worry_check":
+            instruction = f"Address their concerns about {', '.join(effective_symbols) if effective_symbols else 'their positions'} with supportive analysis and clear next steps."
+        
+        elif primary_intent == "validation_seeking":
+            instruction = f"Validate or challenge their {', '.join(effective_symbols) if effective_symbols else 'investment'} thesis with honest analysis and risk considerations."
         
         else:
-            instruction = "Provide helpful trading guidance that directly addresses their question."
+            instruction = "Provide helpful trading guidance that directly addresses their question with actionable insights."
         
         # Add style modifier
         style = personality.get("formality", "casual")
         if style == "casual":
-            instruction += " Use casual, friendly tone."
+            instruction += " Use casual, friendly tone with their communication style."
         elif style == "professional":
             instruction += " Maintain professional tone with precise analysis."
         
         return instruction
     
     def _format_chat_context(self, user_context: Dict, current_message: str) -> Dict[str, Any]:
-        """Format chat history and context"""
+        """Format chat history and context for response LLM"""
         
         conversation_history = user_context.get("conversation_history", [])
         recent_symbols = user_context.get("recent_symbols", [])
@@ -320,7 +398,7 @@ SYMBOL EXTRACTION:
         
         # Format recent conversation
         recent_messages = []
-        for msg in conversation_history[-3:]:
+        for msg in conversation_history[-3:]:  # Last 3 exchanges
             if msg.get("user_message"):
                 recent_messages.append({
                     "role": "user",
@@ -332,7 +410,7 @@ SYMBOL EXTRACTION:
                     "content": msg["bot_response"][:100] + ("..." if len(msg["bot_response"]) > 100 else "")
                 })
         
-        return {
+        chat_context = {
             "current_message": current_message,
             "recent_conversation": recent_messages,
             "user_profile": {
@@ -344,13 +422,17 @@ SYMBOL EXTRACTION:
             "conversation_continuity": len(conversation_history) > 0,
             "relationship_stage": "established" if len(conversation_history) > 5 else "building"
         }
+        
+        return chat_context
     
     def _create_response_instructions(self, intent_analysis: Dict, user_context: Dict, user_message: str) -> Dict[str, Any]:
-        """Create detailed response instructions"""
+        """Create detailed response instructions for internal use"""
         
         personality = user_context.get("personality_traits", {})
+        trading_context = user_context.get("trading_context", {})
         
-        return {
+        instructions = {
+            "response_strategy": self._determine_response_strategy(intent_analysis, personality),
             "communication_style": {
                 "formality": personality.get("formality", "casual"),
                 "energy_level": personality.get("energy", "moderate"), 
@@ -358,12 +440,17 @@ SYMBOL EXTRACTION:
                 "use_emojis": self._should_use_emojis(user_message, personality),
                 "response_length": personality.get("response_length", "medium")
             },
+            "content_guidelines": self._build_content_guidelines(intent_analysis, trading_context),
+            "context_integration": self._build_context_integration_instructions(user_context),
             "emotional_tone": self._determine_emotional_tone(intent_analysis),
-            "character_limit": 320
+            "character_limit": 320,  # SMS limit
+            "key_focus_areas": self._identify_key_focus_areas(intent_analysis, user_context)
         }
+        
+        return instructions
     
     def _build_context_summary(self, user_context: Dict) -> str:
-        """Build context summary for orchestrator prompt"""
+        """Build concise context summary for the orchestrator prompt"""
         
         personality = user_context.get("personality_traits", {})
         trading = user_context.get("trading_context", {})
@@ -372,11 +459,14 @@ SYMBOL EXTRACTION:
         
         context_parts = []
         
+        # User profile summary
         context_parts.append(f"User Profile: {personality.get('formality', 'casual')} communicator, {trading.get('experience_level', 'intermediate')} trader")
         
+        # Recent conversation context
         if recent_symbols:
             context_parts.append(f"Recently discussed: {', '.join(recent_symbols[:3])}")
         
+        # Conversation history summary
         if conversation_history:
             last_msg = conversation_history[0] if conversation_history else {}
             context_parts.append(f"Last conversation: {last_msg.get('user_message', '')[:50]}...")
@@ -388,6 +478,7 @@ SYMBOL EXTRACTION:
     def _validate_intent_analysis(self, intent_analysis: Dict, user_message: str) -> Dict[str, Any]:
         """Validate and enhance intent analysis results"""
         
+        # Ensure required fields exist
         if "primary_intent" not in intent_analysis:
             intent_analysis["primary_intent"] = "general"
         
@@ -397,7 +488,7 @@ SYMBOL EXTRACTION:
         if "confidence_score" not in intent_analysis:
             intent_analysis["confidence_score"] = 0.5
         
-        # Clean symbols
+        # Clean and validate symbols
         if intent_analysis["symbols_mentioned"]:
             cleaned_symbols = []
             for symbol in intent_analysis["symbols_mentioned"]:
@@ -405,7 +496,7 @@ SYMBOL EXTRACTION:
                     cleaned_symbols.append(symbol.upper())
             intent_analysis["symbols_mentioned"] = list(dict.fromkeys(cleaned_symbols))
         
-        # Auto-correct intent
+        # Auto-correct intent if we have symbols but intent is general
         if intent_analysis["symbols_mentioned"] and intent_analysis["primary_intent"] == "general":
             intent_analysis["primary_intent"] = "analyze"
         
@@ -444,12 +535,18 @@ SYMBOL EXTRACTION:
             "symbols_mentioned": symbols,
             "urgency_level": "casual_inquiry",
             "complexity_required": "detailed_analysis",
-            "confidence_score": 0.3
+            "user_subtext": "fallback analysis",
+            "conversation_continuity": "new_topic",
+            "confidence_score": 0.3,
+            "requires_greeting": False,
+            "market_timing_relevant": bool(symbols)
         }
     
     def _build_screener_parameters(self, intent_analysis: Dict, user_context: Dict) -> Dict[str, Any]:
-        """Build screener parameters"""
-        return {
+        """Build parameters for stock screener based on intent and user context"""
+        
+        # Default screener parameters
+        parameters = {
             "exchange": "us",
             "limit": 10,
             "sort": "refund_5d_p.desc",
@@ -459,33 +556,118 @@ SYMBOL EXTRACTION:
                 ["refund_5d_p", ">", 0]
             ]
         }
+        
+        # TODO: Enhance based on user message analysis
+        return parameters
+    
+    def _determine_response_strategy(self, intent_analysis: Dict, personality: Dict) -> str:
+        """Determine the overall response strategy"""
+        
+        primary_intent = intent_analysis.get("primary_intent", "general")
+        emotional_state = intent_analysis.get("emotional_state", "neutral")
+        
+        if emotional_state == "worried":
+            return "supportive_analysis"
+        elif emotional_state == "excited" or primary_intent == "celebrate":
+            return "celebratory_validation"
+        elif primary_intent == "analyze":
+            return "analytical_insights"
+        elif primary_intent == "screener":
+            return "discovery_focused"
+        elif primary_intent == "portfolio":
+            return "portfolio_review"
+        else:
+            return "conversational_helpful"
     
     def _should_use_emojis(self, user_message: str, personality: Dict) -> bool:
         """Determine if response should include emojis"""
-        user_has_emojis = any(ord(char) > 127 for char in user_message)
+        
+        # Never use emojis if user didn't use any
+        user_has_emojis = any(ord(char) > 127 for char in user_message)  # Simple emoji detection
+        
+        # Never use emojis if message is long (professional context)
         message_is_long = len(user_message) > 100
+        
+        # Check user's emoji preference
         emoji_preference = personality.get("emoji_usage", "some")
+        
         return user_has_emojis and not message_is_long and emoji_preference in ["some", "lots"]
     
+    def _build_content_guidelines(self, intent_analysis: Dict, trading_context: Dict) -> Dict[str, Any]:
+        """Build content guidelines for response generation"""
+        
+        guidelines = {
+            "include_price_data": intent_analysis.get("primary_intent") in ["analyze", "celebrate", "worry_check"],
+            "include_technical_levels": intent_analysis.get("complexity_required") in ["detailed_analysis", "comprehensive_research"],
+            "include_news_context": intent_analysis.get("primary_intent") in ["analyze", "worry_check", "validation_seeking"],
+            "focus_on_risk": intent_analysis.get("emotional_state") == "worried",
+            "validate_thesis": intent_analysis.get("primary_intent") == "validation_seeking",
+            "educational_tone": trading_context.get("experience_level") == "beginner"
+        }
+        
+        return guidelines
+    
+    def _build_context_integration_instructions(self, user_context: Dict) -> Dict[str, Any]:
+        """Build instructions for integrating user context into response"""
+        
+        recent_symbols = user_context.get("recent_symbols", [])
+        conversation_history = user_context.get("conversation_history", [])
+        
+        return {
+            "reference_recent_symbols": recent_symbols[:3] if recent_symbols else [],
+            "continuation_context": len(conversation_history) > 0,
+            "relationship_level": "established" if len(conversation_history) > 5 else "building",
+            "first_interaction_today": len(conversation_history) == 0
+        }
+    
     def _determine_emotional_tone(self, intent_analysis: Dict) -> str:
-        """Determine emotional tone for response"""
+        """Determine the emotional tone for the response"""
+        
         emotional_state = intent_analysis.get("emotional_state", "neutral")
         primary_intent = intent_analysis.get("primary_intent", "general")
         
         if emotional_state == "worried":
             return "reassuring"
-        elif emotional_state == "excited":
+        elif emotional_state == "excited" or primary_intent == "celebrate":
             return "enthusiastic"
         elif emotional_state == "frustrated":
             return "patient_supportive"
+        elif primary_intent == "validation_seeking":
+            return "confident_analytical"
         else:
             return "friendly_professional"
+    
+    def _identify_key_focus_areas(self, intent_analysis: Dict, user_context: Dict) -> List[str]:
+        """Identify key areas the response should focus on"""
+        
+        focus_areas = []
+        
+        primary_intent = intent_analysis.get("primary_intent", "general")
+        emotional_state = intent_analysis.get("emotional_state", "neutral")
+        complexity = intent_analysis.get("complexity_required", "detailed_analysis")
+        
+        if primary_intent == "analyze":
+            focus_areas.extend(["current_price", "key_levels", "momentum"])
+            
+            if complexity == "comprehensive_research":
+                focus_areas.extend(["fundamentals", "news_impact", "risk_factors"])
+        
+        if emotional_state == "worried":
+            focus_areas.extend(["risk_assessment", "support_levels", "reassurance"])
+        
+        if emotional_state == "excited":
+            focus_areas.extend(["momentum_confirmation", "profit_targets", "realistic_expectations"])
+        
+        if intent_analysis.get("market_timing_relevant"):
+            focus_areas.append("entry_exit_timing")
+        
+        return focus_areas
 
 
-# ===== TOOL EXECUTOR =====
+# ===== TOOL EXECUTOR (Enhanced for orchestrator integration) =====
 
 class ToolExecutor:
-    """Tool executor that works with orchestrator instructions"""
+    """Enhanced tool executor that works with orchestrator instructions"""
     
     def __init__(self, ta_service, portfolio_service=None, screener_service=None, news_service=None, fundamental_tool=None):
         self.ta_service = ta_service
@@ -639,7 +821,9 @@ class ToolExecutor:
 # ===== RESPONSE AGENT =====
 
 class ResponseAgent:
-    """Generates responses based on orchestrator instructions and engine results"""
+    """
+    Generates responses based on orchestrator instructions and engine results
+    """
     
     def __init__(self, openai_client):
         self.openai_client = openai_client
@@ -654,7 +838,7 @@ class ResponseAgent:
             original_message = orchestration_result.get("original_message", "")
             response_instructions = orchestration_result.get("response_instructions", {})
             
-            # Build response prompt
+            # Build response prompt using orchestrator instructions
             response_prompt = self._build_response_prompt(
                 prompt_instructions, chat_context, original_message, 
                 engine_results, response_instructions
@@ -682,28 +866,38 @@ class ResponseAgent:
     def _build_response_prompt(self, prompt_instructions: str, chat_context: Dict, 
                              original_message: str, engine_results: Dict, 
                              response_instructions: Dict) -> str:
-        """Build the response generation prompt"""
+        """Build the response generation prompt using orchestrator instructions"""
         
-        # Format engine results
+        # Format engine results for the prompt
         engine_data = self._format_engine_results(engine_results)
         
         # Extract communication style
         communication_style = response_instructions.get("communication_style", {})
         
-        prompt = f"""INSTRUCTIONS: {prompt_instructions}
+        prompt = f"""ORCHESTRATOR INSTRUCTIONS: {prompt_instructions}
 
 USER'S MESSAGE: "{original_message}"
+
+CHAT CONTEXT:
+Current relationship: {chat_context.get('relationship_stage', 'new')}
+User style: {chat_context.get('user_profile', {}).get('communication_style', 'casual')}
+Recent symbols: {', '.join(chat_context.get('recent_symbols_discussed', []))}
+Conversation continues: {chat_context.get('conversation_continuity', False)}
+
+RECENT CONVERSATION:
+{self._format_recent_messages(chat_context.get('recent_conversation', []))}
 
 MARKET DATA:
 {engine_data}
 
-STYLE REQUIREMENTS:
+RESPONSE REQUIREMENTS:
 - Style: {communication_style.get('formality', 'casual')}
 - Technical depth: {communication_style.get('technical_depth', 'medium')}
 - Use emojis: {communication_style.get('use_emojis', False)}
 - Max length: {response_instructions.get('character_limit', 320)} characters
+- Tone: {response_instructions.get('emotional_tone', 'friendly')}
 
-Generate the perfect response:"""
+Follow the orchestrator instructions exactly. Generate the perfect response:"""
 
         return prompt
     
@@ -742,6 +936,20 @@ Generate the perfect response:"""
         
         return "\n".join(formatted_results) if formatted_results else "Limited data available"
     
+    def _format_recent_messages(self, recent_messages: List[Dict]) -> str:
+        """Format recent conversation for prompt"""
+        
+        if not recent_messages:
+            return "No recent conversation"
+        
+        formatted = []
+        for msg in recent_messages[-4:]:  # Last 4 messages
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            formatted.append(f"{role}: {content}")
+        
+        return "\n".join(formatted)
+    
     def _process_final_response(self, response: str, instructions: Dict) -> str:
         """Apply final processing to the response"""
         
@@ -761,14 +969,14 @@ Generate the perfect response:"""
 # ===== MAIN COMPREHENSIVE MESSAGE PROCESSOR =====
 
 class ComprehensiveMessageProcessor:
-    """Main processor that orchestrates the complete message handling flow"""
+    """Final main processor that orchestrates the complete message handling flow"""
     
     def __init__(self, openai_client, ta_service, personality_engine, 
                  cache_service=None, news_service=None, fundamental_tool=None, 
                  portfolio_service=None, screener_service=None):
         
         self.orchestrator = ComprehensiveOrchestrator(
-            openai_client, personality_engine, cache_service
+            openai_client, personality_engine, cache_service  # Pass cache instead of database
         )
         
         self.tool_executor = ToolExecutor(
@@ -778,7 +986,7 @@ class ComprehensiveMessageProcessor:
         
         self.response_agent = ResponseAgent(openai_client)
         self.personality_engine = personality_engine
-        self.cache_service = cache_service
+        self.cache_service = cache_service  # Store cache service for message saving
     
     async def process_message(self, message: str, user_phone: str) -> str:
         """Final message processing flow with cache integration"""
@@ -786,10 +994,10 @@ class ComprehensiveMessageProcessor:
         try:
             logger.info(f"🎯 Final orchestrated processing: '{message}' from {user_phone}")
             
-            # Step 1: Orchestrate
+            # Step 1: Orchestrate (analyze intent, gather context from cache, create instructions)
             orchestration_result = await self.orchestrator.orchestrate(message, user_phone)
             
-            # Step 2: Execute engines
+            # Step 2: Execute engines based on orchestration
             engines_to_call = orchestration_result.get("engines_to_call", [])
             engine_results = await self.tool_executor.execute_engines(engines_to_call)
             
@@ -798,12 +1006,12 @@ class ComprehensiveMessageProcessor:
                 intent_data = orchestration_result.get("intent_analysis", {})
                 self.personality_engine.learn_from_message(user_phone, message, intent_data)
             
-            # Step 4: Generate response
+            # Step 4: Generate response using orchestrator instructions
             response = await self.response_agent.generate_response(
                 orchestration_result, engine_results
             )
             
-            # Step 5: Cache this interaction
+            # Step 5: Cache this interaction for future context
             if self.cache_service:
                 try:
                     # Cache recent message
@@ -814,7 +1022,7 @@ class ComprehensiveMessageProcessor:
                             "bot_response": response,
                             "timestamp": datetime.now().isoformat()
                         },
-                        max_length=5
+                        max_length=5  # Keep last 5 exchanges
                     )
                     
                     # Cache symbols mentioned
@@ -823,7 +1031,7 @@ class ComprehensiveMessageProcessor:
                         await self.cache_service.add_to_list(
                             f"recent_symbols:{user_phone}",
                             symbols,
-                            max_length=10
+                            max_length=10  # Keep last 10 symbols
                         )
                         
                     # Update session data
@@ -831,7 +1039,7 @@ class ComprehensiveMessageProcessor:
                     session_data = await self.cache_service.get(session_key) or {}
                     session_data["last_message_time"] = datetime.now().isoformat()
                     session_data["message_count"] = session_data.get("message_count", 0) + 1
-                    await self.cache_service.set(session_key, session_data, ttl=86400)
+                    await self.cache_service.set(session_key, session_data, ttl=86400)  # 24 hour TTL
                     
                 except Exception as e:
                     logger.warning(f"Failed to cache interaction: {e}")
