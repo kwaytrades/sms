@@ -712,4 +712,4 @@ async def test_hybrid_service():
     print(f"Cache hit rate: {stats['cache_efficiency']['overall_cache_hit_rate']}%")
 
 # For backward compatibility with existing imports
-TAEngine = HybridTechnicalAnalysisService
+HybridTechnicalAnalysisService = TAEngine
