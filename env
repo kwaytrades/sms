@@ -14,6 +14,7 @@ REDIS_URL=redis://:default:AdygAAIjcDEyNGI2N2OZDkZjczOTFmMDQ2ODM4NTQ5nAxMAmworki
 
 # OpenAI API (Required for AI responses)
 OPENAI_API_KEY=sk-your-openai-api-key-here
+ANTHROPIC_API_KEY=sk-ant-
 
 # EODHD API (Required for market data)
 # SECURITY FIX: No hardcoded keys!
