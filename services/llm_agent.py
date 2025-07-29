@@ -136,8 +136,8 @@ ANALYSIS FRAMEWORK:
    - Maintain thread of conversation without restating everything
 
 RESPONSE STRUCTURE:
-- Start with direct answer to their question
-- Support with relevant data points
+- Give the most comprehensive answer to their question
+- Support with relevant and specific data points
 - End with actionable insight or next step
 - No introductory phrases like "Here's what I found" or "Let me help"
 
