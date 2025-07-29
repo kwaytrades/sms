@@ -3,8 +3,10 @@
 
 from ..technical_analysis import TAEngine
 
-# Re-export with expected names for backward compatibility
+# Re-export with all expected names for backward compatibility
 CachedTechnicalService = TAEngine
+CachedTechnicalAnalysisService = TAEngine
 TechnicalAnalysisService = TAEngine
+TAService = TAEngine
 
-__all__ = ['CachedTechnicalService', 'TechnicalAnalysisService', 'TAEngine']
+__all__ = ['CachedTechnicalService', 'CachedTechnicalAnalysisService', 'TechnicalAnalysisService', 'TAEngine', 'TAService']
