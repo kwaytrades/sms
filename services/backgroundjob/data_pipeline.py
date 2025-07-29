@@ -48,7 +48,7 @@ async def get_stock_data_with_fallback(self, symbol: str, force_refresh: bool = 
                 "data_source": "error"
             }
     
-    async def _get_cached_stock_data(self, symbol: str) -> Optional[Dict]:
+async def _get_cached_stock_data(self, symbol: str) -> Optional[Dict]:
         """Get cached stock data from Redis/MongoDB"""
         try:
             # Try Redis first (fastest)
