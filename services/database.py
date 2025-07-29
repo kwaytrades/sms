@@ -31,6 +31,9 @@ class DatabaseService:
             # Setup indexes
             await self._setup_indexes()
             
+            # ADDED: Clean up invalid users on startup
+            await self.cleanup_invalid_users()
+            
             logger.info("✅ Database connections initialized")
         except Exception as e:
             logger.error(f"❌ Database initialization failed: {e}")
@@ -61,8 +64,13 @@ class DatabaseService:
     
     # EXISTING METHODS - UNCHANGED
     async def get_user_by_phone(self, phone_number: str) -> Optional[UserProfile]:
-        """Get user by phone number"""
+        """Get user by phone number with validation"""
         try:
+            # ADDED: Validate phone_number is not None or empty
+            if not phone_number or phone_number.strip() == "":
+                logger.warning("❌ get_user_by_phone called with empty phone_number")
+                return None
+            
             user_doc = await self.db.users.find_one({"phone_number": phone_number})
             if not user_doc:
                 return None
@@ -74,8 +82,13 @@ class DatabaseService:
             return None
     
     async def save_user(self, user: UserProfile) -> str:
-        """Save or update user profile"""
+        """Save or update user profile with validation"""
         try:
+            # ADDED: Validate user has valid phone_number
+            if not user.phone_number or user.phone_number.strip() == "":
+                logger.error("❌ Cannot save user with empty phone_number")
+                raise ValueError("User must have a valid phone_number")
+            
             user_dict = user.__dict__.copy()
             user_dict['updated_at'] = datetime.utcnow()
             
@@ -137,29 +150,67 @@ class DatabaseService:
             logger.error(f"❌ Error incrementing usage: {e}")
     
     async def cleanup_invalid_users(self):
-        """Remove users with null _id"""
+        """Remove users with null or empty phone_number - ENHANCED"""
         try:
-            result = await self.db.users.delete_many({"_id": None})
-            logger.info(f"Cleaned up {result.deleted_count} invalid users")
+            # Remove users with null phone_number
+            result_null = await self.db.users.delete_many({"phone_number": None})
+            
+            # Remove users with empty string phone_number
+            result_empty = await self.db.users.delete_many({"phone_number": ""})
+            
+            # Remove users with missing phone_number field
+            result_missing = await self.db.users.delete_many({"phone_number": {"$exists": False}})
+            
+            total_cleaned = result_null.deleted_count + result_empty.deleted_count + result_missing.deleted_count
+            
+            if total_cleaned > 0:
+                logger.info(f"🧹 Cleaned up {total_cleaned} invalid users (null: {result_null.deleted_count}, empty: {result_empty.deleted_count}, missing: {result_missing.deleted_count})")
+            else:
+                logger.info("✅ No invalid users found to clean up")
+                
         except Exception as e:
-            logger.error(f"Cleanup failed: {e}")
+            logger.error(f"❌ Cleanup failed: {e}")
     
-    # EXISTING METHOD - KEEP UNCHANGED
-    async def update_user_activity(self, phone_number: str):
-        """Update user activity timestamp"""
+    # FIXED METHOD - Updated signature and validation
+    async def update_user_activity(self, phone_number: str) -> bool:
+        """Update user activity with proper validation - FIXED"""
         try:
-            if self.db is not None:
-                await self.db.users.update_one(
-                    {"phone": phone_number},
-                    {
-                        "$set": {"last_activity": datetime.utcnow()},
-                        "$setOnInsert": {"phone": phone_number, "created_at": datetime.utcnow()}
+            # ADDED: Validate phone_number
+            if not phone_number or phone_number.strip() == "":
+                logger.error("❌ update_user_activity called with empty phone_number")
+                return False
+            
+            # ADDED: Check if user exists first
+            user = await self.get_user_by_phone(phone_number)
+            if not user:
+                logger.warning(f"⚠️ User not found for activity update: {phone_number}")
+                return False
+            
+            # FIXED: Update using phone_number (not phone) and proper field structure
+            now = datetime.utcnow()
+            result = await self.db.users.update_one(
+                {"phone_number": phone_number},
+                {
+                    "$set": {
+                        "last_active_at": now,
+                        "updated_at": now
                     },
-                    upsert=True
-                )
-                logger.info(f"✅ Updated user activity for {phone_number}")
+                    "$inc": {
+                        "total_messages_received": 1
+                    }
+                }
+            )
+            
+            if result.modified_count > 0:
+                logger.info(f"✅ Updated activity for {phone_number}")
+                return True
+            else:
+                logger.warning(f"⚠️ No document modified for {phone_number}")
+                return False
+                
         except Exception as e:
             logger.error(f"❌ Failed to update user activity: {e}")
+            return False
     
     # NEW: MISSING store_conversation METHOD - THIS IS THE FIX!
     async def store_conversation(self, phone_number: str, user_message: str, bot_response: str, 
