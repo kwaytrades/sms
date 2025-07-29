@@ -12,7 +12,7 @@ import json
 from motor.motor_asyncio import AsyncIOMotorClient
 import redis.asyncio as aioredis
 
-class HybridTechnicalAnalysisService:
+class TechnicalAnalysisService:
     """
     Hybrid TA Service - Cache First with Live API Fallback:
     1. Check background cache (MongoDB/Redis) - <100ms
