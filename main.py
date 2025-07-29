@@ -237,7 +237,9 @@ async def lifespan(app: FastAPI):
             logger.info("✅ Hybrid Agent initialized")
         
         # Determine active agent based on preference and availability
-        if settings.prefer_claude and claude_agent:
+        prefer_claude = getattr(settings, 'prefer_claude', True)  # Default to preferring Claude
+        
+        if prefer_claude and claude_agent:
             active_agent = claude_agent
             agent_type = "Claude (Primary)"
         elif hybrid_agent:
@@ -338,7 +340,7 @@ async def health_check():
                 "hybrid_agent": "available" if hybrid_agent else "unavailable"
             },
             "preferences": {
-                "prefer_claude": settings.prefer_claude,
+                "prefer_claude": getattr(settings, 'prefer_claude', True),
                 "active_agent": get_agent_type()
             }
         }
@@ -458,7 +460,7 @@ async def admin_dashboard():
                 "superior_analysis": claude_agent is not None
             },
             "preferences": {
-                "prefer_claude": settings.prefer_claude,
+                "prefer_claude": getattr(settings, 'prefer_claude', True),
                 "active_agent": get_agent_type()
             }
         }
@@ -591,7 +593,7 @@ async def diagnose_services():
             "EODHD_API_KEY": "Set" if os.getenv('EODHD_API_KEY') else "Missing",
             "MONGODB_URL": "Set" if os.getenv('MONGODB_URL') else "Missing",
             "TWILIO_ACCOUNT_SID": "Set" if os.getenv('TWILIO_ACCOUNT_SID') else "Missing",
-            "PREFER_CLAUDE": settings.prefer_claude
+            "PREFER_CLAUDE": getattr(settings, 'prefer_claude', True)
         },
         "service_status": {
             "database": db_service is not None,
@@ -836,8 +838,8 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Claude-Powered SMS Trading Bot on port {port}")
     logger.info(f"Environment: {settings.environment}")
-    logger.info(f"Claude Preference: {settings.prefer_claude}")
-    logger.info(f"Available: Claude={anthropic is not None and settings.anthropic_api_key}, OpenAI={settings.openai_api_key is not None}")
+    logger.info(f"Claude Preference: {getattr(settings, 'prefer_claude', True)}")
+    logger.info(f"Available: Claude={anthropic is not None and os.getenv('ANTHROPIC_API_KEY')}, OpenAI={os.getenv('OPENAI_API_KEY') is not None}")
     
     uvicorn.run(
         "main:app",
