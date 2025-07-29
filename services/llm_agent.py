@@ -1,4 +1,4 @@
-# services/llm_agent.py - FINAL COMPREHENSIVE ORCHESTRATOR AGENT
+z# services/llm_agent.py - FINAL COMPREHENSIVE ORCHESTRATOR AGENT
 
 import json
 import asyncio
@@ -1051,3 +1051,63 @@ class ComprehensiveMessageProcessor:
         except Exception as e:
             logger.error(f"💥 Final orchestrated processing failed: {e}")
             return "I'm having some technical difficulties, but I'm here to help! Please try again."
+
+
+# ===== BACKWARD COMPATIBILITY ALIASES =====
+# This maintains compatibility with other services that import TradingAgent
+
+class TradingAgent:
+    """
+    Backward compatibility wrapper for the old TradingAgent interface
+    """
+    
+    def __init__(self, openai_client, personality_engine):
+        self.openai_client = openai_client
+        self.personality_engine = personality_engine
+        
+        # Initialize the new orchestrator internally
+        self.orchestrator = ComprehensiveOrchestrator(
+            openai_client, personality_engine, cache_service=None
+        )
+        
+    async def parse_intent(self, message: str, user_phone: str = None) -> Dict[str, Any]:
+        """Legacy interface - parse user intent"""
+        try:
+            # Use new orchestrator for intent analysis
+            orchestration_result = await self.orchestrator.orchestrate(message, user_phone or "unknown")
+            intent_analysis = orchestration_result.get("intent_analysis", {})
+            
+            # Convert to old format expected by other services
+            return {
+                "intent": intent_analysis.get("primary_intent", "general"),
+                "symbols": intent_analysis.get("symbols_mentioned", []),
+                "parameters": {
+                    "urgency": intent_analysis.get("urgency_level", "medium"),
+                    "complexity": intent_analysis.get("complexity_required", "medium"),
+                    "emotion": intent_analysis.get("emotional_state", "neutral")
+                },
+                "requires_tools": [engine["engine"] for engine in orchestration_result.get("engines_to_call", [])],
+                "confidence": intent_analysis.get("confidence_score", 0.5),
+                "user_emotion": intent_analysis.get("emotional_state", "neutral"),
+                "urgency": intent_analysis.get("urgency_level", "medium")
+            }
+        except Exception as e:
+            logger.error(f"Legacy parse_intent failed: {e}")
+            return {
+                "intent": "general",
+                "symbols": [],
+                "parameters": {},
+                "requires_tools": [],
+                "confidence": 0.3,
+                "user_emotion": "neutral",
+                "urgency": "medium"
+            }
+
+# Export both old and new classes for maximum compatibility
+__all__ = [
+    'TradingAgent',  # Legacy compatibility
+    'ToolExecutor',  # Legacy compatibility
+    'ComprehensiveOrchestrator',  # New orchestrator
+    'ComprehensiveMessageProcessor',  # New main processor
+    'ResponseAgent'  # New response agent
+]
