@@ -43,21 +43,13 @@ class BackgroundDataPipeline:
             "daily_job_running": False,
             "cleanup_job_running": False,
             "total_stocks_cached": 0,
-            "last_error": None,# services/backgroundjob/data_pipeline.py
+            "last_error": None,
+            "stocks_processed": {
+                "basic_data": 0,
+                "technical_data": 0,
+                "fundamental_data": 0
+            }
         }
-import asyncio
-import aiohttp
-import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
-import json
-from motor.motor_asyncio import AsyncIOMotorClient
-import redis.asyncio as aioredis
-import schedule
-import time
-from threading import Thread
-
-logger = logging.getLogger(__name__)
 
 class BackgroundDataPipeline:
     """Background job system for daily stock data refresh and weekly cleanup"""
