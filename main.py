@@ -283,9 +283,11 @@ async def lifespan(app: FastAPI):
         if background_pipeline and EODHDScreener:
             try:
                 cached_screener = EODHDScreener(
-                    eodhd_api_key=settings.eodhd_api_key,
-                    redis_client=background_pipeline.redis_client
+                    mongodb_url=settings.mongodb_url,
+                    redis_url=settings.redis_url,
+                    eodhd_api_key=settings.eodhd_api_key
                 )
+                await cached_screener.initialize()
                 logger.info("✅ Cached screener service initialized")
             except Exception as e:
                 logger.warning(f"⚠️ Cached screener initialization failed: {e}")
