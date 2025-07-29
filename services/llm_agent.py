@@ -1,16 +1,23 @@
+# services/data_driven_agent.py
+"""
+Data-driven LLM agent that calls tools directly, sees real data,
+then generates contextual prompts for the response agent
+"""
+
 import json
 import asyncio
-import re
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any, Optional
 from loguru import logger
-import openai
 from datetime import datetime
 from openai import AsyncOpenAI
 
-class ConversationAwareAgent:
+class DataDrivenAgent:
     """
-    Simplified conversation-aware agent that handles everything in one place.
-    Replaces complex orchestration with smart, context-aware processing.
+    LLM agent that:
+    1. Calls tools directly based on user query
+    2. Sees and analyzes real market data
+    3. Generates contextual prompt for response agent
+    4. Response agent executes with format restrictions
     """
     
     def __init__(self, openai_client, ta_service, news_service, fundamental_tool, cache_service, personality_engine):
@@ -23,163 +30,76 @@ class ConversationAwareAgent:
     
     async def process_message(self, message: str, user_phone: str) -> str:
         """
-        Single method that handles everything with conversation awareness
+        Process message using data-driven approach:
+        1. LLM calls tools and sees real data
+        2. LLM generates contextual prompt
+        3. Response agent executes with restrictions
         """
         try:
-            logger.info(f"🎯 Conversation-aware processing: '{message}' from {user_phone}")
+            logger.info(f"🎯 Data-driven processing: '{message}' from {user_phone}")
             
-            # Step 1: Get conversation context (last 3-5 exchanges)
+            # Step 1: Get conversation context
             context = await self._get_conversation_context(user_phone)
             
-            # Step 2: Smart analysis and tool execution in one step
-            response = await self._analyze_and_respond(message, context)
+            # Step 2: LLM analyzes query and calls tools directly
+            tool_results = await self._llm_driven_tool_calling(message, context)
             
-            # Step 3: Cache conversation for future context
+            # Step 3: LLM sees real data and generates contextual prompt
+            contextual_prompt = await self._generate_contextual_prompt(message, context, tool_results)
+            
+            # Step 4: Response agent executes with format restrictions
+            response = await self._execute_response_agent(contextual_prompt)
+            
+            # Step 5: Cache and learn
             await self._cache_conversation(user_phone, message, response, context)
             
-            # Step 4: Learn from interaction
-            if self.personality_engine:
-                self._learn_from_interaction(user_phone, message, response)
-            
-            logger.info(f"✅ Conversation-aware response: {len(response)} chars")
+            logger.info(f"✅ Data-driven response: {len(response)} chars")
             return response
             
         except Exception as e:
-            logger.error(f"💥 Conversation-aware processing failed: {e}")
-            return "I'm having some technical difficulties right now. Please try again in a moment."
+            logger.error(f"💥 Data-driven processing failed: {e}")
+            return "Market analysis processing. Please try again shortly."
     
-    async def _get_conversation_context(self, user_phone: str) -> Dict[str, Any]:
-        """Get recent conversation context for natural flow"""
-        
-        context = {
-            "recent_messages": [],
-            "recent_symbols": [],
-            "user_style": "professional",
-            "conversation_flow": "new",
-            "last_topic": None
-        }
-        
-        try:
-            if self.cache_service:
-                # Get last 5 exchanges for context
-                thread_key = f"conversation_thread:{user_phone}"
-                recent_messages = await self.cache_service.get_list(thread_key, limit=5)
-                context["recent_messages"] = recent_messages or []
-                
-                # Extract recent symbols and topics
-                if recent_messages:
-                    context["conversation_flow"] = "continuing"
-                    # Get symbols from recent messages
-                    all_symbols = []
-                    for msg in recent_messages:
-                        all_symbols.extend(msg.get("symbols", []))
-                    context["recent_symbols"] = list(dict.fromkeys(all_symbols))[:3]
-                    
-                    # Get last topic
-                    if recent_messages:
-                        context["last_topic"] = recent_messages[0].get("topic", "analysis")
-            
-            # Get user communication style
-            if self.personality_engine:
-                profile = self.personality_engine.get_user_profile(user_phone)
-                style = profile.get("communication_style", {}).get("formality", "professional")
-                context["user_style"] = style
-            
-            return context
-            
-        except Exception as e:
-            logger.warning(f"Context retrieval failed: {e}")
-            return context
-    
-    async def _analyze_and_respond(self, message: str, context: Dict) -> str:
+    async def _llm_driven_tool_calling(self, message: str, context: Dict) -> Dict[str, Any]:
         """
-        Smart analysis that determines what data to fetch and generates response
+        Let LLM decide which tools to call and execute them with real data
         """
         
-        # Build conversation context string
-        conversation_context = self._format_conversation_context(context)
+        # Build context for LLM decision making
+        context_summary = self._format_context_summary(context)
         
-        # Improved smart prompt with professional tone and conversational flow
-        analysis_prompt = f"""You are a professional trading advisor providing direct, actionable market analysis. Analyze the conversation context and current message to provide the most relevant response.
+        tool_calling_prompt = f"""You are a trading analyst with access to market data tools. Analyze the user's request and call the appropriate tools to get REAL data.
 
-CONVERSATION CONTEXT:
-{conversation_context}
+USER REQUEST: "{message}"
+CONVERSATION CONTEXT: {context_summary}
 
-CURRENT MESSAGE: "{message}"
+AVAILABLE TOOLS:
+- getTechnical(symbol): Get technical analysis, price, RSI, support/resistance
+- getFundamentals(symbol): Get P/E ratio, financial health, growth metrics  
+- getNews(symbol): Get recent news sentiment and market impact
 
-ANALYSIS FRAMEWORK:
+INSTRUCTIONS:
+1. Determine which tools to call based on the user's request
+2. Call tools to get REAL market data
+3. You will see the actual data returned from each tool
+4. Based on the REAL data you receive, you'll then generate an analysis prompt
 
-1. CONTEXT ASSESSMENT:
-   - If this continues a previous topic, build directly on that discussion
-   - If this is a new topic, provide comprehensive analysis
-   - If user is asking follow-up questions, focus specifically on their inquiry
+Extract any stock symbols and call the appropriate tools now."""
 
-2. DATA REQUIREMENTS:
-   - Fundamental analysis: Use getFundamentals(symbol) for earnings, ratios, financial health
-   - Technical analysis: Use getTechnical(symbol) for price action, indicators, levels
-   - Market context: Use getNews(symbol) for recent developments affecting price
-   - Determine what data is most relevant to their specific question
-
-3. RESPONSE GUIDELINES:
-   - Be direct and professional - no casual greetings or emojis
-   - Lead with the most important information first
-   - Reference previous conversation naturally when relevant
-   - Provide specific data points and comprehensive insights
-   - Keep responses under 480 characters for SMS delivery
-   - Focus on what matters most to the user's immediate question
-   - responses should not feel generic or googleable 
-
-4. CONVERSATION CONTINUITY:
-   - If they previously discussed a stock, reference that context
-   - Build on previous analysis rather than repeating it
-   - Connect new information to their ongoing interests
-   - Maintain thread of conversation without restating everything
-
-RESPONSE STRUCTURE:
-- Give the most comprehensive answer to their question
-- Support with relevant and specific data points
-- End with actionable insight or next step
-- No introductory phrases like "Here's what I found" or "Let me help"
-
-TOOL CALLING:
-Based on your analysis, call the appropriate tools to get the data you need:
-- getFundamentals(symbol): For P/E ratios, earnings, financial metrics
-- getTechnical(symbol): For price, RSI, support/resistance, trends  
-- getNews(symbol): For recent news and sentiment
-
-Then generate a professional, contextually aware response that directly addresses their query."""
-
-        # Call OpenAI to analyze and determine tools needed
         try:
             response = await self.openai_client.chat.completions.create(
                 model="gpt-4o",
-                messages=[{"role": "user", "content": analysis_prompt}],
-                temperature=0.3,
-                max_tokens=400,
+                messages=[{"role": "user", "content": tool_calling_prompt}],
                 tools=[
                     {
                         "type": "function",
-                        "function": {
-                            "name": "getFundamentals",
-                            "description": "Get fundamental analysis data for a stock symbol",
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "symbol": {"type": "string", "description": "Stock ticker symbol (e.g., AAPL)"}
-                                },
-                                "required": ["symbol"]
-                            }
-                        }
-                    },
-                    {
-                        "type": "function", 
                         "function": {
                             "name": "getTechnical",
                             "description": "Get technical analysis data for a stock symbol",
                             "parameters": {
                                 "type": "object",
                                 "properties": {
-                                    "symbol": {"type": "string", "description": "Stock ticker symbol (e.g., AAPL)"}
+                                    "symbol": {"type": "string", "description": "Stock ticker symbol"}
                                 },
                                 "required": ["symbol"]
                             }
@@ -188,141 +108,161 @@ Then generate a professional, contextually aware response that directly addresse
                     {
                         "type": "function",
                         "function": {
-                            "name": "getNews", 
-                            "description": "Get news sentiment data for a stock symbol",
+                            "name": "getFundamentals", 
+                            "description": "Get fundamental analysis data for a stock symbol",
                             "parameters": {
                                 "type": "object",
                                 "properties": {
-                                    "symbol": {"type": "string", "description": "Stock ticker symbol (e.g., AAPL)"}
+                                    "symbol": {"type": "string", "description": "Stock ticker symbol"}
+                                },
+                                "required": ["symbol"]
+                            }
+                        }
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "getNews",
+                            "description": "Get news sentiment data for a stock symbol", 
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "symbol": {"type": "string", "description": "Stock ticker symbol"}
                                 },
                                 "required": ["symbol"]
                             }
                         }
                     }
                 ],
-                tool_choice="auto"
+                tool_choice="auto",
+                temperature=0.1
             )
             
             message_response = response.choices[0].message
             
-            # Check if tools were called
-            if message_response.tool_calls:
-                # Execute the tools
-                tool_results = await self._execute_tool_calls(message_response.tool_calls)
-                
-                # Generate final response with tool data
-                final_response = await self._generate_final_response(message, context, tool_results)
-                return final_response
-            else:
-                # No tools needed, use the direct response
-                return self._clean_response(message_response.content)
-                
-        except Exception as e:
-            logger.error(f"Analysis and response generation failed: {e}")
-            return "I'm processing your request. Please try again in a moment."
-    
-    async def _execute_tool_calls(self, tool_calls) -> Dict[str, Any]:
-        """Execute the tools that OpenAI determined were needed"""
-        
-        tool_results = {}
-        
-        for tool_call in tool_calls:
-            function_name = tool_call.function.name
-            arguments = json.loads(tool_call.function.arguments)
-            symbol = arguments.get("symbol", "").upper()
+            # Execute tools and collect real data
+            tool_results = {}
             
-            try:
-                if function_name == "getFundamentals" and self.fundamental_tool:
-                    result = await self.fundamental_tool.execute({
-                        "symbol": symbol,
-                        "depth": "standard",
-                        "user_style": "professional"
-                    })
-                    if result.get("success"):
-                        tool_results[f"fundamentals_{symbol}"] = result["analysis_result"]
-                
-                elif function_name == "getTechnical" and self.ta_service:
-                    result = await self.ta_service.analyze_symbol(symbol)
-                    if result:
-                        tool_results[f"technical_{symbol}"] = result
-                
-                elif function_name == "getNews" and self.news_service:
-                    result = await self.news_service.get_sentiment(symbol)
-                    if result and not result.get('error'):
-                        tool_results[f"news_{symbol}"] = result
-                        
-            except Exception as e:
-                logger.warning(f"Tool execution failed for {function_name}({symbol}): {e}")
-                continue
-        
-        return tool_results
+            if message_response.tool_calls:
+                for tool_call in message_response.tool_calls:
+                    function_name = tool_call.function.name
+                    arguments = json.loads(tool_call.function.arguments)
+                    symbol = arguments.get("symbol", "").upper()
+                    
+                    logger.info(f"🔧 LLM requested: {function_name}({symbol})")
+                    
+                    # Execute the actual tool and get real data
+                    if function_name == "getTechnical" and self.ta_service:
+                        result = await self.ta_service.analyze_symbol(symbol)
+                        if result:
+                            tool_results[f"technical_{symbol}"] = result
+                    
+                    elif function_name == "getFundamentals" and self.fundamental_tool:
+                        result = await self.fundamental_tool.execute({
+                            "symbol": symbol,
+                            "depth": "standard", 
+                            "user_style": "professional"
+                        })
+                        if result.get("success"):
+                            tool_results[f"fundamental_{symbol}"] = result["analysis_result"]
+                    
+                    elif function_name == "getNews" and self.news_service:
+                        result = await self.news_service.get_sentiment(symbol)
+                        if result and not result.get('error'):
+                            tool_results[f"news_{symbol}"] = result
+            
+            return tool_results
+            
+        except Exception as e:
+            logger.error(f"Tool calling failed: {e}")
+            return {}
     
-    async def _generate_final_response(self, message: str, context: Dict, tool_results: Dict) -> str:
-        """Generate final response using tool data and conversation context"""
+    async def _generate_contextual_prompt(self, message: str, context: Dict, tool_results: Dict) -> str:
+        """
+        LLM sees real data and generates a contextual prompt for the response agent
+        """
         
-        conversation_context = self._format_conversation_context(context)
-        formatted_data = self._format_tool_results(tool_results)
+        # Format the real data for LLM analysis
+        data_summary = self._format_tool_results_for_analysis(tool_results)
+        context_summary = self._format_context_summary(context)
         
-        final_prompt = f"""Based on the user's message, conversation context, and market data, generate a professional response.
+        prompt_generation_request = f"""You have called tools and received REAL market data. Now generate a contextual analysis prompt for the response agent.
 
-USER MESSAGE: "{message}"
+USER'S ORIGINAL REQUEST: "{message}"
+CONVERSATION CONTEXT: {context_summary}
 
-CONVERSATION CONTEXT:
-{conversation_context}
+REAL MARKET DATA RECEIVED:
+{data_summary}
 
-MARKET DATA:
-{formatted_data}
+YOUR TASK: Generate a contextual prompt that will guide the response agent to create an intelligent, data-driven response.
 
-INSTRUCTIONS:
-- Provide a direct, professional response
-- Use the market data to support your analysis
-- Reference conversation context naturally if relevant
-- Be specific and actionable
-- Stay under 480 characters
-- No casual language or emojis
-- Start with the most important information
+The prompt should:
+1. Incorporate the REAL data you received
+2. Highlight the most important insights from the data
+3. Connect different data points into a coherent narrative  
+4. Address the user's specific question with the real data
+5. Include any important context or timing considerations
+6. Provide clear guidance on tone and focus for the response
 
-Generate the response:"""
+Generate a contextual prompt that will result in an intelligent, professional trading response:"""
 
         try:
             response = await self.openai_client.chat.completions.create(
                 model="gpt-4o",
-                messages=[{"role": "user", "content": final_prompt}],
+                messages=[{"role": "user", "content": prompt_generation_request}],
+                temperature=0.3,
+                max_tokens=400
+            )
+            
+            contextual_prompt = response.choices[0].message.content.strip()
+            logger.info(f"📝 Generated contextual prompt: {len(contextual_prompt)} chars")
+            
+            return contextual_prompt
+            
+        except Exception as e:
+            logger.error(f"Contextual prompt generation failed: {e}")
+            return f"Provide a professional analysis of the market data for the user's request: {message}"
+    
+    async def _execute_response_agent(self, contextual_prompt: str) -> str:
+        """
+        Execute response agent with the contextual prompt and format restrictions
+        """
+        
+        # Add format restrictions to the contextual prompt
+        format_restricted_prompt = f"""{contextual_prompt}
+
+CRITICAL FORMAT REQUIREMENTS:
+- Keep response under 480 characters (3 SMS segments)
+- Be direct and professional - no casual greetings or emojis
+- Lead with the most important insight first
+- Include specific data points and actionable information
+- No introductory phrases like "Based on the analysis" or "Here's what I found"
+- Focus on what matters most for trading decisions
+
+Generate a professional, concise response:"""
+
+        try:
+            response = await self.openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": format_restricted_prompt}],
                 temperature=0.4,
                 max_tokens=200
             )
             
-            return self._clean_response(response.choices[0].message.content)
+            generated_response = response.choices[0].message.content.strip()
+            return self._clean_final_response(generated_response)
             
         except Exception as e:
-            logger.error(f"Final response generation failed: {e}")
-            return "Market analysis processed. Please try your request again."
+            logger.error(f"Response agent execution failed: {e}")
+            return "Market analysis completed. Please try your request again."
     
-    def _format_conversation_context(self, context: Dict) -> str:
-        """Format conversation context for prompts"""
-        
-        parts = []
-        
-        if context["conversation_flow"] == "continuing":
-            parts.append("CONTINUING CONVERSATION")
-            if context["recent_symbols"]:
-                parts.append(f"Recently discussed: {', '.join(context['recent_symbols'])}")
-            if context["last_topic"]:
-                parts.append(f"Last topic: {context['last_topic']}")
-        else:
-            parts.append("NEW CONVERSATION")
-        
-        parts.append(f"User style: {context['user_style']}")
-        
-        return "\n".join(parts)
-    
-    def _format_tool_results(self, tool_results: Dict) -> str:
-        """Format tool results for final response generation"""
+    def _format_tool_results_for_analysis(self, tool_results: Dict) -> str:
+        """Format tool results for LLM analysis"""
         
         if not tool_results:
             return "No market data retrieved"
         
-        formatted = []
+        formatted_results = []
         
         for key, data in tool_results.items():
             if key.startswith("technical_"):
@@ -330,115 +270,141 @@ Generate the response:"""
                 price_info = data.get('price', {})
                 indicators = data.get('indicators', {})
                 
-                current_price = price_info.get('current', 'N/A')
-                change_pct = price_info.get('change_percent', 0)
-                rsi = indicators.get('RSI', {}).get('value', 'N/A')
+                result_text = f"TECHNICAL DATA for {symbol}:\n"
+                result_text += f"- Current Price: ${price_info.get('current', 'N/A')}\n"
+                result_text += f"- Change: {price_info.get('change_percent', 0):+.1f}%\n"
+                result_text += f"- RSI: {indicators.get('RSI', {}).get('value', 'N/A')}\n"
+                result_text += f"- Support: ${indicators.get('support_level', 'N/A')}\n"
+                result_text += f"- Resistance: ${indicators.get('resistance_level', 'N/A')}"
                 
-                formatted.append(f"{symbol} Technical: ${current_price} ({change_pct:+.1f}%), RSI: {rsi}")
+                formatted_results.append(result_text)
             
-            elif key.startswith("fundamentals_"):
-                symbol = key.replace("fundamentals_", "")
+            elif key.startswith("fundamental_"):
+                symbol = key.replace("fundamental_", "")
+                
+                result_text = f"FUNDAMENTAL DATA for {symbol}:\n"
                 if hasattr(data, 'overall_score'):
-                    score = data.overall_score
-                    health = getattr(data, 'financial_health', 'unknown')
-                    formatted.append(f"{symbol} Fundamentals: Score {score}/100, Health: {health}")
+                    result_text += f"- Overall Score: {data.overall_score:.0f}/100\n"
+                    result_text += f"- Financial Health: {data.financial_health.value}\n"
+                    result_text += f"- Strengths: {', '.join(data.strength_areas[:3])}\n"
+                    result_text += f"- Concerns: {', '.join(data.concern_areas[:3])}"
+                else:
+                    result_text += "- Analysis data available but limited"
+                
+                formatted_results.append(result_text)
             
             elif key.startswith("news_"):
                 symbol = key.replace("news_", "")
                 news_data = data.get('news_sentiment', {})
-                sentiment = news_data.get('sentiment', 'neutral')
-                impact = news_data.get('impact_score', 0)
-                formatted.append(f"{symbol} News: {sentiment} sentiment (impact: {impact:.1f})")
+                
+                result_text = f"NEWS DATA for {symbol}:\n"
+                result_text += f"- Sentiment: {news_data.get('sentiment', 'neutral')}\n"
+                result_text += f"- Impact Score: {news_data.get('impact_score', 0):.1f}\n"
+                result_text += f"- Summary: {news_data.get('summary', 'No significant news')[:100]}"
+                
+                formatted_results.append(result_text)
         
-        return "\n".join(formatted) if formatted else "Market data processing..."
+        return "\n\n".join(formatted_results)
     
-    def _clean_response(self, response: str) -> str:
-        """Clean and format the final response"""
+    def _format_context_summary(self, context: Dict) -> str:
+        """Format conversation context"""
         
-        if not response:
-            return "I'm processing your request. Please try again."
+        if context.get("conversation_flow") == "continuing":
+            recent_symbols = context.get("recent_symbols", [])
+            last_topic = context.get("last_topic", "")
+            
+            if recent_symbols:
+                return f"Previously discussed: {', '.join(recent_symbols[:3])}. Last topic: {last_topic}."
+            else:
+                return "Continuing conversation."
+        else:
+            return "New conversation."
+    
+    def _clean_final_response(self, response: str) -> str:
+        """Clean and optimize final response"""
         
-        # Remove common AI artifacts
+        # Remove AI artifacts
         artifacts = [
-            "Here's the analysis:",
-            "Based on the data:",
-            "Let me provide:",
-            "Here you go:",
-            "Certainly!",
-            "I'll help you with that."
+            "Based on the analysis:", "Looking at the data:", "According to the information:",
+            "Here's what I found:", "The data shows:", "In summary:", "To summarize:"
         ]
         
         for artifact in artifacts:
             if response.startswith(artifact):
                 response = response[len(artifact):].strip()
         
-        # Remove quotes if they wrap entire response
-        if response.startswith('"') and response.endswith('"'):
-            response = response[1:-1]
-        
-        # Ensure reasonable length for SMS
+        # Ensure length limit
         if len(response) > 480:
             response = response[:477] + "..."
         
         return response.strip()
     
+    async def _get_conversation_context(self, user_phone: str) -> Dict[str, Any]:
+        """Get conversation context"""
+        
+        context = {
+            "recent_symbols": [],
+            "conversation_flow": "new",
+            "last_topic": None
+        }
+        
+        try:
+            if self.cache_service:
+                thread_key = f"conversation_thread:{user_phone}"
+                recent_messages = await self.cache_service.get_list(thread_key, limit=3)
+                
+                if recent_messages:
+                    context["conversation_flow"] = "continuing"
+                    # Extract symbols and topics
+                    all_symbols = []
+                    for msg in recent_messages:
+                        all_symbols.extend(msg.get("symbols", []))
+                    context["recent_symbols"] = list(dict.fromkeys(all_symbols))[:3]
+                    
+                    if recent_messages:
+                        context["last_topic"] = recent_messages[0].get("topic", "analysis")
+            
+            return context
+            
+        except Exception as e:
+            logger.warning(f"Context retrieval failed: {e}")
+            return context
+    
     async def _cache_conversation(self, user_phone: str, message: str, response: str, context: Dict):
-        """Cache conversation for future context"""
+        """Cache conversation"""
         
         try:
             if not self.cache_service:
                 return
             
-            timestamp = datetime.now().isoformat()
-            
-            # Extract symbols from message and response
+            # Extract symbols and cache conversation
             symbols = self._extract_symbols_from_text(f"{message} {response}")
             
             conversation_entry = {
-                "timestamp": timestamp,
+                "timestamp": datetime.now().isoformat(),
                 "user_message": message,
                 "bot_response": response,
                 "symbols": symbols,
-                "topic": self._determine_topic(message),
-                "conversation_flow": context.get("conversation_flow", "new")
+                "topic": self._determine_topic(message)
             }
             
-            # Cache in conversation thread
             thread_key = f"conversation_thread:{user_phone}"
-            await self.cache_service.add_to_list(thread_key, conversation_entry, max_length=10)
-            
-            logger.info(f"💾 Conversation cached: {len(symbols)} symbols, topic: {conversation_entry['topic']}")
+            await self.cache_service.add_to_list(thread_key, conversation_entry, max_length=5)
             
         except Exception as e:
             logger.warning(f"Conversation caching failed: {e}")
     
-    def _learn_from_interaction(self, user_phone: str, message: str, response: str):
-        """Simple learning from user interaction"""
-        
-        try:
-            # Simple intent extraction for learning
-            intent_data = {
-                "intent": self._determine_topic(message),
-                "symbols": self._extract_symbols_from_text(message),
-                "message_length": len(message),
-                "response_length": len(response)
-            }
-            
-            self.personality_engine.learn_from_message(user_phone, message, intent_data)
-            
-        except Exception as e:
-            logger.warning(f"Learning from interaction failed: {e}")
-    
     def _extract_symbols_from_text(self, text: str) -> List[str]:
-        """Extract stock symbols from text"""
+        """Extract symbols from text"""
         
+        import re
         symbols = []
         
-        # Common company mappings
+        # Company mappings
         company_mappings = {
             'apple': 'AAPL', 'tesla': 'TSLA', 'microsoft': 'MSFT',
-            'google': 'GOOGL', 'amazon': 'AMZN', 'meta': 'META',
-            'nvidia': 'NVDA', 'amd': 'AMD', 'intel': 'INTC'
+            'google': 'GOOGL', 'amazon': 'AMZN', 'nvidia': 'NVDA',
+            'palantir': 'PLTR'
         }
         
         text_lower = text.lower()
@@ -446,43 +412,39 @@ Generate the response:"""
             if company in text_lower:
                 symbols.append(symbol)
         
-        # Extract ticker patterns (2-5 uppercase letters)
+        # Extract tickers
         ticker_pattern = r'\b[A-Z]{2,5}\b'
         potential_tickers = re.findall(ticker_pattern, text)
         for ticker in potential_tickers:
-            if ticker not in ['SMS', 'API', 'USA', 'NYSE', 'NASDAQ']:
+            if ticker not in ['SMS', 'API', 'USA']:
                 symbols.append(ticker)
         
-        return list(dict.fromkeys(symbols))  # Remove duplicates
+        return list(dict.fromkeys(symbols))
     
     def _determine_topic(self, message: str) -> str:
-        """Determine the topic/intent of the message"""
+        """Determine topic"""
         
         message_lower = message.lower()
         
-        if any(word in message_lower for word in ['fundamental', 'fundamentals', 'earnings', 'pe ratio']):
+        if any(word in message_lower for word in ['fundamental', 'fundamentals']):
             return "fundamental_analysis"
-        elif any(word in message_lower for word in ['technical', 'chart', 'rsi', 'support', 'resistance']):
+        elif any(word in message_lower for word in ['technical', 'chart']):
             return "technical_analysis"
-        elif any(word in message_lower for word in ['news', 'sentiment', 'headlines']):
+        elif any(word in message_lower for word in ['news', 'sentiment']):
             return "news_analysis"
-        elif any(word in message_lower for word in ['portfolio', 'positions']):
-            return "portfolio"
         else:
             return "general_analysis"
 
 
+# Drop-in replacement for existing processor
 class ComprehensiveMessageProcessor:
-    """
-    Simplified main processor that uses the conversation-aware agent
-    """
+    """Enhanced processor using data-driven agent"""
     
     def __init__(self, openai_client, ta_service, personality_engine, 
                  cache_service=None, news_service=None, fundamental_tool=None, 
                  portfolio_service=None, screener_service=None):
         
-        # Create the single conversation-aware agent
-        self.conversation_agent = ConversationAwareAgent(
+        self.data_driven_agent = DataDrivenAgent(
             openai_client=openai_client,
             ta_service=ta_service,
             news_service=news_service,
@@ -495,94 +457,27 @@ class ComprehensiveMessageProcessor:
         self.cache_service = cache_service
     
     async def process_message(self, message: str, user_phone: str) -> str:
-        """
-        Simplified message processing - just call the conversation agent
-        """
+        """Process using data-driven agent"""
         
         try:
-            logger.info(f"🎯 Processing with Conversation-Aware Agent: '{message}' from {user_phone}")
-            
-            # Let the conversation agent handle everything
-            response = await self.conversation_agent.process_message(message, user_phone)
-            
-            logger.info(f"✅ Conversation-aware response generated: {len(response)} chars")
-            
+            response = await self.data_driven_agent.process_message(message, user_phone)
             return response
             
         except Exception as e:
-            logger.error(f"💥 Message processing failed: {e}")
-            return "I'm having some technical difficulties, but I'm here to help! Please try again."
+            logger.error(f"💥 Data-driven processing failed: {e}")
+            return "Market analysis processing. Please try again shortly."
 
 
-# Backward compatibility wrapper
+# Backward compatibility
 class TradingAgent:
-    """Backward compatibility wrapper for the old TradingAgent interface"""
-    
     def __init__(self, openai_client, personality_engine):
-        self.openai_client = openai_client
-        self.personality_engine = personality_engine
-        
+        pass
+    
     async def parse_intent(self, message: str, user_phone: str = None) -> Dict[str, Any]:
-        """Legacy interface - simple intent parsing"""
-        
-        message_lower = message.lower()
-        
-        # Extract symbols
-        symbols = []
-        company_mappings = {
-            'apple': 'AAPL', 'tesla': 'TSLA', 'microsoft': 'MSFT',
-            'google': 'GOOGL', 'amazon': 'AMZN', 'nvidia': 'NVDA'
-        }
-        
-        for company, symbol in company_mappings.items():
-            if company in message_lower:
-                symbols.append(symbol)
-        
-        # Extract ticker patterns
-        ticker_pattern = r'\b[A-Z]{2,5}\b'
-        potential_tickers = re.findall(ticker_pattern, message)
-        for ticker in potential_tickers:
-            if ticker not in ['SMS', 'API', 'USA']:
-                symbols.append(ticker)
-        
-        # Determine intent
-        if any(word in message_lower for word in ['fundamental', 'fundamentals', 'earnings']):
-            intent = "fundamental"
-        elif any(word in message_lower for word in ['technical', 'chart', 'rsi']):
-            intent = "technical"
-        elif symbols:
-            intent = "analyze"
-        else:
-            intent = "general"
-        
-        return {
-            "intent": intent,
-            "symbols": list(dict.fromkeys(symbols)),
-            "parameters": {"urgency": "medium", "complexity": "medium"},
-            "requires_tools": ["technical_analysis"] if symbols else [],
-            "confidence": 0.8,
-            "user_emotion": "neutral",
-            "urgency": "medium"
-        }
+        return {"intent": "analyze", "symbols": [], "confidence": 0.8}
 
-
-# Export classes
-__all__ = [
-    'ConversationAwareAgent',  # New simplified agent
-    'ComprehensiveMessageProcessor',  # Simplified processor
-    'TradingAgent'  # Backward compatibility
-]
-
-# Backward compatibility - dummy export for services that still import it
 class ToolExecutor:
-    """Dummy class for backward compatibility"""
     def __init__(self, *args, **kwargs):
         pass
 
-# Add to exports
-__all__ = [
-    'ConversationAwareAgent',
-    'ComprehensiveMessageProcessor', 
-    'TradingAgent',
-    'ToolExecutor'  # For backward compatibility
-]
+__all__ = ['DataDrivenAgent', 'ComprehensiveMessageProcessor', 'TradingAgent', 'ToolExecutor']
