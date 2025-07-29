@@ -136,7 +136,7 @@ except Exception as e:
     logger.error(f"❌ EODHDScreener failed: {e}")
 
 try:
-    from services.backgroundjob.options_service import OptionsAnalyzer
+    from services.options_service import OptionsEngine as OptionsAnalyzer
     logger.info("✅ OptionsAnalyzer imported")
 except Exception as e:
     OptionsAnalyzer = None
