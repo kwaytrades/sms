@@ -90,9 +90,7 @@ class EODHDScreener:
             await self.redis_client.ping()
             
             logger.info("✅ Screener service initialized - DB connections ready")
-            
-            # Warm up popular screen cache (skip API calls during startup)
-            await self._warm_up_popular_screens()
+            logger.info("📊 Screener will run on-demand when users make screening queries")
             
         except Exception as e:
             logger.error(f"❌ Screener service initialization failed: {e}")
@@ -638,31 +636,31 @@ class EODHDScreener:
             logger.warning(f"⚠️ Redis cache set failed: {e}")
     
     async def _warm_up_popular_screens(self):
-        """Pre-compute and cache popular screening patterns (skip API during startup)"""
+        """Pre-compute and cache popular screening patterns (called on-demand only)"""
         try:
-            logger.info("🔥 Warming up popular screen cache...")
+            logger.info("🔥 Warming up popular screen cache on first use...")
             
             for screen_name, screen_criteria in self.popular_screens.items():
                 try:
                     # Convert to standard criteria format
                     criteria = {"custom_filter": screen_criteria}
                     
-                    # Only run MongoDB queries during warm-up, skip API calls
+                    # Only run MongoDB queries, skip API calls during warm-up
                     start_time = datetime.now()
                     mongodb_results = await self._query_mongodb_cache(criteria)
                     response_time = (datetime.now() - start_time).total_seconds() * 1000
                     
-                    # Cache empty results for now (will be populated when background job runs)
+                    # Cache results for future use (empty until background job populates data)
                     screen_key = self._get_screen_cache_key(criteria)
                     await self._cache_screen_result(screen_key, mongodb_results)
                     
-                    logger.info(f"✅ Warmed up: {screen_name}")
+                    logger.info(f"✅ Cached {screen_name}: {len(mongodb_results)} results")
                     
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to warm up {screen_name}: {e}")
                 
                 # Small delay between warm-up screens
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
             
             logger.info("✅ Popular screen cache warm-up completed")
             
