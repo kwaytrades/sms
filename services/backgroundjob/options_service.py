@@ -3,5 +3,7 @@
 
 from ..options_service import OptionsEngine
 
-# Re-export the main class for backward compatibility
-__all__ = ['OptionsEngine']
+# Re-export with the expected class name for backward compatibility
+OptionsAnalyzer = OptionsEngine
+
+__all__ = ['OptionsAnalyzer', 'OptionsEngine']
