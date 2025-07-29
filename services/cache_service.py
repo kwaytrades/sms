@@ -1,113 +1,112 @@
-# services/cache_service.py - NEW FILE NEEDED
+# services/cache_service.py - FIXED VERSION
 
 import json
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import Optional, Dict, Any, List, Union
 from loguru import logger
-import redis.asyncio as redis
+from datetime import datetime
 
 class CacheService:
-    """
-    Cache service for fast context retrieval in orchestrator
-    Provides methods for storing and retrieving conversation context
-    """
+    """Cache service that properly handles lists and serialization"""
     
     def __init__(self, redis_client):
         self.redis = redis_client
-    
-    async def get_list(self, key: str, limit: int = 5) -> List[Any]:
-        """Get list items from cache"""
-        try:
-            # Get list items (most recent first)
-            items = await self.redis.lrange(key, 0, limit - 1)
-            
-            # Deserialize JSON items
-            result = []
-            for item in items:
-                try:
-                    if isinstance(item, bytes):
-                        item = item.decode('utf-8')
-                    result.append(json.loads(item))
-                except json.JSONDecodeError:
-                    # Handle non-JSON items (like simple strings)
-                    result.append(item)
-            
-            return result
-            
-        except Exception as e:
-            logger.warning(f"Cache get_list failed for {key}: {e}")
-            return []
-    
-    async def add_to_list(self, key: str, item: Any, max_length: int = 10) -> None:
-        """Add item to list cache with automatic trimming"""
-        try:
-            # Serialize item to JSON
-            if isinstance(item, (dict, list)):
-                serialized_item = json.dumps(item)
-            else:
-                serialized_item = str(item)
-            
-            # Add to front of list
-            await self.redis.lpush(key, serialized_item)
-            
-            # Trim list to max length
-            await self.redis.ltrim(key, 0, max_length - 1)
-            
-            # Set TTL if this is a new key
-            ttl = await self.redis.ttl(key)
-            if ttl == -1:  # No TTL set
-                await self.redis.expire(key, 86400)  # 24 hours default
-                
-        except Exception as e:
-            logger.warning(f"Cache add_to_list failed for {key}: {e}")
-    
+        
     async def get(self, key: str) -> Optional[Any]:
         """Get single value from cache"""
         try:
-            value = await self.redis.get(key)
-            if value is None:
+            if not self.redis:
                 return None
-            
-            if isinstance(value, bytes):
-                value = value.decode('utf-8')
-            
-            # Try to deserialize JSON
-            try:
-                return json.loads(value)
-            except json.JSONDecodeError:
-                return value
                 
+            cached_data = await self.redis.get(key)
+            if cached_data:
+                return json.loads(cached_data)
+            return None
+            
         except Exception as e:
-            logger.warning(f"Cache get failed for {key}: {e}")
+            logger.error(f"Cache get error for {key}: {e}")
             return None
     
-    async def set(self, key: str, value: Any, ttl: int = 3600) -> None:
-        """Set single value in cache with TTL"""
+    async def set(self, key: str, value: Any, ttl: int = 3600) -> bool:
+        """Set single value in cache"""
         try:
-            # Serialize value
-            if isinstance(value, (dict, list)):
-                serialized_value = json.dumps(value)
-            else:
-                serialized_value = str(value)
-            
-            # Set with TTL
+            if not self.redis:
+                return False
+                
+            serialized_value = json.dumps(value, default=self._json_serializer)
             await self.redis.setex(key, ttl, serialized_value)
+            return True
             
         except Exception as e:
-            logger.warning(f"Cache set failed for {key}: {e}")
+            logger.error(f"Cache set error for {key}: {e}")
+            return False
     
-    async def delete(self, key: str) -> None:
+    async def get_list(self, key: str, limit: int = 10) -> List[Any]:
+        """Get list from cache (stored as JSON array)"""
+        try:
+            if not self.redis:
+                return []
+                
+            cached_data = await self.redis.get(key)
+            if cached_data:
+                data = json.loads(cached_data)
+                if isinstance(data, list):
+                    return data[:limit]  # Return limited number of items
+                else:
+                    # If it's not a list, return it as single item
+                    return [data]
+            return []
+            
+        except Exception as e:
+            logger.error(f"Cache get_list error for {key}: {e}")
+            return []
+    
+    async def add_to_list(self, key: str, items: Union[Any, List[Any]], max_length: int = 10) -> bool:
+        """Add items to list in cache"""
+        try:
+            if not self.redis:
+                return False
+            
+            # Get current list
+            current_list = await self.get_list(key, limit=max_length)
+            
+            # Add new items
+            if isinstance(items, list):
+                # If items is a list, extend current list
+                current_list.extend(items)
+            else:
+                # If items is a single item, append it
+                current_list.append(items)
+            
+            # Keep only the most recent items
+            if len(current_list) > max_length:
+                current_list = current_list[-max_length:]
+            
+            # Store back as JSON
+            await self.set(key, current_list, ttl=86400)  # 24 hour TTL
+            return True
+            
+        except Exception as e:
+            logger.error(f"Cache add_to_list error for {key}: {e}")
+            return False
+    
+    async def delete(self, key: str) -> bool:
         """Delete key from cache"""
         try:
+            if not self.redis:
+                return False
+                
             await self.redis.delete(key)
+            return True
+            
         except Exception as e:
-            logger.warning(f"Cache delete failed for {key}: {e}")
+            logger.error(f"Cache delete error for {key}: {e}")
+            return False
     
-    async def get_keys_pattern(self, pattern: str) -> List[str]:
-        """Get all keys matching pattern"""
-        try:
-            keys = await self.redis.keys(pattern)
-            return [key.decode('utf-8') if isinstance(key, bytes) else key for key in keys]
-        except Exception as e:
-            logger.warning(f"Cache get_keys_pattern failed for {pattern}: {e}")
-            return []
+    def _json_serializer(self, obj):
+        """Custom JSON serializer for datetime objects"""
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        elif hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
