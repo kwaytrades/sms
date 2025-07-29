@@ -565,7 +565,6 @@ class BackgroundDataPipeline:
             "PYPL",     # PayPal - Crypto services
             "SOFI",     # SoFi - Crypto trading
             "SI",       # Silvergate Capital (crypto banking)
-            "COIN",     # Coinbase
             "MSTR",     # MicroStrategy - Bitcoin treasury
             
             # === AI & MACHINE LEARNING (EXPANDED) ===
@@ -1099,8 +1098,306 @@ class BackgroundDataPipeline:
             "LSK",      # Lisk
             "STRAT",    # Stratis
             
-            # Many more crypto symbols following the same pattern...
-            # (Including DeFi, Gaming, Layer 1/2, Meme coins, AI tokens, Privacy coins, etc.)
+            # === DEFI TOKENS (100+) ===
+            "UNI",      # Uniswap
+            "AAVE",     # Aave
+            "COMP",     # Compound
+            "YFI",      # yearn.finance
+            "SNX",      # Synthetix
+            "MKR",      # Maker
+            "CRV",      # Curve DAO Token
+            "SUSHI",    # SushiSwap
+            "1INCH",    # 1inch
+            "BAL",      # Balancer
+            "UMA",      # UMA
+            "REN",      # Ren
+            "KNC",      # Kyber Network Crystal
+            "ZRX",      # 0x
+            "REP",      # Augur
+            "NMR",      # Numeraire
+            "MLN",      # Melon
+            "ANT",      # Aragon
+            "BAND",     # Band Protocol
+            "OCEAN",    # Ocean Protocol
+            "ALPHA",    # Alpha Finance Lab
+            "DYDX",     # dYdX
+            "ENS",      # Ethereum Name Service
+            "LOOKS",    # LooksRare
+            "CVX",      # Convex Finance
+            "FXS",      # Frax Share
+            "ALCX",     # Alchemix
+            "BADGER",   # Badger DAO
+            "FARM",     # Harvest Finance
+            "CREAM",    # Cream Finance
+            "PICKLE",   # Pickle Finance
+            "BOBA",     # Boba Network
+            "PERP",     # Perpetual Protocol
+            "GMX",      # GMX
+            "JOE",      # TraderJoe
+            "TIME",     # Wonderland
+            "SPELL",    # Spell Token
+            "ICE",      # IceToken
+            "TOMB",     # Tomb Finance
+            "SPIRIT",   # SpiritSwap
+            "BOO",      # Spookyswap
+            "LQTY",     # Liquity
+            "LUSD",     # Liquity USD
+            "RAI",      # Rai Reflex Index
+            "OHM",      # Olympus
+            "KLIMA",    # Klima DAO
+            "BTRFLY",   # Redacted Cartel
+            "FPIS",     # Frax Price Index Share
+            "CRV",      # Curve DAO Token
+            "CVX",      # Convex Finance
+            "LDO",      # Lido DAO
+            "RPL",      # Rocket Pool
+            "ANKR",     # Ankr
+            
+            # === GAMING & METAVERSE (50+) ===
+            "AXS",      # Axie Infinity
+            "SAND",     # The Sandbox
+            "MANA",     # Decentraland
+            "ENJ",      # Enjin Coin
+            "GALA",     # Gala
+            "APE",      # ApeCoin
+            "CHZ",      # Chiliz
+            "FLOW",     # Flow
+            "IMX",      # Immutable X
+            "WAX",      # WAX
+            "ALICE",    # MyNeighborAlice
+            "TLM",      # Alien Worlds
+            "SLP",      # Smooth Love Potion
+            "ILV",      # Illuvium
+            "STAR",     # StarAtlas
+            "POLIS",    # Star Atlas DAO
+            "YGG",      # Yield Guild Games
+            "GHST",     # Aavegotchi
+            "REVV",     # REVV
+            "PLA",      # PlayDapp
+            "TOWER",    # Tower
+            "UFO",      # UFO Gaming
+            "GODS",     # Gods Unchained
+            "SKILL",    # CryptoBlades
+            "DG",       # Decentral Games
+            "NFTX",     # NFTX
+            "RARI",     # Rarible
+            "SUPER",    # SuperFarm
+            "DEGO",     # Dego Finance
+            "DOSE",     # Dose Token
+            "NAKA",     # Nakamoto Games
+            "CWAR",     # Cryowar
+            "SIPHER",   # Sipher
+            "MONI",     # Monsta Infinite
+            "HERO",     # Step Hero
+            "JEWEL",    # DeFi Kingdoms
+            "CRYSTAL",  # CrystalVerse
+            "REALM",    # Realm
+            "GAM",      # Gamium
+            "GAFI",     # GameFi
+            "CREO",     # Creo Engine
+            "VRA",      # Verasity
+            "ERN",      # Ethernity Chain
+            "WHALE",    # Whale
+            "NFTB",     # NFTb
+            "RFOX",     # RedFOX Labs
+            "OVR",      # Ovr
+            "MOBOX",    # Mobox
+            "HIGH",     # Highstreet
+            "DPET",     # My DeFi Pet
+            "BYG",      # Baby Doge Game
+            
+            # === LAYER 1 BLOCKCHAINS (30+) ===
+            "SOL",      # Solana
+            "ADA",      # Cardano
+            "AVAX",     # Avalanche
+            "DOT",      # Polkadot
+            "NEAR",     # NEAR Protocol
+            "ATOM",     # Cosmos
+            "ALGO",     # Algorand
+            "XTZ",      # Tezos
+            "EGLD",     # MultiversX
+            "HBAR",     # Hedera
+            "FTM",      # Fantom
+            "ONE",      # Harmony
+            "ZIL",      # Zilliqa
+            "VET",      # VeChain
+            "ICX",      # ICON
+            "QTUM",     # Qtum
+            "LSK",      # Lisk
+            "WAVES",    # Waves
+            "KSM",      # Kusama
+            "ROSE",     # Oasis Network
+            "CKB",      # Nervos Network
+            "CELO",     # Celo
+            "KAVA",     # Kava
+            "SECRET",   # Secret
+            "SCRT",     # Secret Network
+            "OSMO",     # Osmosis
+            "JUNO",     # Juno Network
+            "EVMOS",    # Evmos
+            "REGEN",    # Regen Network
+            "ROWAN",    # Sifchain
+            "IOV",      # Starname
+            "AKT",      # Akash Network
+            "DVPN",     # Sentinel
+            "NGM",      # e-Money
+            "XPRT",     # Persistence
+            "IRIS",     # IRISnet
+            "CRE",      # Crescent Network
+            "CMDX",     # Comdex
+            "HUAHUA",   # Chihuahua
+            "BTSG",     # BitSong
+            
+            # === LAYER 2 & SCALING (20+) ===
+            "MATIC",    # Polygon
+            "ARB",      # Arbitrum
+            "OP",       # Optimism
+            "LRC",      # Loopring
+            "IMX",      # Immutable X
+            "BOBA",     # Boba Network
+            "METIS",    # Metis
+            "SKL",      # SKALE Network
+            "OMG",      # OMG Network
+            "RDN",      # Raiden Network Token
+            "CELR",     # Celer Network
+            "HOT",      # Holo
+            "IOTX",     # IoTeX
+            "ZK",       # zkSync
+            "STRK",     # StarkNet
+            "MINA",     # Mina
+            "COTI",     # COTI
+            "LTO",      # LTO Network
+            "DUSK",     # Dusk Network
+            "BEAM",     # Beam
+            "GRIN",     # Grin
+            
+            # === MEME COINS & COMMUNITY (50+) ===
+            "DOGE",     # Dogecoin
+            "SHIB",     # Shiba Inu
+            "PEPE",     # Pepe
+            "FLOKI",    # FLOKI
+            "WIF",      # dogwifhat
+            "BONK",     # Bonk
+            "BABYDOGE", # Baby Doge Coin
+            "ELON",     # Dogelon Mars
+            "AKITA",    # Akita Inu
+            "KISHU",    # Kishu Inu
+            "HOGE",     # Hoge Finance
+            "HOKK",     # Hokkaido Inu
+            "CATGIRL",  # Catgirl
+            "CATE",     # CateCoin
+            "SAITAMA",  # Saitama
+            "LUFFY",    # Luffy
+            "GOKU",     # Goku
+            "KUMA",     # Kuma Inu
+            "PITBULL",  # Pitbull
+            "ELONGATE", # ElonGate
+            "SAFEMOON", # SafeMoon
+            "CUMROCKET",# CumRocket
+            "ASS",      # Australian Safe Shepherd
+            "PUSSY",    # PussyDAO
+            "BOOBA",    # Booba Token
+            "MILF",     # MILF Token
+            "PORN",     # PornRocket
+            "XXX",      # XXXNifty
+            "NSFW",     # Pleasure Coin
+            "TABOO",    # TABOO Token
+            "SPANK",    # SpankChain
+            "CUM",      # Cuminu
+            "TITS",     # TitsCoin
+            "DRUGS",    # Drugs Token
+            "WEED",     # WeedCash
+            "METH",     # Meth Token
+            "CRACK",    # CrackToken
+            "BEER",     # BeerCoin
+            "WINE",     # WineChain
+            "PIZZA",    # PizzaCoin
+            "BURGER",   # BurgerCities
+            "TACO",     # TacoCoin
+            "SUSHI",    # SushiSwap
+            "CAKE",     # PancakeSwap
+            "DONUT",    # Donut
+            "BANANA",   # ApeSwap Finance
+            "CHERRY",   # Cherry Network
+            "APPLE",    # Apple Network
+            "LEMON",    # Lemon
+            "ORANGE",   # Orange
+            "GRAPE",    # Grape Protocol
+            "BERRY",    # Berry Data
+            "HONEY",    # Honey
+            "SUGAR",    # Sugar Kingdom Odyssey
+            "SALT",     # Salt
+            
+            # === AI & DATA TOKENS (30+) ===
+            "FET",      # Fetch.ai
+            "OCEAN",    # Ocean Protocol
+            "AGIX",     # SingularityNET
+            "RNDR",     # Render Token
+            "GRT",      # The Graph
+            "LINK",     # Chainlink
+            "BAND",     # Band Protocol
+            "API3",     # API3
+            "TRB",      # Tellor
+            "NMR",      # Numeraire
+            "MLN",      # Melon
+            "ARKM",     # Arkham
+            "CTI",      # ClinTex
+            "MDT",      # Measurable Data Token
+            "DATA",     # Data Economy Index
+            "DIA",      # DIA
+            "DOS",      # DOS Network
+            "NEST",     # NEST Protocol
+            "RAZOR",    # Razor Network
+            "FLUX",     # Flux
+            "RLC",      # iExec RLC
+            "PHALA",    # Phala Network
+            "AI",       # SingularityNET
+            "AIOZ",     # AIOZ Network
+            "ALEPH",    # Aleph.im
+            "CUDOS",    # Cudos
+            "CARTESI",  # Cartesi
+            "FORTE",    # Forte
+            "EFFECT",   # Effect Network
+            "DEEP",     # Deep Brain Chain
+            
+            # === PRIVACY COINS (15+) ===
+            "XMR",      # Monero
+            "ZEC",      # Zcash
+            "DASH",     # Dash
+            "FIRO",     # Firo
+            "BEAM",     # Beam
+            "GRIN",     # Grin
+            "HAVEN",    # Haven Protocol
+            "ARRR",     # Pirate Chain
+            "DERO",     # Dero
+            "RYO",      # Ryo Currency
+            "TURTLE",   # TurtleCoin
+            "SUMO",     # Sumokoin
+            "AEON",     # Aeon
+            "LOKI",     # Loki
+            "OXEN",     # Oxen
+            
+            # === ENTERPRISE & INSTITUTIONAL (20+) ===
+            "XRP",      # Ripple
+            "XLM",      # Stellar
+            "HBAR",     # Hedera
+            "IOTA",     # IOTA
+            "VET",      # VeChain
+            "QNT",      # Quant
+            "LCX",      # LCX
+            "POWR",     # Power Ledger
+            "WTC",      # Waltonchain
+            "AMB",      # Ambrosus
+            "TEL",      # Telcoin
+            "TFUEL",    # Theta Fuel
+            "HOT",      # Holo
+            "REQ",      # Request Network
+            "ORN",      # Orion Protocol
+            "POLY",     # Polymath
+            "STO",      # StoreCoin
+            "SWTH",     # Switcheo
+            "ZCN",      # 0Chain
+            "POLS",     # Polkastarter
         ]
     
     async def _create_indexes(self):
@@ -1347,7 +1644,7 @@ class BackgroundDataPipeline:
         
         try:
             async with aiohttp.ClientSession() as session:
-                for symbol in self.stock_universe[:10]:  # Test with first 10 stocks
+                for symbol in self.stock_universe:
                     try:
                         # Get 3 months of historical data for calculations
                         end_date = datetime.now().strftime('%Y-%m-%d')
@@ -1536,7 +1833,7 @@ class BackgroundDataPipeline:
         try:
             # Fundamental data requires individual API calls
             async with aiohttp.ClientSession() as session:
-                for symbol in self.stock_universe[:10]:  # Test with first 10 stocks
+                for symbol in self.stock_universe:
                     try:
                         url = f"https://eodhd.com/api/fundamentals/{symbol}.US"
                         params = {
