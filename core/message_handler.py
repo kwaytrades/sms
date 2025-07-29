@@ -40,8 +40,8 @@ class MessageHandler:
                 # Update conversation context for existing flow
                 await self._update_conversation_context(phone_number, message_body, response)
             
-            # Send response (existing functionality)
-            await self.twilio.send_sms(phone_number, response)
+            # Send response (FIXED METHOD NAME)
+            await self.twilio.send_message(phone_number, response)  # ✅ FIXED: send_sms → send_message
             
             # Update usage (existing functionality)
             await self._update_weekly_usage(user)
@@ -107,7 +107,7 @@ class MessageHandler:
         else:
             message += "Limits reset Monday 9:30 AM EST."
         
-        await self.twilio.send_sms(user.phone_number, message)
+        await self.twilio.send_message(user.phone_number, message)  # ✅ FIXED: send_sms → send_message
     
     async def _update_weekly_usage(self, user: UserProfile):
         """Update weekly usage counter"""
