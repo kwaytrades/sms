@@ -342,21 +342,8 @@ async def sms_webhook(request: Request, background_tasks: BackgroundTasks):
         response_text = await process_sms_message(message_body, from_number)
         
         # Background processing
-        if message_handler:
-            background_tasks.add_task(
-                message_handler.process_incoming_message,
-                from_number,
-                message_body
-            )
+      
         
-        return PlainTextResponse(
-            '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-            media_type="application/xml"
-        )
-        
-    except Exception as e:
-        logger.error(f"❌ SMS webhook error: {e}")
-        return PlainTextResponse("Internal error", status_code=500)
 
 async def process_sms_message(message_body: str, phone_number: str) -> str:
     """Process SMS using orchestrator or fallback"""
