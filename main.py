@@ -1,4 +1,5 @@
-# ===== main.py - CLAUDE-POWERED CONVERSATION-AWARE AGENT =====
+# Import configuration
+from config import settings# ===== main.py - CLAUDE-POWERED CONVERSATION-AWARE AGENT =====
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
 import uvicorn
@@ -348,7 +349,7 @@ async def health_check():
                 "hybrid_agent": "available" if hybrid_agent else "unavailable"
             },
             "preferences": {
-                "prefer_claude": os.getenv('PREFER_CLAUDE', 'true').lower() == 'true',
+                "prefer_claude": settings.prefer_claude,
                 "active_agent": get_agent_type()
             }
         }
@@ -468,7 +469,7 @@ async def admin_dashboard():
                 "superior_analysis": claude_agent is not None
             },
             "preferences": {
-                "prefer_claude": os.getenv('PREFER_CLAUDE', 'true').lower() == 'true',
+                "prefer_claude": settings.prefer_claude,
                 "active_agent": get_agent_type()
             }
         }
@@ -596,12 +597,12 @@ async def diagnose_services():
     diagnosis = {
         "timestamp": datetime.now().isoformat(),
         "environment_variables": {
-            "OPENAI_API_KEY": "Set" if os.getenv('OPENAI_API_KEY') else "Missing",
-            "ANTHROPIC_API_KEY": "Set" if os.getenv('ANTHROPIC_API_KEY') else "Missing",
-            "EODHD_API_KEY": "Set" if os.getenv('EODHD_API_KEY') else "Missing",
-            "MONGODB_URL": "Set" if os.getenv('MONGODB_URL') else "Missing",
-            "TWILIO_ACCOUNT_SID": "Set" if os.getenv('TWILIO_ACCOUNT_SID') else "Missing",
-            "PREFER_CLAUDE": os.getenv('PREFER_CLAUDE', 'true').lower() == 'true'
+            "OPENAI_API_KEY": "Set" if settings.openai_api_key else "Missing",
+            "ANTHROPIC_API_KEY": "Set" if settings.anthropic_api_key else "Missing",
+            "EODHD_API_KEY": "Set" if settings.eodhd_api_key else "Missing",
+            "MONGODB_URL": "Set" if settings.mongodb_url else "Missing",
+            "TWILIO_ACCOUNT_SID": "Set" if settings.twilio_account_sid else "Missing",
+            "PREFER_CLAUDE": settings.prefer_claude
         },
         "service_status": {
             "database": db_service is not None,
@@ -622,11 +623,11 @@ async def diagnose_services():
     }
     
     # Generate recommendations
-    if not os.getenv('ANTHROPIC_API_KEY'):
+    if not settings.anthropic_api_key:
         diagnosis["recommendations"].append("❌ Set ANTHROPIC_API_KEY for Claude-powered responses")
-    if not os.getenv('OPENAI_API_KEY'):
+    if not settings.openai_api_key:
         diagnosis["recommendations"].append("⚠️ Set OPENAI_API_KEY for OpenAI fallback")
-    if not os.getenv('EODHD_API_KEY'):
+    if not settings.eodhd_api_key:
         diagnosis["recommendations"].append("❌ Set EODHD_API_KEY for market data")
     if not active_agent:
         diagnosis["recommendations"].append("❌ No agents available - check API keys")
@@ -846,8 +847,8 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Claude-Powered SMS Trading Bot on port {port}")
     logger.info(f"Environment: {settings.environment}")
-    logger.info(f"Claude Preference: {os.getenv('PREFER_CLAUDE', 'true')}")
-    logger.info(f"Available: Claude={anthropic is not None and os.getenv('ANTHROPIC_API_KEY')}, OpenAI={os.getenv('OPENAI_API_KEY') is not None}")
+    logger.info(f"Claude Preference: {settings.prefer_claude}")
+    logger.info(f"Available: Claude={anthropic is not None and settings.anthropic_api_key}, OpenAI={settings.openai_api_key is not None}")
     
     uvicorn.run(
         "main:app",
