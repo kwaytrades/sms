@@ -571,3 +571,17 @@ __all__ = [
     'ComprehensiveMessageProcessor',  # Simplified processor
     'TradingAgent'  # Backward compatibility
 ]
+
+# Backward compatibility - dummy export for services that still import it
+class ToolExecutor:
+    """Dummy class for backward compatibility"""
+    def __init__(self, *args, **kwargs):
+        pass
+
+# Add to exports
+__all__ = [
+    'ConversationAwareAgent',
+    'ComprehensiveMessageProcessor', 
+    'TradingAgent',
+    'ToolExecutor'  # For backward compatibility
+]
