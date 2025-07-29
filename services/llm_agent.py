@@ -1,4 +1,4 @@
-# services/llm_agent.py - FINAL COMPREHENSIVE ORCHESTRATOR AGENT
+# services/llm_agent.py - CLEANED VERSION (Removed Legacy Code)
 
 import json
 import asyncio
@@ -9,9 +9,11 @@ import openai
 from datetime import datetime
 from openai import AsyncOpenAI
 
+# ===== COMPREHENSIVE ORCHESTRATOR (Advanced Intent Analysis) =====
+
 class ComprehensiveOrchestrator:
     """
-    Final comprehensive orchestrator that analyzes intent, selects engines, 
+    Advanced orchestrator that analyzes intent, selects engines, 
     gathers context from cache, and creates structured instructions for response agent
     """
     
@@ -603,7 +605,7 @@ URGENCY ASSESSMENT:
         return focus_areas
 
 
-# ===== TOOL EXECUTOR (Enhanced for orchestrator integration) =====
+# ===== TOOL EXECUTOR (Parallel Engine Execution) =====
 
 class ToolExecutor:
     """Enhanced tool executor that works with orchestrator instructions"""
@@ -728,7 +730,7 @@ class ToolExecutor:
             
         except Exception as e:
             logger.error(f"Fundamental analysis failed: {e}")
-            return {"fundamental_analysis_unavailable": True)
+            return {"fundamental_analysis_unavailable": True}
     
     async def _execute_stock_screener(self, parameters: Dict) -> Dict:
         """Execute stock screening with parameters"""
@@ -757,7 +759,7 @@ class ToolExecutor:
             return {"portfolio_unavailable": True}
 
 
-# ===== RESPONSE AGENT =====
+# ===== RESPONSE AGENT (Specialized Response Generation) =====
 
 class ResponseAgent:
     """
@@ -905,7 +907,7 @@ Follow the orchestrator instructions exactly. Generate the perfect response:"""
         return response
 
 
-# ===== MAIN COMPREHENSIVE MESSAGE PROCESSOR =====
+# ===== MAIN COMPREHENSIVE MESSAGE PROCESSOR (Master Pipeline) =====
 
 class ComprehensiveMessageProcessor:
     """Final main processor that orchestrates the complete message handling flow"""
