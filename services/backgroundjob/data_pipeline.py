@@ -44,6 +44,7 @@ class BackgroundDataPipeline:
             "cleanup_job_running": False,
             "total_stocks_cached": 0,
             "last_error": None,# services/backgroundjob/data_pipeline.py
+        }
 import asyncio
 import aiohttp
 import logging
