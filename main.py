@@ -539,11 +539,15 @@ async def get_background_job_status():
     try:
         pipeline_status = await background_pipeline.get_job_status()
         
-        # Add database stats
-        stock_count = await background_pipeline.db.stocks.count_documents({})
-        latest_update = await background_pipeline.db.stocks.find_one(
-            sort=[("last_updated", -1)]
-        )
+        # Add database stats - fix the MongoDB comparison
+        if background_pipeline.db is not None:
+            stock_count = await background_pipeline.db.stocks.count_documents({})
+            latest_update = await background_pipeline.db.stocks.find_one(
+                sort=[("last_updated", -1)]
+            )
+        else:
+            stock_count = 0
+            latest_update = None
         
         # Add service availability
         pipeline_status.update({
@@ -620,14 +624,23 @@ async def get_sample_cached_data(symbol: str):
     try:
         symbol = symbol.upper()
         
-        # Get from MongoDB
-        mongo_data = await background_pipeline.db.stocks.find_one({"symbol": symbol})
+        # Get from MongoDB - fix the comparison
+        if background_pipeline.db is not None:
+            mongo_data = await background_pipeline.db.stocks.find_one({"symbol": symbol})
+        else:
+            mongo_data = None
         
-        # Get from Redis
-        redis_basic = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:basic")
-        redis_technical = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:technical")
-        redis_fundamental = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:fundamental")
-        redis_tags = await background_pipeline.redis_client.smembers(f"stock:{symbol}:tags")
+        # Get from Redis - fix the comparison  
+        if background_pipeline.redis_client is not None:
+            redis_basic = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:basic")
+            redis_technical = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:technical")
+            redis_fundamental = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:fundamental")
+            redis_tags = await background_pipeline.redis_client.smembers(f"stock:{symbol}:tags")
+        else:
+            redis_basic = {}
+            redis_technical = {}
+            redis_fundamental = {}
+            redis_tags = []
         
         return {
             "symbol": symbol,
