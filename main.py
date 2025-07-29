@@ -340,7 +340,7 @@ async def health_check():
                 "hybrid_agent": "available" if hybrid_agent else "unavailable"
             },
             "preferences": {
-                "prefer_claude": getattr(settings, 'prefer_claude', True),
+                "prefer_claude": os.getenv('PREFER_CLAUDE', 'true').lower() == 'true',
                 "active_agent": get_agent_type()
             }
         }
@@ -460,7 +460,7 @@ async def admin_dashboard():
                 "superior_analysis": claude_agent is not None
             },
             "preferences": {
-                "prefer_claude": getattr(settings, 'prefer_claude', True),
+                "prefer_claude": os.getenv('PREFER_CLAUDE', 'true').lower() == 'true',
                 "active_agent": get_agent_type()
             }
         }
@@ -593,7 +593,7 @@ async def diagnose_services():
             "EODHD_API_KEY": "Set" if os.getenv('EODHD_API_KEY') else "Missing",
             "MONGODB_URL": "Set" if os.getenv('MONGODB_URL') else "Missing",
             "TWILIO_ACCOUNT_SID": "Set" if os.getenv('TWILIO_ACCOUNT_SID') else "Missing",
-            "PREFER_CLAUDE": getattr(settings, 'prefer_claude', True)
+            "PREFER_CLAUDE": os.getenv('PREFER_CLAUDE', 'true').lower() == 'true'
         },
         "service_status": {
             "database": db_service is not None,
@@ -838,7 +838,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Claude-Powered SMS Trading Bot on port {port}")
     logger.info(f"Environment: {settings.environment}")
-    logger.info(f"Claude Preference: {getattr(settings, 'prefer_claude', True)}")
+    logger.info(f"Claude Preference: {os.getenv('PREFER_CLAUDE', 'true')}")
     logger.info(f"Available: Claude={anthropic is not None and os.getenv('ANTHROPIC_API_KEY')}, OpenAI={os.getenv('OPENAI_API_KEY') is not None}")
     
     uvicorn.run(
@@ -847,3 +847,4 @@ if __name__ == "__main__":
         port=port,
         reload=settings.environment == "development"
     )
+    
