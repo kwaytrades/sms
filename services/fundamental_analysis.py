@@ -121,6 +121,12 @@ class FAEngine:
         logger.info("✅ Hybrid Fundamental Analysis Service initialized")
         logger.info(f"   EODHD API: {'Set' if self.eodhd_api_key else 'Not Set'}")
         logger.info(f"   Background Cache: {'Enabled' if self.mongodb_url else 'Disabled'}")
+
+
+    async def execute(self, symbol: str) -> Dict[str, Any]:
+        """Execute fundamental analysis - wrapper for Claude compatibility"""
+                return await self.analyze_fundamentals(symbol)
+
     
     async def initialize(self):
         """Initialize background cache connections"""
