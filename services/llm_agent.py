@@ -1,4 +1,5 @@
-# services/llm_agent.py - CLEANED VERSION (Removed Legacy Code)
+# Pass original message to engine selection for better context
+        intent_analysis["original_message"] = intent_analysis.get("original_message", user_message)# services/llm_agent.py - CLEANED VERSION (Removed Legacy Code)
 
 import json
 import asyncio
@@ -43,6 +44,9 @@ class ComprehensiveOrchestrator:
         
         # Step 2: Analyze intent with context
         intent_analysis = await self._analyze_intent_with_context(user_message, user_context)
+        
+        # Pass original message context to engine selection  
+        intent_analysis["original_message"] = user_message
         
         # Step 3: Determine engines to call based on intent
         engines_to_call = self._determine_engines(intent_analysis, user_context)
@@ -225,7 +229,9 @@ URGENCY ASSESSMENT:
         emotional_state = intent_analysis.get("emotional_state", "neutral")
         
         # Smart engine selection logic based on intent
-        if primary_intent == "analyze" and symbols:
+        if primary_intent == "analyze":  # 🔧 FIXED: Removed symbols requirement
+            if symbols:
+                # Specific stock analysis
             # Always get technical analysis for stock analysis
             engines.append({
                 "engine": "technical_analysis",
@@ -293,15 +299,39 @@ URGENCY ASSESSMENT:
         emotional_state = intent_analysis.get("emotional_state", "neutral")
         symbols = intent_analysis.get("symbols_mentioned", [])
         personality = user_context.get("personality_traits", {})
+        recent_symbols = user_context.get("recent_symbols", [])
+        
+        # 🧠 SMART: Use contextual symbols if no explicit symbols mentioned
+        effective_symbols = symbols if symbols else recent_symbols[:2]
         
         # Build core instruction based on intent and emotion
-        if primary_intent == "analyze" and symbols:
-            if emotional_state == "worried":
-                instruction = f"Provide reassuring analysis of {', '.join(symbols)} with clear support levels and risk assessment to address their concerns."
-            elif emotional_state == "excited":
-                instruction = f"Give balanced perspective on {', '.join(symbols)} momentum while matching their enthusiasm with realistic price targets."
+        if primary_intent == "analyze":
+            if symbols:
+                # Explicit symbols mentioned
+                if emotional_state == "worried":
+                    instruction = f"Provide reassuring analysis of {', '.join(symbols)} with clear support levels and risk assessment to address their concerns."
+                elif emotional_state == "excited":
+                    instruction = f"Give balanced perspective on {', '.join(symbols)} momentum while matching their enthusiasm with realistic price targets."
+                else:
+                    instruction = f"Analyze {', '.join(symbols)} with current price, key technical levels, and actionable trading insights."
+            elif recent_symbols:
+                # 🧠 Use conversation context
+                context_stocks = ', '.join(recent_symbols[:2])
+                instruction = f"Continue analyzing {context_stocks} based on their follow-up question about"
+                
+                # Add specific context based on what they're asking about
+                original_message = intent_analysis.get("original_message", "").lower()
+                if any(word in original_message for word in ["fundamental", "earnings", "revenue", "valuation"]):
+                    instruction += " fundamentals. Provide fundamental analysis insights."
+                elif any(word in original_message for word in ["technical", "chart", "resistance", "support"]):
+                    instruction += " technical analysis. Focus on chart patterns and indicators."
+                elif any(word in original_message for word in ["news", "updates", "happened"]):
+                    instruction += " recent news. Summarize relevant market developments."
+                else:
+                    instruction += " their specific question. Provide comprehensive insights."
             else:
-                instruction = f"Analyze {', '.join(symbols)} with current price, key technical levels, and actionable trading insights."
+                # No context available
+                instruction = "Provide helpful market analysis and trading guidance addressing their question."
         
         elif primary_intent == "screener":
             instruction = "Present top stock picks with clear selection criteria and brief analysis of why they're attractive opportunities."
