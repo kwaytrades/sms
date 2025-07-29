@@ -245,9 +245,10 @@ async def lifespan(app: FastAPI):
         
         if FAEngine and settings.eodhd_api_key:
             fundamental_tool = FAEngine(
-                eodhd_api_key=settings.eodhd_api_key,
-                redis_client=db_service.redis if db_service else None
+                mongodb_url=settings.mongodb_url,
+                redis_url=settings.redis_url
             )
+            await fundamental_tool.initialize()
             logger.info("✅ Fundamental Analysis tool initialized")
         
         TechnicalAnalysisService = TAEngine  # Backward compatibility
