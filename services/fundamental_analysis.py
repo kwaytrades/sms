@@ -1021,3 +1021,9 @@ async def test_hybrid_fundamental_service():
 # Export for compatibility - RAW DATA ONLY
 __all__ = ['HybridFundamentalAnalysisService', 'FundamentalAnalysisResult', 
            'FinancialRatios', 'GrowthMetrics', 'AnalysisDepth', 'FinancialHealth']
+
+# Add at the bottom of services/fundamental_analysis.py
+
+# For backward compatibility with existing imports
+FundamentalAnalysisEngine = HybridFundamentalAnalysisService
+FundamentalAnalysisTool = HybridFundamentalAnalysisService  # or create a wrapper if needed
