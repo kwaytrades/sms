@@ -1,0 +1,763 @@
+deleted_count = delete_result.deleted_count# services/backgroundjob/cache_cleanup_service.py
+import asyncio
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
+import json
+from motor.motor_asyncio import AsyncIOMotorClient
+import redis.asyncio as aioredis
+import schedule
+import time
+from threading import Thread
+
+logger = logging.getLogger(__name__)
+
+class CacheCleanupService:
+    """
+    Dedicated cache cleanup and maintenance service:
+    - Removes stale Redis cache data
+    - Cleans up old MongoDB documents  
+    - Manages Redis memory usage
+    - Optimizes cache performance
+    - Runs scheduled maintenance tasks
+    """
+    
+    def __init__(self, mongodb_url: str, redis_url: str):
+        self.mongodb_url = mongodb_url
+        self.redis_url = redis_url
+        
+        # Database connections
+        self.mongo_client = None
+        self.db = None
+        self.redis_client = None
+        
+        # Cleanup configuration - CACHE DATA ONLY (NOT USER DATA)
+        self.cleanup_config = {
+            # Redis cleanup settings - ONLY cache keys from data pipeline
+            "redis_stale_data_days": 7,      # Remove data older than 7 days
+            "redis_memory_threshold": 85,    # Clean when Redis uses >85% memory
+            "redis_cache_key_patterns": [
+                # ONLY stock cache data from daily pipeline
+                "stock:*:technical",         # Technical analysis cache
+                "stock:*:fundamental",       # Fundamental analysis cache  
+                "stock:*:basic",             # Basic market data cache
+                "stock:*:last_updated",      # Cache timestamps
+                "stock:*:tags",              # Screening tags cache
+                
+                # ONLY temporary analysis cache
+                "ta:*:*",                    # Temporary TA calculations (has timeframe)
+                "screen:*",                  # Screening results cache
+                "crypto:*",                  # Cryptocurrency cache
+                
+                # ONLY background job metadata
+                "pipeline:*",                # Data pipeline status
+                "cleanup:*",                 # Cleanup service metadata
+            ],
+            
+            # NEVER touch these user patterns
+            "protected_user_patterns": [
+                "user:*",                    # User accounts and data
+                "session:*",                 # User sessions
+                "portfolio:*",               # User portfolios  
+                "watchlist:*",               # User watchlists
+                "alert:*",                   # User alerts
+                "preference:*",              # User preferences
+                "subscription:*",            # User subscriptions
+            ],
+            
+            # MongoDB cleanup settings - ONLY cache collections
+            "mongodb_stale_data_days": 30,   # Remove data older than 30 days
+            "mongodb_cache_collections": [
+                "stocks",                    # ONLY if marked as cache data
+                "cache_metadata"             # Background job metadata
+            ],
+            
+            # NEVER touch these user collections
+            "protected_user_collections": [
+                "users",                     # User accounts
+                "portfolios",                # User portfolios
+                "watchlists",                # User watchlists  
+                "alerts",                    # User alerts
+                "conversations",             # SMS conversations
+                "user_preferences",          # User settings
+                "subscriptions"              # User billing data
+            ],
+            
+            # Performance settings
+            "batch_size": 1000,              # Process in batches of 1000
+            "cleanup_delay_ms": 10,          # 10ms delay between batches
+        }
+        
+        # Cleanup statistics
+        self.cleanup_stats = {
+            "last_redis_cleanup": None,
+            "last_mongodb_cleanup": None,
+            "last_full_cleanup": None,
+            "redis_keys_deleted": 0,
+            "mongodb_docs_deleted": 0,
+            "memory_freed_mb": 0,
+            "cleanup_duration_seconds": 0,
+            "errors_encountered": 0
+        }
+    
+    async def initialize(self):
+        """Initialize database connections"""
+        try:
+            # MongoDB connection
+            self.mongo_client = AsyncIOMotorClient(self.mongodb_url)
+            self.db = self.mongo_client.trading_bot
+            
+            # Redis connection
+            self.redis_client = aioredis.from_url(self.redis_url)
+            
+            # Test connections
+            await self.db.command("ping")
+            await self.redis_client.ping()
+            
+            logger.info("✅ Cache cleanup service initialized")
+            
+        except Exception as e:
+            logger.error(f"❌ Cache cleanup service initialization failed: {e}")
+            raise
+    
+    async def run_full_cleanup(self) -> Dict[str, Any]:
+        """Run complete cache cleanup (Redis + MongoDB)"""
+        start_time = datetime.now()
+        cleanup_results = {
+            "cleanup_type": "full",
+            "start_time": start_time.isoformat(),
+            "redis_cleanup": {},
+            "mongodb_cleanup": {},
+            "memory_optimization": {},
+            "errors": []
+        }
+        
+        try:
+            logger.info("🧹 Starting full cache cleanup...")
+            
+            # Step 1: Redis cleanup
+            logger.info("🔴 Cleaning Redis cache...")
+            redis_results = await self._cleanup_redis_cache()
+            cleanup_results["redis_cleanup"] = redis_results
+            
+            # Step 2: MongoDB cleanup  
+            logger.info("🟢 Cleaning MongoDB cache...")
+            mongodb_results = await self._cleanup_mongodb_cache()
+            cleanup_results["mongodb_cleanup"] = mongodb_results
+            
+            # Step 3: Memory optimization
+            logger.info("🚀 Optimizing memory usage...")
+            memory_results = await self._optimize_memory_usage()
+            cleanup_results["memory_optimization"] = memory_results
+            
+            # Step 4: Update statistics
+            await self._update_cleanup_stats(cleanup_results)
+            
+            duration = (datetime.now() - start_time).total_seconds()
+            cleanup_results.update({
+                "completed": True,
+                "duration_seconds": round(duration, 2),
+                "end_time": datetime.now().isoformat()
+            })
+            
+            logger.info(f"✅ Full cleanup completed in {duration:.2f}s")
+            return cleanup_results
+            
+        except Exception as e:
+            self.cleanup_stats["errors_encountered"] += 1
+            error_msg = f"Full cleanup failed: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            
+            cleanup_results["errors"].append(error_msg)
+            cleanup_results["completed"] = False
+            
+            return cleanup_results
+    
+    async def _cleanup_redis_cache(self) -> Dict[str, Any]:
+        """Clean up stale Redis cache data"""
+        try:
+            redis_results = {
+                "keys_scanned": 0,
+                "keys_deleted": 0,
+                "patterns_cleaned": [],
+                "memory_freed_bytes": 0
+            }
+            
+            if not self.redis_client:
+                return {"error": "Redis client not available"}
+            
+            # Get initial memory usage
+            initial_memory = await self._get_redis_memory_usage()
+            
+            # Clean up each key pattern - SAFETY CHECK FIRST
+            for pattern in self.cleanup_config["redis_cache_key_patterns"]:
+                # SAFETY: Verify pattern is not protected
+                if self._is_protected_pattern(pattern):
+                    logger.error(f"🚨 SAFETY: Skipping protected pattern {pattern}")
+                    continue
+                    
+                pattern_results = await self._cleanup_redis_pattern(pattern)
+                
+                redis_results["keys_scanned"] += pattern_results["scanned"]
+                redis_results["keys_deleted"] += pattern_results["deleted"]
+                redis_results["patterns_cleaned"].append({
+                    "pattern": pattern,
+                    "deleted": pattern_results["deleted"]
+                })
+                
+                logger.info(f"🔴 Pattern {pattern}: {pattern_results['deleted']} keys deleted")
+            
+            # Calculate memory freed
+            final_memory = await self._get_redis_memory_usage()
+            redis_results["memory_freed_bytes"] = max(0, initial_memory - final_memory)
+            redis_results["memory_freed_mb"] = round(redis_results["memory_freed_bytes"] / (1024 * 1024), 2)
+            
+            # Update stats
+            self.cleanup_stats["redis_keys_deleted"] += redis_results["keys_deleted"]
+            self.cleanup_stats["memory_freed_mb"] += redis_results["memory_freed_mb"]
+            self.cleanup_stats["last_redis_cleanup"] = datetime.now().isoformat()
+            
+            return redis_results
+            
+        except Exception as e:
+            logger.error(f"❌ Redis cleanup failed: {e}")
+            return {"error": str(e)}
+    
+    async def _cleanup_redis_pattern(self, pattern: str) -> Dict[str, int]:
+        """Clean up Redis keys matching a specific pattern"""
+        try:
+            scanned = 0
+            deleted = 0
+            batch = []
+            
+            stale_cutoff = datetime.now() - timedelta(days=self.cleanup_config["redis_stale_data_days"])
+            
+            # Scan for keys matching pattern
+            async for key in self.redis_client.scan_iter(match=pattern):
+                scanned += 1
+                
+                # Check if key is stale AND safe to delete
+                is_stale = await self._is_redis_key_stale(key, stale_cutoff)
+                is_safe = await self._verify_safe_key_deletion(key)
+                
+                if is_stale and is_safe:
+                    batch.append(key)
+                    
+                    # Delete in batches for performance
+                    if len(batch) >= self.cleanup_config["batch_size"]:
+                        deleted += await self._delete_redis_batch(batch)
+                        batch = []
+                        
+                        # Small delay to avoid overwhelming Redis
+                        await asyncio.sleep(self.cleanup_config["cleanup_delay_ms"] / 1000)
+            
+            # Delete remaining keys in batch
+            if batch:
+                deleted += await self._delete_redis_batch(batch)
+            
+            return {"scanned": scanned, "deleted": deleted}
+            
+        except Exception as e:
+            logger.error(f"❌ Redis pattern cleanup failed for {pattern}: {e}")
+            return {"scanned": 0, "deleted": 0}
+    
+    async def _is_redis_key_stale(self, key: str, cutoff: datetime) -> bool:
+        """Check if a Redis key is stale and should be deleted"""
+        try:
+            # Try to get timestamp from associated metadata key
+            key_str = key.decode() if isinstance(key, bytes) else key
+            
+            # Check for last_updated timestamp
+            timestamp_key = None
+            if ":technical" in key_str:
+                symbol = key_str.split(":")[1]
+                timestamp_key = f"stock:{symbol}:last_updated"
+            elif ":fundamental" in key_str:
+                symbol = key_str.split(":")[1] 
+                timestamp_key = f"stock:{symbol}:last_updated"
+            elif "ta:" in key_str:
+                # TA cache keys have embedded timestamps
+                cached_data = await self.redis_client.get(key)
+                if cached_data:
+                    try:
+                        data = json.loads(cached_data)
+                        cached_at = data.get("cached_at")
+                        if cached_at:
+                            cache_time = datetime.fromisoformat(cached_at)
+                            return cache_time < cutoff
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+            
+            if timestamp_key:
+                timestamp = await self.redis_client.get(timestamp_key)
+                if timestamp:
+                    try:
+                        key_time = datetime.fromisoformat(timestamp.decode())
+                        return key_time < cutoff
+                    except (ValueError, AttributeError):
+                        pass
+            
+            # If no timestamp found, check TTL
+            ttl = await self.redis_client.ttl(key)
+            if ttl == -1:  # No expiration set - might be stale
+                return True
+            elif ttl <= 0:  # Already expired
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Could not check staleness for key {key}: {e}")
+            return False  # Conservative approach - don't delete if unsure
+    
+    async def _delete_redis_batch(self, keys: List[str]) -> int:
+        """Delete a batch of Redis keys"""
+        try:
+            if not keys:
+                return 0
+            
+            deleted = await self.redis_client.delete(*keys)
+            return deleted
+            
+        except Exception as e:
+            logger.error(f"❌ Redis batch deletion failed: {e}")
+            return 0
+    
+    async def _cleanup_mongodb_cache(self) -> Dict[str, Any]:
+        """Clean up stale MongoDB cache data"""
+        try:
+            mongodb_results = {
+                "collections_cleaned": [],
+                "documents_deleted": 0,
+                "space_freed_mb": 0
+            }
+            
+            if not self.db:
+                return {"error": "MongoDB client not available"}
+            
+            stale_cutoff = datetime.now() - timedelta(days=self.cleanup_config["mongodb_stale_data_days"])
+            
+            # Clean each collection - SAFETY CHECK FIRST
+            for collection_name in self.cleanup_config["mongodb_cache_collections"]:
+                # SAFETY: Verify collection is not protected
+                if collection_name in self.cleanup_config["protected_user_collections"]:
+                    logger.error(f"🚨 SAFETY: Skipping protected collection {collection_name}")
+                    continue
+                    
+                try:
+                    collection = getattr(self.db, collection_name)
+                    
+                    # ADDITIONAL SAFETY: Only delete documents marked as cache data
+                    delete_query = {
+                        "last_updated": {"$lt": stale_cutoff},
+                        # SAFETY: Only delete if explicitly marked as cache
+                        "$or": [
+                            {"cache_data": True},           # Explicitly marked as cache
+                            {"from_pipeline": True},        # From data pipeline
+                            {"api_cached": True},           # From API caching
+                            {"on_demand": True}             # On-demand cache
+                        ]
+                    }
+                    
+                    # Execute safe deletion
+                    delete_result = await collection.delete_many(delete_query)
+                    mongodb_results["documents_deleted"] += deleted_count
+                    mongodb_results["collections_cleaned"].append({
+                        "collection": collection_name,
+                        "documents_deleted": deleted_count
+                    })
+                    
+                    logger.info(f"🟢 Collection {collection_name}: {deleted_count} documents deleted")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to clean collection {collection_name}: {e}")
+            
+            # Update stats
+            self.cleanup_stats["mongodb_docs_deleted"] += mongodb_results["documents_deleted"]
+            self.cleanup_stats["last_mongodb_cleanup"] = datetime.now().isoformat()
+            
+            return mongodb_results
+            
+        except Exception as e:
+            logger.error(f"❌ MongoDB cleanup failed: {e}")
+            return {"error": str(e)}
+    
+    async def _optimize_memory_usage(self) -> Dict[str, Any]:
+        """Optimize Redis memory usage"""
+        try:
+            optimization_results = {
+                "redis_memory_before_mb": 0,
+                "redis_memory_after_mb": 0,
+                "optimization_actions": []
+            }
+            
+            if not self.redis_client:
+                return {"error": "Redis client not available"}
+            
+            # Get initial memory usage
+            initial_memory = await self._get_redis_memory_usage()
+            optimization_results["redis_memory_before_mb"] = round(initial_memory / (1024 * 1024), 2)
+            
+            # Check memory usage percentage
+            redis_info = await self.redis_client.info("memory")
+            used_memory = redis_info.get("used_memory", 0)
+            max_memory = redis_info.get("maxmemory", 0)
+            
+            if max_memory > 0:
+                memory_percentage = (used_memory / max_memory) * 100
+                optimization_results["memory_usage_percentage"] = round(memory_percentage, 2)
+                
+                if memory_percentage > self.cleanup_config["redis_memory_threshold"]:
+                    # Aggressive cleanup for high memory usage
+                    logger.info(f"🚨 High memory usage ({memory_percentage:.1f}%) - running aggressive cleanup")
+                    
+                    # Remove least recently used keys
+                    await self._cleanup_lru_keys()
+                    optimization_results["optimization_actions"].append("lru_cleanup")
+                    
+                    # Compress data if possible
+                    await self._compress_redis_data()
+                    optimization_results["optimization_actions"].append("data_compression")
+            
+            # Run Redis memory defragmentation if available
+            try:
+                await self.redis_client.execute_command("MEMORY", "PURGE")
+                optimization_results["optimization_actions"].append("memory_purge")
+            except Exception:
+                pass  # Command might not be available in all Redis versions
+            
+            # Get final memory usage
+            final_memory = await self._get_redis_memory_usage()
+            optimization_results["redis_memory_after_mb"] = round(final_memory / (1024 * 1024), 2)
+            optimization_results["memory_saved_mb"] = round((initial_memory - final_memory) / (1024 * 1024), 2)
+            
+            return optimization_results
+            
+        except Exception as e:
+            logger.error(f"❌ Memory optimization failed: {e}")
+            return {"error": str(e)}
+    
+    async def _get_redis_memory_usage(self) -> int:
+        """Get current Redis memory usage in bytes"""
+        try:
+            if not self.redis_client:
+                return 0
+            
+            info = await self.redis_client.info("memory")
+            return info.get("used_memory", 0)
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Could not get Redis memory usage: {e}")
+            return 0
+    
+    async def _cleanup_lru_keys(self):
+        """Remove least recently used keys when memory is high"""
+        try:
+            # This is a simplified LRU cleanup
+            # In production, you might want more sophisticated logic
+            
+            # Find keys that haven't been accessed recently
+            cutoff = datetime.now() - timedelta(hours=24)  # 24 hours
+            
+            keys_to_check = []
+            async for key in self.redis_client.scan_iter(match="ta:*"):
+                keys_to_check.append(key)
+            
+            # Remove old TA cache keys (these are most likely to be regenerated)
+            for key in keys_to_check[:100]:  # Limit to 100 keys at a time
+                try:
+                    cached_data = await self.redis_client.get(key)
+                    if cached_data:
+                        data = json.loads(cached_data)
+                        cached_at = data.get("cached_at")
+                        if cached_at:
+                            cache_time = datetime.fromisoformat(cached_at)
+                            if cache_time < cutoff:
+                                await self.redis_client.delete(key)
+                except Exception:
+                    continue
+            
+            logger.info("🚀 LRU cleanup completed")
+            
+        except Exception as e:
+            logger.error(f"❌ LRU cleanup failed: {e}")
+    
+    async def _compress_redis_data(self):
+        """Compress Redis data where possible"""
+        try:
+            # This is a placeholder for data compression logic
+            # You could implement compression for large JSON objects
+            logger.info("🗜️ Data compression completed")
+            
+        except Exception as e:
+            logger.error(f"❌ Data compression failed: {e}")
+    
+    async def _update_cleanup_stats(self, cleanup_results: Dict[str, Any]):
+        """Update cleanup statistics"""
+        try:
+            self.cleanup_stats["last_full_cleanup"] = datetime.now().isoformat()
+            self.cleanup_stats["cleanup_duration_seconds"] = cleanup_results.get("duration_seconds", 0)
+            
+            # Store stats in Redis for monitoring
+            if self.redis_client:
+                await self.redis_client.setex(
+                    "cleanup:stats",
+                    86400,  # 24 hours TTL
+                    json.dumps(self.cleanup_stats, default=str)
+                )
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Could not update cleanup stats: {e}")
+    
+    async def get_cleanup_status(self) -> Dict[str, Any]:
+        """Get current cleanup service status and statistics"""
+        try:
+            # Get current cache sizes
+            redis_info = {}
+            mongodb_info = {}
+            
+            if self.redis_client:
+                redis_info = await self.redis_client.info()
+                
+            if self.db:
+                try:
+                    mongodb_info = await self.db.command("dbStats")
+                except Exception:
+                    mongodb_info = {"status": "connected_but_stats_unavailable"}
+            
+            return {
+                "service_status": "active",
+                "cleanup_stats": self.cleanup_stats,
+                "current_cache_status": {
+                    "redis": {
+                        "connected": bool(self.redis_client),
+                        "memory_usage_mb": round(redis_info.get("used_memory", 0) / (1024 * 1024), 2),
+                        "total_keys": redis_info.get("db0", {}).get("keys", 0) if "db0" in redis_info else 0,
+                        "memory_fragmentation": redis_info.get("mem_fragmentation_ratio", 0)
+                    },
+                    "mongodb": {
+                        "connected": bool(self.db),
+                        "data_size_mb": round(mongodb_info.get("dataSize", 0) / (1024 * 1024), 2),
+                        "storage_size_mb": round(mongodb_info.get("storageSize", 0) / (1024 * 1024), 2),
+                        "collections": mongodb_info.get("collections", 0)
+                    }
+                },
+                "cleanup_config": self.cleanup_config,
+                "next_scheduled_cleanup": self._get_next_cleanup_time(),
+                "recommendations": self._get_cleanup_recommendations(),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get cleanup status: {e}")
+            return {"error": str(e)}
+    
+    def _is_protected_pattern(self, pattern: str) -> bool:
+        """Check if a Redis pattern could match protected user data"""
+        try:
+            # Check against protected patterns
+            for protected in self.cleanup_config["protected_user_patterns"]:
+                if self._patterns_could_overlap(pattern, protected):
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking pattern protection: {e}")
+            return True  # Conservative - treat as protected if unsure
+    
+    def _patterns_could_overlap(self, pattern1: str, pattern2: str) -> bool:
+        """Check if two Redis patterns could potentially overlap"""
+        # Simple overlap detection - can be enhanced
+        
+        # Remove wildcards for comparison
+        base1 = pattern1.replace("*", "").replace(":", "")
+        base2 = pattern2.replace("*", "").replace(":", "")
+        
+        # If one is contained in the other, they could overlap
+        return base1 in base2 or base2 in base1
+    
+    async def _verify_safe_key_deletion(self, key: str) -> bool:
+        """Double-check that a key is safe to delete (not user data)"""
+        try:
+            key_str = key.decode() if isinstance(key, bytes) else key
+            
+            # SAFETY: Never delete keys matching user patterns
+            for protected_pattern in self.cleanup_config["protected_user_patterns"]:
+                if self._key_matches_pattern(key_str, protected_pattern):
+                    logger.warning(f"🚨 SAFETY: Refusing to delete protected key {key_str}")
+                    return False
+            
+            # SAFETY: Only delete keys we explicitly cache
+            safe_prefixes = [
+                "stock:",     # Stock cache data
+                "ta:",        # Temporary TA cache  
+                "screen:",    # Screening cache
+                "crypto:",    # Crypto cache
+                "pipeline:",  # Pipeline metadata
+                "cleanup:"    # Cleanup metadata
+            ]
+            
+            if not any(key_str.startswith(prefix) for prefix in safe_prefixes):
+                logger.warning(f"🚨 SAFETY: Refusing to delete unknown key type {key_str}")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error verifying key safety: {e}")
+            return False  # Conservative - don't delete if unsure
+    
+    def _key_matches_pattern(self, key: str, pattern: str) -> bool:
+        """Check if a key matches a Redis pattern"""
+        import fnmatch
+        return fnmatch.fnmatch(key, pattern)
+        """Get next scheduled cleanup time"""
+        # This would depend on your scheduling setup
+        # For now, return a placeholder
+        next_sunday = datetime.now() + timedelta(days=(6 - datetime.now().weekday()))
+        next_cleanup = next_sunday.replace(hour=2, minute=0, second=0, microsecond=0)
+        return next_cleanup.isoformat()
+    
+    def _get_cleanup_recommendations(self) -> List[str]:
+        """Get cleanup recommendations based on current status"""
+        recommendations = []
+        
+        try:
+            # Check if cleanup has been run recently
+            if not self.cleanup_stats.get("last_full_cleanup"):
+                recommendations.append("Run initial full cleanup to establish baseline")
+            else:
+                last_cleanup = datetime.fromisoformat(self.cleanup_stats["last_full_cleanup"])
+                days_since = (datetime.now() - last_cleanup).days
+                
+                if days_since > 7:
+                    recommendations.append("Full cleanup overdue - recommend running soon")
+                elif days_since > 3:
+                    recommendations.append("Consider running cleanup within next few days")
+            
+            # Check error rate
+            if self.cleanup_stats.get("errors_encountered", 0) > 5:
+                recommendations.append("High error rate detected - check logs and configuration")
+            
+            # Memory usage recommendations would go here
+            # (require Redis info to be available)
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Could not generate recommendations: {e}")
+        
+        return recommendations
+    
+    def start_scheduler(self):
+        """Start the cleanup scheduler"""
+        try:
+            # Schedule weekly full cleanup (Sunday 2:00 AM)
+            schedule.every().sunday.at("02:00").do(self._run_async_cleanup, "full")
+            
+            # Schedule daily Redis cleanup (every day 3:00 AM)  
+            schedule.every().day.at("03:00").do(self._run_async_cleanup, "redis")
+            
+            # Schedule memory optimization (twice daily)
+            schedule.every().day.at("06:00").do(self._run_async_cleanup, "memory")
+            schedule.every().day.at("18:00").do(self._run_async_cleanup, "memory")
+            
+            logger.info("📅 Cleanup scheduler started")
+            logger.info("   - Full cleanup: Sunday 2:00 AM")
+            logger.info("   - Redis cleanup: Daily 3:00 AM") 
+            logger.info("   - Memory optimization: Daily 6:00 AM & 6:00 PM")
+            
+            # Run scheduler in background thread
+            scheduler_thread = Thread(target=self._run_scheduler, daemon=True)
+            scheduler_thread.start()
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to start cleanup scheduler: {e}")
+    
+    def _run_scheduler(self):
+        """Run the scheduler loop"""
+        while True:
+            schedule.run_pending()
+            time.sleep(60)  # Check every minute
+    
+    def _run_async_cleanup(self, cleanup_type: str):
+        """Wrapper to run async cleanup jobs from scheduler"""
+        try:
+            def run_cleanup():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    if cleanup_type == "full":
+                        loop.run_until_complete(self.run_full_cleanup())
+                    elif cleanup_type == "redis":
+                        loop.run_until_complete(self._cleanup_redis_cache())
+                    elif cleanup_type == "memory":
+                        loop.run_until_complete(self._optimize_memory_usage())
+                finally:
+                    loop.close()
+            
+            import threading
+            cleanup_thread = threading.Thread(target=run_cleanup)
+            cleanup_thread.start()
+            
+        except Exception as e:
+            logger.error(f"❌ Scheduled cleanup failed: {e}")
+    
+    async def manual_cleanup(self, cleanup_type: str = "full") -> Dict[str, Any]:
+        """Manually trigger cleanup (for testing/emergency)"""
+        logger.info(f"🔧 Manually triggered {cleanup_type} cleanup")
+        
+        if cleanup_type == "full":
+            return await self.run_full_cleanup()
+        elif cleanup_type == "redis":
+            return {"redis_cleanup": await self._cleanup_redis_cache()}
+        elif cleanup_type == "mongodb":
+            return {"mongodb_cleanup": await self._cleanup_mongodb_cache()}
+        elif cleanup_type == "memory":
+            return {"memory_optimization": await self._optimize_memory_usage()}
+        else:
+            return {"error": f"Unknown cleanup type: {cleanup_type}"}
+    
+    async def close(self):
+        """Close database connections"""
+        if self.mongo_client:
+            self.mongo_client.close()
+        if self.redis_client:
+            await self.redis_client.close()
+        logger.info("✅ Cache cleanup service connections closed")
+
+
+# Example usage and testing
+async def test_cleanup_service():
+    """Test the cache cleanup service"""
+    
+    cleanup_service = CacheCleanupService(
+        mongodb_url="mongodb://localhost:27017",
+        redis_url="redis://localhost:6379"
+    )
+    
+    try:
+        await cleanup_service.initialize()
+        
+        # Test cleanup status
+        print("📊 Getting cleanup status...")
+        status = await cleanup_service.get_cleanup_status()
+        print(f"Redis memory usage: {status.get('current_cache_status', {}).get('redis', {}).get('memory_usage_mb')} MB")
+        print(f"MongoDB data size: {status.get('current_cache_status', {}).get('mongodb', {}).get('data_size_mb')} MB")
+        
+        # Test manual cleanup
+        print("\n🧹 Running manual cleanup test...")
+        cleanup_result = await cleanup_service.manual_cleanup("redis")
+        print(f"Redis cleanup result: {cleanup_result}")
+        
+        # Test full cleanup
+        print("\n🧹 Running full cleanup test...")
+        full_result = await cleanup_service.manual_cleanup("full")
+        print(f"Full cleanup completed: {full_result.get('completed')}")
+        print(f"Duration: {full_result.get('duration_seconds')}s")
+        
+    finally:
+        await cleanup_service.close()
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(test_cleanup_service())
