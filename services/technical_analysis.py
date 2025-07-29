@@ -12,7 +12,7 @@ import json
 from motor.motor_asyncio import AsyncIOMotorClient
 import redis.asyncio as aioredis
 
-class TechnicalAnalysisService:
+class TechnicalAnalysisEngine:
     """
     Hybrid TA Service - Cache First with Live API Fallback:
     1. Check background cache (MongoDB/Redis) - <100ms
@@ -712,4 +712,4 @@ async def test_hybrid_service():
     print(f"Cache hit rate: {stats['cache_efficiency']['overall_cache_hit_rate']}%")
 
 # For backward compatibility with existing imports
-TechnicalAnalysisService = HybridTechnicalAnalysisService
+TechnicalAnalysisEngine = HybridTechnicalAnalysisService
