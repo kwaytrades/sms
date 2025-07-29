@@ -213,7 +213,7 @@ async def lifespan(app: FastAPI):
             )
             logger.info("✅ Fundamental Analysis tool initialized")
         
-        # Initialize Message Processor (Orchestrator)
+        # Initialize AI-Powered Message Processor (Enhanced Orchestrator)
         if ComprehensiveMessageProcessor and openai_service:
             message_processor = ComprehensiveMessageProcessor(
                 openai_client=openai_service.client,
@@ -223,7 +223,7 @@ async def lifespan(app: FastAPI):
                 news_service=news_service,
                 fundamental_tool=fundamental_tool
             )
-            logger.info("✅ Message Processor (Orchestrator) initialized")
+            logger.info("✅ AI-Powered Message Processor (Enhanced Orchestrator) initialized")
         
         # Initialize Message Handler
         if MessageHandler:
@@ -236,7 +236,7 @@ async def lifespan(app: FastAPI):
             logger.info("✅ Message Handler initialized")
         
         # Status report
-        agent_status = "Orchestrator" if message_processor else "Fallback"
+        agent_status = "AI-Powered Orchestrator" if message_processor else "Fallback"
         logger.info(f"🤖 Agent Status: {agent_status}")
         logger.info("✅ Startup completed")
         
@@ -272,7 +272,7 @@ async def root():
         "message": "SMS Trading Bot API",
         "status": "running",
         "version": "2.0.0",
-        "agent_type": "enhanced_orchestrator" if message_processor else "fallback",
+        "agent_type": "ai_powered_orchestrator" if message_processor else "fallback",
         "services": {
             "database": db_service is not None,
             "cache": cache_service is not None,
@@ -291,7 +291,7 @@ async def health_check():
             "status": "healthy",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "version": "2.0.0",
-            "agent_type": "enhanced_orchestrator" if message_processor else "fallback"
+            "agent_type": "ai_powered_orchestrator" if message_processor else "fallback"
         }
         
         # Check database
@@ -338,7 +338,7 @@ async def sms_webhook(request: Request):
         if not from_number or not message_body:
             return PlainTextResponse("Missing required fields", status_code=400)
         
-        # Process ONCE with enhanced orchestrator - NO DUPLICATE BACKGROUND PROCESSING
+        # Process ONCE with AI-powered orchestrator - NO DUPLICATE BACKGROUND PROCESSING
         response_text = await process_sms_message(message_body, from_number)
         
         # Return Twilio XML response
@@ -352,22 +352,22 @@ async def sms_webhook(request: Request):
         return PlainTextResponse("Internal error", status_code=500)
 
 async def process_sms_message(message_body: str, phone_number: str) -> str:
-    """Process SMS using enhanced orchestrator or fallback"""
+    """Process SMS using AI-powered orchestrator or fallback"""
     
     start_time = time.time()
     
     try:
         logger.info(f"📱 Processing: '{message_body}' from {phone_number}")
         
-        # Use enhanced orchestrator if available
+        # Use AI-powered orchestrator if available
         if message_processor:
             response_text = await message_processor.process_message(message_body, phone_number)
             processing_time = time.time() - start_time
-            logger.info(f"✅ Enhanced Orchestrator processed in {processing_time:.2f}s")
+            logger.info(f"✅ AI-Powered Orchestrator processed in {processing_time:.2f}s")
         else:
             # Simple fallback
-            response_text = "I'm here to help with your trading questions! The enhanced system is currently in maintenance mode."
-            logger.warning("⚠️ Using simple fallback - enhanced orchestrator unavailable")
+            response_text = "I'm here to help with your trading questions! The AI-powered system is currently in maintenance mode."
+            logger.warning("⚠️ Using simple fallback - AI-powered orchestrator unavailable")
         
         # Send SMS
         if twilio_service and response_text:
@@ -393,10 +393,10 @@ async def admin_dashboard():
     """Admin dashboard"""
     try:
         return {
-            "title": "SMS Trading Bot Admin - Enhanced",
+            "title": "SMS Trading Bot Admin - AI-Powered",
             "status": "operational",
             "version": "2.0.0",
-            "agent_type": "enhanced_orchestrator" if message_processor else "fallback",
+            "agent_type": "ai_powered_orchestrator" if message_processor else "fallback",
             "services": {
                 "database": "connected" if db_service else "disconnected",
                 "cache": "active" if cache_service else "inactive",
@@ -410,10 +410,11 @@ async def admin_dashboard():
                 "total_profiles": len(personality_engine.user_profiles)
             },
             "enhancements": {
+                "ai_powered_synthesis": True,
                 "intelligent_engine_selection": True,
                 "conversation_context": True,
                 "fundamental_analysis_detection": True,
-                "duplicate_processing_fixed": True
+                "complete_context_json": True
             }
         }
     except Exception as e:
@@ -427,7 +428,7 @@ async def get_metrics():
         return {
             "timestamp": datetime.now().isoformat(),
             "version": "2.0.0",
-            "agent_type": "enhanced_orchestrator" if message_processor else "fallback",
+            "agent_type": "ai_powered_orchestrator" if message_processor else "fallback",
             "services": {
                 "database": db_service is not None,
                 "cache": cache_service is not None,
@@ -440,11 +441,11 @@ async def get_metrics():
                 "total_profiles": len(personality_engine.user_profiles),
                 "active_learning": True
             },
-            "enhancements": {
-                "intelligent_engine_selection": True,
-                "conversation_threading": True,
-                "context_awareness": True,
-                "duplicate_prevention": True
+            "ai_enhancements": {
+                "intelligent_synthesis": True,
+                "context_aware_responses": True,
+                "complete_json_structure": True,
+                "template_responses_eliminated": True
             }
         }
     except Exception as e:
@@ -474,31 +475,32 @@ async def diagnose_services():
             "orchestrator": message_processor is not None,
             "message_handler": message_handler is not None
         },
-        "enhancements_active": {
-            "intelligent_engine_selection": message_processor is not None,
+        "ai_enhancements_active": {
+            "intelligent_synthesis": message_processor is not None,
             "conversation_context": cache_service is not None,
             "fundamental_detection": True,
-            "duplicate_processing_fixed": True
+            "complete_json_context": True,
+            "template_elimination": True
         },
         "recommendations": []
     }
     
     # Generate recommendations
     if not os.getenv('OPENAI_API_KEY'):
-        diagnosis["recommendations"].append("❌ Set OPENAI_API_KEY for AI responses")
+        diagnosis["recommendations"].append("❌ Set OPENAI_API_KEY for AI-powered responses")
     if not os.getenv('EODHD_API_KEY'):
         diagnosis["recommendations"].append("❌ Set EODHD_API_KEY for market data")
     if not message_processor:
-        diagnosis["recommendations"].append("❌ Enhanced Orchestrator not available")
+        diagnosis["recommendations"].append("❌ AI-Powered Orchestrator not available")
     
     if not diagnosis["recommendations"]:
-        diagnosis["recommendations"].append("✅ All enhanced systems operational!")
+        diagnosis["recommendations"].append("✅ All AI-powered systems operational!")
     
     return diagnosis
 
 @app.post("/debug/test-message")
 async def test_message_processing(request: Request):
-    """Test enhanced message processing"""
+    """Test AI-powered message processing"""
     try:
         data = await request.json()
         message = data.get('message', 'What are the fundamentals for AAPL?')
@@ -511,11 +513,12 @@ async def test_message_processing(request: Request):
             "input_message": message,
             "phone_number": phone,
             "bot_response": response,
-            "processed_with": "enhanced_orchestrator" if message_processor else "fallback",
-            "enhancements_active": {
-                "intelligent_engine_selection": message_processor is not None,
+            "processed_with": "ai_powered_orchestrator" if message_processor else "fallback",
+            "ai_enhancements_active": {
+                "intelligent_synthesis": message_processor is not None,
                 "conversation_context": cache_service is not None,
-                "fundamental_detection": True
+                "fundamental_detection": True,
+                "complete_json_structure": True
             }
         }
         
@@ -559,12 +562,12 @@ async def test_fundamental_detection():
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_interface():
-    """Enhanced test interface"""
+    """AI-Powered test interface"""
     return """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SMS Trading Bot - Enhanced Test Interface</title>
+    <title>SMS Trading Bot - AI-Powered Test Interface</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
         .form-group { margin-bottom: 15px; }
@@ -577,8 +580,8 @@ async def test_interface():
     </style>
 </head>
 <body>
-    <h1>SMS Trading Bot - Enhanced Test Interface</h1>
-    <div class="enhancement-badge">Enhanced Orchestrator Active</div>
+    <h1>SMS Trading Bot - AI-Powered Test Interface</h1>
+    <div class="enhancement-badge">AI-Powered Orchestrator Active</div>
     
     <div class="quick-tests">
         <button onclick="quickTest('What are the fundamentals for NVDA?')">Test Fundamental Analysis</button>
@@ -598,7 +601,7 @@ async def test_interface():
             <textarea id="message" rows="3" required>What are the fundamentals for AAPL?</textarea>
         </div>
         
-        <button type="submit">Test Enhanced SMS Processing</button>
+        <button type="submit">Test AI-Powered SMS Processing</button>
     </form>
     
     <div id="result"></div>
@@ -615,7 +618,7 @@ async def test_interface():
             const phone = document.getElementById('phone').value;
             const message = document.getElementById('message').value;
             
-            document.getElementById('result').innerHTML = '<div class="result">🔄 Processing with Enhanced Orchestrator...</div>';
+            document.getElementById('result').innerHTML = '<div class="result">🔄 Processing with AI-Powered Orchestrator...</div>';
             
             try {
                 const formData = new URLSearchParams();
@@ -640,19 +643,19 @@ async def test_interface():
                         const debugData = await debugResponse.json();
                         document.getElementById('result').innerHTML = 
                             `<div class="result">
-                                <h3>✅ Enhanced SMS Processing Success!</h3>
+                                <h3>✅ AI-Powered SMS Processing Success!</h3>
                                 <p><strong>Input:</strong> ${debugData.input_message}</p>
                                 <p><strong>Response:</strong> ${debugData.bot_response}</p>
                                 <p><strong>Processed with:</strong> ${debugData.processed_with}</p>
-                                <p><strong>Enhancements Active:</strong> 
-                                    ${Object.entries(debugData.enhancements_active || {})
+                                <p><strong>AI Enhancements Active:</strong> 
+                                    ${Object.entries(debugData.ai_enhancements_active || {})
                                         .map(([key, value]) => `${key}: ${value ? '✅' : '❌'}`)
                                         .join(', ')}
                                 </p>
                             </div>`;
                     } else {
                         document.getElementById('result').innerHTML = 
-                            '<div class="result">✅ SMS processed successfully with Enhanced Orchestrator!</div>';
+                            '<div class="result">✅ SMS processed successfully with AI-Powered Orchestrator!</div>';
                     }
                 } else {
                     throw new Error(`HTTP ${response.status}`);
@@ -671,9 +674,9 @@ async def test_interface():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    logger.info(f"🚀 Starting Enhanced SMS Trading Bot on port {port}")
+    logger.info(f"🚀 Starting AI-Powered SMS Trading Bot on port {port}")
     logger.info(f"Environment: {settings.environment}")
-    logger.info(f"Enhanced Orchestrator: {'Available' if ComprehensiveMessageProcessor else 'Unavailable'}")
+    logger.info(f"AI-Powered Orchestrator: {'Available' if ComprehensiveMessageProcessor else 'Unavailable'}")
     
     uvicorn.run(
         "main:app",
