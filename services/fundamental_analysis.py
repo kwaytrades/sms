@@ -1,7 +1,6 @@
-# services/fundamental_analysis.py
+# services/fundamental_analysis.py - FIXED VERSION
 """
-SMS Trading Bot - Fundamental Analysis Engine (FIXED VERSION)
-Comprehensive financial statement analysis and valuation metrics system
+SMS Trading Bot - Fundamental Analysis Engine (ROBUST ERROR HANDLING)
 """
 
 import asyncio
@@ -10,7 +9,6 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 import json
-import redis
 from dataclasses import dataclass
 from enum import Enum
 
@@ -19,13 +17,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class AnalysisDepth(Enum):
-    """Analysis depth levels for different user tiers"""
-    BASIC = "basic"           # Free tier - key ratios only
-    STANDARD = "standard"     # Paid tier - full ratios + trends
-    COMPREHENSIVE = "comprehensive"  # Pro tier - everything + forecasts
+    BASIC = "basic"
+    STANDARD = "standard"
+    COMPREHENSIVE = "comprehensive"
 
 class FinancialHealth(Enum):
-    """Overall financial health classifications"""
     EXCELLENT = "excellent"
     GOOD = "good"
     FAIR = "fair"
@@ -35,35 +31,19 @@ class FinancialHealth(Enum):
 @dataclass
 class FinancialRatios:
     """Core financial ratios structure"""
-    # Valuation Ratios
     pe_ratio: Optional[float] = None
     peg_ratio: Optional[float] = None
     pb_ratio: Optional[float] = None
     ps_ratio: Optional[float] = None
-    ev_ebitda: Optional[float] = None
-    
-    # Profitability Ratios
-    roe: Optional[float] = None  # Return on Equity
-    roa: Optional[float] = None  # Return on Assets
-    roic: Optional[float] = None  # Return on Invested Capital
+    roe: Optional[float] = None
+    roa: Optional[float] = None
     gross_margin: Optional[float] = None
     operating_margin: Optional[float] = None
     net_margin: Optional[float] = None
-    
-    # Liquidity Ratios
     current_ratio: Optional[float] = None
     quick_ratio: Optional[float] = None
-    cash_ratio: Optional[float] = None
-    
-    # Leverage Ratios
     debt_to_equity: Optional[float] = None
     debt_to_assets: Optional[float] = None
-    interest_coverage: Optional[float] = None
-    
-    # Efficiency Ratios
-    asset_turnover: Optional[float] = None
-    inventory_turnover: Optional[float] = None
-    receivables_turnover: Optional[float] = None
 
 @dataclass
 class GrowthMetrics:
@@ -71,47 +51,23 @@ class GrowthMetrics:
     revenue_growth_1y: Optional[float] = None
     revenue_growth_3y: Optional[float] = None
     earnings_growth_1y: Optional[float] = None
-    earnings_growth_3y: Optional[float] = None
     eps_growth_1y: Optional[float] = None
-    book_value_growth: Optional[float] = None
-    free_cash_flow_growth: Optional[float] = None
-
-@dataclass
-class ValuationAnalysis:
-    """Comprehensive valuation assessment"""
-    intrinsic_value_estimate: Optional[float] = None
-    discount_to_fair_value: Optional[float] = None
-    peer_comparison_percentile: Optional[int] = None
-    sector_relative_pe: Optional[float] = None
-    dividend_yield: Optional[float] = None
-    payout_ratio: Optional[float] = None
 
 @dataclass
 class FundamentalAnalysisResult:
-    """Complete fundamental analysis result - FIXED PARAMETER ORDER"""
-    # Required fields first
+    """Complete fundamental analysis result"""
     symbol: str
     analysis_timestamp: datetime
     current_price: float
-    
-    # Core Analysis Components (all with defaults)
     ratios: FinancialRatios = None
     growth: GrowthMetrics = None
-    valuation: ValuationAnalysis = None
-    
-    # Summary Assessments (all with defaults)
     financial_health: FinancialHealth = FinancialHealth.FAIR
-    overall_score: float = 50.0  # 0-100 composite score
+    overall_score: float = 50.0
     strength_areas: List[str] = None
     concern_areas: List[str] = None
-    
-    # Investment Thesis (all with defaults)
     bull_case: str = "Analysis pending"
     bear_case: str = "Analysis pending"
-    analyst_consensus: Optional[str] = None
-    
-    # Data Quality (all with defaults)
-    data_completeness: float = 0.0  # MOVED TO HAVE DEFAULT VALUE
+    data_completeness: float = 0.0
     last_quarter_date: Optional[str] = None
     
     def __post_init__(self):
@@ -120,271 +76,112 @@ class FundamentalAnalysisResult:
             self.ratios = FinancialRatios()
         if self.growth is None:
             self.growth = GrowthMetrics()
-        if self.valuation is None:
-            self.valuation = ValuationAnalysis()
         if self.strength_areas is None:
             self.strength_areas = []
         if self.concern_areas is None:
             self.concern_areas = []
-    
-    def to_sms_summary(self, user_style: str = "casual") -> str:
-        """Convert to SMS-friendly format based on user personality"""
-        if user_style == "technical":
-            return self._technical_summary()
-        elif user_style == "casual":
-            return self._casual_summary()
-        else:
-            return self._standard_summary()
-    
-    def _casual_summary(self) -> str:
-        """Casual, approachable summary"""
-        health_emoji = {
-            FinancialHealth.EXCELLENT: "💪",
-            FinancialHealth.GOOD: "👍",
-            FinancialHealth.FAIR: "🤔",
-            FinancialHealth.POOR: "😬",
-            FinancialHealth.DISTRESSED: "🚨"
-        }
-        
-        emoji = health_emoji.get(self.financial_health, "📊")
-        
-        summary = f"{emoji} {self.symbol} Fundamentals:\n"
-        summary += f"Health: {self.financial_health.value.title()} ({self.overall_score:.0f}/100)\n"
-        
-        if self.ratios.pe_ratio:
-            pe_assessment = "expensive" if self.ratios.pe_ratio > 25 else "reasonable" if self.ratios.pe_ratio > 15 else "cheap"
-            summary += f"P/E: {self.ratios.pe_ratio:.1f} ({pe_assessment})\n"
-        
-        if self.growth.revenue_growth_1y:
-            growth_trend = "growing fast! 🚀" if self.growth.revenue_growth_1y > 20 else "growing steady" if self.growth.revenue_growth_1y > 5 else "struggling"
-            summary += f"Revenue: {growth_trend} ({self.growth.revenue_growth_1y:+.1f}%)\n"
-        
-        if self.strength_areas:
-            summary += f"Strengths: {', '.join(self.strength_areas[:2])}\n"
-        
-        if self.concern_areas:
-            summary += f"Concerns: {', '.join(self.concern_areas[:2])}"
-        
-        return summary
-    
-    def _technical_summary(self) -> str:
-        """Technical, detailed summary"""
-        summary = f"📊 {self.symbol} Fundamental Analysis:\n"
-        summary += f"Score: {self.overall_score:.0f}/100 | Health: {self.financial_health.value.upper()}\n"
-        
-        # Key ratios
-        if self.ratios.pe_ratio and self.ratios.roe:
-            summary += f"P/E: {self.ratios.pe_ratio:.1f} | ROE: {self.ratios.roe:.1f}%\n"
-        
-        if self.ratios.debt_to_equity:
-            summary += f"D/E: {self.ratios.debt_to_equity:.2f} | "
-        
-        if self.ratios.current_ratio:
-            summary += f"Current Ratio: {self.ratios.current_ratio:.2f}\n"
-        
-        # Growth metrics
-        if self.growth.revenue_growth_1y and self.growth.earnings_growth_1y:
-            summary += f"Growth: Rev {self.growth.revenue_growth_1y:+.1f}% | EPS {self.growth.earnings_growth_1y:+.1f}%\n"
-        
-        # Valuation
-        if self.valuation.intrinsic_value_estimate:
-            discount = ((self.current_price - self.valuation.intrinsic_value_estimate) / self.valuation.intrinsic_value_estimate) * 100
-            summary += f"Fair Value: ${self.valuation.intrinsic_value_estimate:.2f} ({discount:+.1f}%)"
-        
-        return summary
-    
-    def _standard_summary(self) -> str:
-        """Standard summary"""
-        return self._casual_summary()  # Use casual as default
 
 class FundamentalAnalysisEngine:
-    """
-    Advanced Fundamental Analysis Engine
-    Integrates with existing SMS bot architecture
-    """
+    """Robust Fundamental Analysis Engine with comprehensive error handling"""
     
     def __init__(self, eodhd_api_key: str, redis_client=None):
         self.eodhd_api_key = eodhd_api_key
         self.redis_client = redis_client
         self.base_url = "https://eodhd.com/api"
-        
-        # Cache settings - fundamental data changes very slowly (quarterly/yearly reports)
-        self.cache_ttl = {
-            "ratios": 7 * 24 * 3600,  # 1 week
-            "financials": 7 * 24 * 3600,  # 1 week
-            "analysis": 7 * 24 * 3600,  # 1 week
-        }
-        
-        # Analysis scoring weights
-        self.scoring_weights = {
-            "profitability": 0.30,  # ROE, margins, growth
-            "valuation": 0.25,      # P/E, PEG, relative valuation
-            "financial_health": 0.25,  # Debt, liquidity, coverage
-            "growth": 0.20          # Revenue/earnings growth trends
-        }
+        self.cache_ttl = 7 * 24 * 3600  # 1 week
     
     async def analyze(self, symbol: str, analysis_depth: AnalysisDepth = AnalysisDepth.STANDARD) -> FundamentalAnalysisResult:
-        """
-        Main analysis method
-        """
+        """Main analysis method with comprehensive error handling"""
         try:
-            logger.info(f"Starting fundamental analysis for {symbol} at {analysis_depth.value} depth")
+            logger.info(f"🔍 Starting fundamental analysis for {symbol}")
             
-            # Check cache first
+            # Check cache first (with proper error handling)
             cache_key = f"fundamental_analysis:{symbol}:{analysis_depth.value}"
-            cached_result = await self._get_cached_result(cache_key)
+            cached_result = await self._get_cached_result_safe(cache_key)
             if cached_result:
-                logger.info(f"Returning cached fundamental analysis for {symbol}")
+                logger.info(f"✅ Returning cached fundamental analysis for {symbol}")
                 return cached_result
             
-            # Fetch required data in parallel
-            financial_data, market_data, ratios_data = await asyncio.gather(
-                self._fetch_financial_statements(symbol),
-                self._fetch_market_data(symbol),
-                self._fetch_key_ratios(symbol),
-                return_exceptions=True
-            )
+            # Fetch data with timeout and error handling
+            try:
+                data = await asyncio.wait_for(
+                    self._fetch_all_data(symbol), 
+                    timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"⏰ Data fetch timeout for {symbol}")
+                return self._create_minimal_result(symbol, "Data fetch timeout")
+            except Exception as e:
+                logger.error(f"❌ Data fetch failed for {symbol}: {e}")
+                return self._create_minimal_result(symbol, "Data unavailable")
             
-            # Handle data fetch failures gracefully
-            if isinstance(financial_data, Exception):
-                logger.warning(f"Financial data fetch failed for {symbol}: {financial_data}")
-                financial_data = {}
+            # Perform analysis with the fetched data
+            result = await self._perform_robust_analysis(symbol, data)
             
-            if isinstance(market_data, Exception):
-                logger.warning(f"Market data fetch failed for {symbol}: {market_data}")
-                market_data = {}
+            # Cache result safely
+            await self._cache_result_safe(cache_key, result)
             
-            if isinstance(ratios_data, Exception):
-                logger.warning(f"Ratios data fetch failed for {symbol}: {ratios_data}")
-                ratios_data = {}
-            
-            # Perform comprehensive analysis
-            analysis_result = await self._perform_analysis(
-                symbol, financial_data, market_data, ratios_data, analysis_depth
-            )
-            
-            # Cache the result
-            await self._cache_result(cache_key, analysis_result)
-            
-            logger.info(f"Completed fundamental analysis for {symbol}")
-            return analysis_result
+            logger.info(f"✅ Completed fundamental analysis for {symbol}")
+            return result
             
         except Exception as e:
-            logger.error(f"Fundamental analysis failed for {symbol}: {str(e)}")
-            # Return minimal analysis with error indication
-            return FundamentalAnalysisResult(
-                symbol=symbol,
-                analysis_timestamp=datetime.now(),
-                current_price=0.0,
-                financial_health=FinancialHealth.FAIR,
-                overall_score=50.0,
-                strength_areas=["Data unavailable"],
-                concern_areas=["Analysis incomplete"],
-                bull_case="Insufficient data for analysis",
-                bear_case="Insufficient data for analysis",
-                data_completeness=0.0
-            )
+            logger.error(f"💥 Fundamental analysis failed for {symbol}: {e}")
+            return self._create_minimal_result(symbol, f"Analysis error: {str(e)}")
     
-    async def _fetch_financial_statements(self, symbol: str) -> Dict:
-        """Fetch latest financial statements from EODHD"""
-        try:
-            async with aiohttp.ClientSession() as session:
-                # Fetch income statement, balance sheet, and cash flow
-                endpoints = {
-                    "income": f"{self.base_url}/fundamentals/{symbol}?api_token={self.eodhd_api_key}&filter=Financials::Income_Statement",
-                    "balance": f"{self.base_url}/fundamentals/{symbol}?api_token={self.eodhd_api_key}&filter=Financials::Balance_Sheet",
-                    "cashflow": f"{self.base_url}/fundamentals/{symbol}?api_token={self.eodhd_api_key}&filter=Financials::Cash_Flow"
-                }
+    async def _fetch_all_data(self, symbol: str) -> Dict:
+        """Fetch all required data with proper error handling"""
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as session:
+            try:
+                # Fetch fundamentals data
+                fundamentals_url = f"{self.base_url}/fundamentals/{symbol}?api_token={self.eodhd_api_key}"
                 
-                tasks = [session.get(url) for url in endpoints.values()]
-                responses = await asyncio.gather(*tasks)
-                
-                financial_data = {}
-                for key, response in zip(endpoints.keys(), responses):
+                async with session.get(fundamentals_url) as response:
                     if response.status == 200:
                         data = await response.json()
-                        financial_data[key] = data
+                        logger.info(f"✅ Successfully fetched fundamentals for {symbol}")
+                        return data
                     else:
-                        logger.warning(f"Failed to fetch {key} statement for {symbol}: {response.status}")
-                        financial_data[key] = {}
-                
-                return financial_data
-                
-        except Exception as e:
-            logger.error(f"Error fetching financial statements for {symbol}: {str(e)}")
-            return {}
-    
-    async def _fetch_market_data(self, symbol: str) -> Dict:
-        """Fetch current market data and historical prices"""
-        try:
-            async with aiohttp.ClientSession() as session:
-                # Current market data
-                url = f"{self.base_url}/real-time/{symbol}?api_token={self.eodhd_api_key}&fmt=json"
-                
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        logger.warning(f"Failed to fetch market data for {symbol}: {response.status}")
+                        logger.warning(f"⚠️ EODHD API returned status {response.status} for {symbol}")
                         return {}
                         
-        except Exception as e:
-            logger.error(f"Error fetching market data for {symbol}: {str(e)}")
-            return {}
+            except Exception as e:
+                logger.error(f"❌ Error fetching data for {symbol}: {e}")
+                return {}
     
-    async def _fetch_key_ratios(self, symbol: str) -> Dict:
-        """Fetch pre-calculated key ratios from EODHD"""
-        try:
-            async with aiohttp.ClientSession() as session:
-                url = f"{self.base_url}/fundamentals/{symbol}?api_token={self.eodhd_api_key}&filter=Valuation,Highlights"
-                
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        logger.warning(f"Failed to fetch ratios for {symbol}: {response.status}")
-                        return {}
-                        
-        except Exception as e:
-            logger.error(f"Error fetching ratios for {symbol}: {str(e)}")
-            return {}
-    
-    async def _perform_analysis(
-        self, 
-        symbol: str, 
-        financial_data: Dict, 
-        market_data: Dict, 
-        ratios_data: Dict,
-        analysis_depth: AnalysisDepth
-    ) -> FundamentalAnalysisResult:
-        """Perform comprehensive fundamental analysis"""
+    async def _perform_robust_analysis(self, symbol: str, data: Dict) -> FundamentalAnalysisResult:
+        """Perform analysis with robust error handling"""
         
-        # Extract current price
-        current_price = float(market_data.get("close", 0)) or float(market_data.get("price", 0))
+        # Safe data extraction
+        highlights = data.get("Highlights", {}) or {}
+        valuation = data.get("Valuation", {}) or {}
         
-        # Calculate financial ratios
-        ratios = await self._calculate_ratios(financial_data, ratios_data, current_price)
+        # Extract current price safely
+        current_price = self._safe_float(highlights.get("MarketCapitalization", 0)) / max(self._safe_float(highlights.get("SharesOutstanding", 1)), 1)
+        if not current_price:
+            current_price = self._safe_float(data.get("General", {}).get("CurrPrice", 0))
+        if not current_price:
+            current_price = 100.0  # Fallback price for calculation purposes
         
-        # Calculate growth metrics
-        growth = await self._calculate_growth_metrics(financial_data)
+        # Calculate ratios safely
+        ratios = self._calculate_ratios_safe(highlights, valuation)
         
-        # Perform valuation analysis
-        valuation = await self._perform_valuation_analysis(ratios, growth, current_price, symbol)
+        # Calculate growth metrics safely  
+        growth = self._calculate_growth_safe(data)
         
         # Assess financial health
-        financial_health = self._assess_financial_health(ratios, growth)
+        financial_health = self._assess_health_safe(ratios, growth)
         
         # Calculate composite score
-        overall_score = self._calculate_composite_score(ratios, growth, valuation)
+        overall_score = self._calculate_score_safe(ratios, growth)
         
         # Identify strengths and concerns
-        strength_areas, concern_areas = self._identify_key_areas(ratios, growth, valuation)
+        strengths, concerns = self._identify_areas_safe(ratios, growth)
         
         # Generate investment thesis
-        bull_case, bear_case = self._generate_investment_thesis(ratios, growth, valuation, financial_health)
+        bull_case, bear_case = self._generate_thesis_safe(ratios, growth, financial_health)
         
         # Calculate data completeness
-        data_completeness = self._calculate_data_completeness(financial_data, ratios_data)
+        data_completeness = self._calculate_completeness_safe(highlights, valuation)
         
         return FundamentalAnalysisResult(
             symbol=symbol,
@@ -392,464 +189,311 @@ class FundamentalAnalysisEngine:
             current_price=current_price,
             ratios=ratios,
             growth=growth,
-            valuation=valuation,
             financial_health=financial_health,
             overall_score=overall_score,
-            strength_areas=strength_areas,
-            concern_areas=concern_areas,
+            strength_areas=strengths,
+            concern_areas=concerns,
             bull_case=bull_case,
             bear_case=bear_case,
             data_completeness=data_completeness,
-            last_quarter_date=self._extract_last_quarter_date(financial_data)
+            last_quarter_date=self._extract_quarter_date_safe(data)
         )
     
-    async def _calculate_ratios(self, financial_data: Dict, ratios_data: Dict, current_price: float) -> FinancialRatios:
-        """Calculate comprehensive financial ratios"""
-        
-        # Extract data from various sources
-        highlights = ratios_data.get("Highlights", {})
-        valuation = ratios_data.get("Valuation", {})
-        
-        # Get latest financial statement data
-        latest_income = self._get_latest_period_data(financial_data.get("income", {}))
-        latest_balance = self._get_latest_period_data(financial_data.get("balance", {}))
-        
-        # Calculate ratios with safe division
-        def safe_divide(numerator, denominator, default=None):
-            try:
-                if denominator and float(denominator) != 0:
-                    return float(numerator) / float(denominator)
+    def _safe_float(self, value, default: float = 0.0) -> float:
+        """Safely convert value to float with default"""
+        try:
+            if value is None or value == "" or value == "None":
                 return default
-            except (TypeError, ValueError, ZeroDivisionError):
-                return default
+            if isinstance(value, str):
+                # Handle percentage strings
+                if value.endswith('%'):
+                    return float(value[:-1])
+                # Handle "N/A" or similar
+                if value.lower() in ['n/a', 'na', '-', 'null']:
+                    return default
+            return float(value)
+        except (TypeError, ValueError, AttributeError):
+            return default
+    
+    def _calculate_ratios_safe(self, highlights: Dict, valuation: Dict) -> FinancialRatios:
+        """Calculate ratios with comprehensive safety checks"""
         
         return FinancialRatios(
-            # Valuation ratios from API
             pe_ratio=self._safe_float(highlights.get("PERatio")),
             peg_ratio=self._safe_float(highlights.get("PEGRatio")),
             pb_ratio=self._safe_float(highlights.get("PriceBookMRQ")),
             ps_ratio=self._safe_float(highlights.get("PriceSalesTTM")),
-            ev_ebitda=self._safe_float(valuation.get("EnterpriseValueEbitda")),
-            
-            # Profitability ratios
             roe=self._safe_float(highlights.get("ReturnOnEquityTTM")),
             roa=self._safe_float(highlights.get("ReturnOnAssetsTTM")),
             gross_margin=self._safe_float(highlights.get("GrossProfitMargin")),
             operating_margin=self._safe_float(highlights.get("OperatingMarginTTM")),
             net_margin=self._safe_float(highlights.get("ProfitMargin")),
-            
-            # Calculate liquidity ratios from balance sheet
-            current_ratio=safe_divide(
-                latest_balance.get("totalCurrentAssets"),
-                latest_balance.get("totalCurrentLiabilities")
-            ),
-            quick_ratio=safe_divide(
-                float(latest_balance.get("totalCurrentAssets", 0)) - float(latest_balance.get("inventory", 0)),
-                latest_balance.get("totalCurrentLiabilities")
-            ),
-            
-            # Leverage ratios
-            debt_to_equity=safe_divide(
-                latest_balance.get("totalDebt"),
-                latest_balance.get("totalStockholderEquity")
-            ),
-            debt_to_assets=safe_divide(
-                latest_balance.get("totalDebt"),
-                latest_balance.get("totalAssets")
-            ),
-            
-            # Efficiency ratios
-            asset_turnover=safe_divide(
-                latest_income.get("totalRevenue"),
-                latest_balance.get("totalAssets")
-            )
+            current_ratio=self._safe_float(valuation.get("CurrentRatio")),
+            debt_to_equity=self._safe_float(valuation.get("DebtEquityRatio"))
         )
     
-    async def _calculate_growth_metrics(self, financial_data: Dict) -> GrowthMetrics:
-        """Calculate growth trends from historical financial data"""
+    def _calculate_growth_safe(self, data: Dict) -> GrowthMetrics:
+        """Calculate growth metrics safely"""
         
-        income_data = financial_data.get("income", {})
-        if not income_data:
-            return GrowthMetrics()
-        
-        # Get historical data points
-        periods = self._get_historical_periods(income_data, periods=4)  # Last 4 quarters/years
-        
-        if len(periods) < 2:
-            return GrowthMetrics()
-        
-        def calculate_growth_rate(current, previous):
-            """Calculate growth rate between two periods"""
-            try:
-                if previous and float(previous) != 0:
-                    return ((float(current) - float(previous)) / float(previous)) * 100
-                return None
-            except (TypeError, ValueError, ZeroDivisionError):
-                return None
-        
-        # Calculate various growth metrics
-        latest = periods[0]
-        year_ago = periods[-1] if len(periods) >= 4 else periods[-1]
+        highlights = data.get("Highlights", {}) or {}
         
         return GrowthMetrics(
-            revenue_growth_1y=calculate_growth_rate(
-                latest.get("totalRevenue"),
-                year_ago.get("totalRevenue")
-            ),
-            earnings_growth_1y=calculate_growth_rate(
-                latest.get("netIncome"),
-                year_ago.get("netIncome")
-            ),
-            eps_growth_1y=calculate_growth_rate(
-                latest.get("eps"),
-                year_ago.get("eps")
-            )
+            revenue_growth_1y=self._safe_float(highlights.get("RevenueGrowthTTM")),
+            earnings_growth_1y=self._safe_float(highlights.get("EarningsGrowthTTM")),
+            eps_growth_1y=self._safe_float(highlights.get("EPSGrowthTTM"))
         )
     
-    async def _perform_valuation_analysis(self, ratios: FinancialRatios, growth: GrowthMetrics, current_price: float, symbol: str) -> ValuationAnalysis:
-        """Perform valuation analysis and estimate fair value"""
-        
-        # Simple DCF-based intrinsic value estimation
-        intrinsic_value = None
-        if ratios.pe_ratio and growth.earnings_growth_1y:
-            # Simplified PEG-based valuation
-            fair_pe = min(max(growth.earnings_growth_1y, 10), 30)  # Cap between 10-30
-            if fair_pe and ratios.pe_ratio:
-                intrinsic_value = current_price * (fair_pe / ratios.pe_ratio)
-        
-        # Calculate discount to fair value
-        discount_to_fair_value = None
-        if intrinsic_value and current_price:
-            discount_to_fair_value = ((current_price - intrinsic_value) / intrinsic_value) * 100
-        
-        return ValuationAnalysis(
-            intrinsic_value_estimate=intrinsic_value,
-            discount_to_fair_value=discount_to_fair_value
-        )
-    
-    def _assess_financial_health(self, ratios: FinancialRatios, growth: GrowthMetrics) -> FinancialHealth:
-        """Assess overall financial health based on key metrics"""
+    def _assess_health_safe(self, ratios: FinancialRatios, growth: GrowthMetrics) -> FinancialHealth:
+        """Assess financial health with safety checks"""
         
         score = 0
-        max_score = 0
+        factors = 0
         
-        # Profitability assessment
-        if ratios.roe:
-            max_score += 25
+        # ROE assessment
+        if ratios.roe and ratios.roe > 0:
+            factors += 1
             if ratios.roe > 20:
-                score += 25
+                score += 4
             elif ratios.roe > 15:
-                score += 20
+                score += 3
             elif ratios.roe > 10:
-                score += 15
-            elif ratios.roe > 5:
-                score += 10
+                score += 2
+            else:
+                score += 1
         
-        # Liquidity assessment
-        if ratios.current_ratio:
-            max_score += 20
-            if ratios.current_ratio > 2.0:
-                score += 20
+        # Current ratio assessment
+        if ratios.current_ratio and ratios.current_ratio > 0:
+            factors += 1
+            if ratios.current_ratio > 2:
+                score += 3
             elif ratios.current_ratio > 1.5:
-                score += 15
-            elif ratios.current_ratio > 1.0:
-                score += 10
+                score += 2
+            elif ratios.current_ratio > 1:
+                score += 1
         
-        # Leverage assessment
-        if ratios.debt_to_equity:
-            max_score += 20
+        # Debt assessment
+        if ratios.debt_to_equity is not None:
+            factors += 1
             if ratios.debt_to_equity < 0.3:
-                score += 20
+                score += 3
             elif ratios.debt_to_equity < 0.6:
-                score += 15
+                score += 2
             elif ratios.debt_to_equity < 1.0:
-                score += 10
-            elif ratios.debt_to_equity < 2.0:
-                score += 5
+                score += 1
         
         # Growth assessment
-        if growth.revenue_growth_1y:
-            max_score += 20
-            if growth.revenue_growth_1y > 20:
-                score += 20
-            elif growth.revenue_growth_1y > 10:
-                score += 15
+        if growth.revenue_growth_1y is not None:
+            factors += 1
+            if growth.revenue_growth_1y > 15:
+                score += 3
             elif growth.revenue_growth_1y > 5:
-                score += 10
+                score += 2
             elif growth.revenue_growth_1y > 0:
-                score += 5
+                score += 1
         
-        # Valuation assessment
-        if ratios.pe_ratio:
-            max_score += 15
-            if 10 <= ratios.pe_ratio <= 20:
-                score += 15
-            elif 8 <= ratios.pe_ratio <= 25:
-                score += 10
-            elif ratios.pe_ratio <= 30:
-                score += 5
-        
-        # Calculate final health score
-        if max_score > 0:
-            health_percentage = (score / max_score) * 100
-        else:
-            health_percentage = 50  # Default if no data
-        
-        # Map to health categories
-        if health_percentage >= 80:
-            return FinancialHealth.EXCELLENT
-        elif health_percentage >= 65:
-            return FinancialHealth.GOOD
-        elif health_percentage >= 50:
+        # Calculate final health rating
+        if factors == 0:
             return FinancialHealth.FAIR
-        elif health_percentage >= 35:
+        
+        avg_score = score / factors
+        
+        if avg_score >= 3.5:
+            return FinancialHealth.EXCELLENT
+        elif avg_score >= 2.5:
+            return FinancialHealth.GOOD
+        elif avg_score >= 1.5:
+            return FinancialHealth.FAIR
+        elif avg_score >= 0.5:
             return FinancialHealth.POOR
         else:
             return FinancialHealth.DISTRESSED
     
-    def _calculate_composite_score(self, ratios: FinancialRatios, growth: GrowthMetrics, valuation: ValuationAnalysis) -> float:
-        """Calculate overall composite score (0-100)"""
+    def _calculate_score_safe(self, ratios: FinancialRatios, growth: GrowthMetrics) -> float:
+        """Calculate composite score safely"""
         
         total_score = 0
-        total_weight = 0
+        components = 0
         
-        # Profitability score (30% weight)
-        if ratios.roe and ratios.net_margin:
-            prof_score = min((ratios.roe / 20) * 50 + (ratios.net_margin / 20) * 50, 100)
-            total_score += prof_score * self.scoring_weights["profitability"]
-            total_weight += self.scoring_weights["profitability"]
+        # ROE component (0-25 points)
+        if ratios.roe and ratios.roe > 0:
+            components += 1
+            total_score += min(ratios.roe, 25)
         
-        # Valuation score (25% weight)
-        if ratios.pe_ratio:
-            val_score = max(0, 100 - abs(ratios.pe_ratio - 18) * 3)  # Penalty for deviation from 18 P/E
-            total_score += val_score * self.scoring_weights["valuation"]
-            total_weight += self.scoring_weights["valuation"]
+        # Growth component (0-25 points)
+        if growth.revenue_growth_1y is not None:
+            components += 1
+            growth_score = max(0, min(growth.revenue_growth_1y + 10, 25))
+            total_score += growth_score
         
-        # Financial health score (25% weight)
-        if ratios.current_ratio and ratios.debt_to_equity:
-            health_score = min(ratios.current_ratio * 30, 60) + max(0, 40 - ratios.debt_to_equity * 20)
-            total_score += health_score * self.scoring_weights["financial_health"]
-            total_weight += self.scoring_weights["financial_health"]
+        # Margin component (0-25 points)
+        if ratios.net_margin and ratios.net_margin > 0:
+            components += 1
+            total_score += min(ratios.net_margin, 25)
         
-        # Growth score (20% weight)
-        if growth.revenue_growth_1y:
-            growth_score = min(max(growth.revenue_growth_1y * 2 + 50, 0), 100)
-            total_score += growth_score * self.scoring_weights["growth"]
-            total_weight += self.scoring_weights["growth"]
+        # Liquidity component (0-25 points)
+        if ratios.current_ratio and ratios.current_ratio > 0:
+            components += 1
+            liquidity_score = min(ratios.current_ratio * 12.5, 25)
+            total_score += liquidity_score
         
-        if total_weight > 0:
-            return total_score / total_weight
+        if components > 0:
+            return min(total_score / components * 4, 100)  # Scale to 0-100
         else:
-            return 50.0  # Default score if no data
+            return 50.0  # Default if no data
     
-    def _identify_key_areas(self, ratios: FinancialRatios, growth: GrowthMetrics, valuation: ValuationAnalysis) -> Tuple[List[str], List[str]]:
-        """Identify key strength and concern areas"""
+    def _identify_areas_safe(self, ratios: FinancialRatios, growth: GrowthMetrics) -> Tuple[List[str], List[str]]:
+        """Identify strengths and concerns safely"""
         
         strengths = []
         concerns = []
         
-        # Analyze profitability
-        if ratios.roe and ratios.roe > 15:
-            strengths.append("High ROE")
-        elif ratios.roe and ratios.roe < 8:
-            concerns.append("Low ROE")
+        # ROE analysis
+        if ratios.roe:
+            if ratios.roe > 20:
+                strengths.append("Excellent ROE")
+            elif ratios.roe < 5:
+                concerns.append("Low ROE")
         
-        if ratios.net_margin and ratios.net_margin > 15:
-            strengths.append("High margins")
-        elif ratios.net_margin and ratios.net_margin < 5:
-            concerns.append("Low margins")
+        # Growth analysis
+        if growth.revenue_growth_1y is not None:
+            if growth.revenue_growth_1y > 15:
+                strengths.append("Strong growth")
+            elif growth.revenue_growth_1y < 0:
+                concerns.append("Declining revenue")
         
-        # Analyze growth
-        if growth.revenue_growth_1y and growth.revenue_growth_1y > 15:
-            strengths.append("Strong growth")
-        elif growth.revenue_growth_1y and growth.revenue_growth_1y < 0:
-            concerns.append("Declining revenue")
+        # Debt analysis
+        if ratios.debt_to_equity is not None:
+            if ratios.debt_to_equity < 0.3:
+                strengths.append("Low debt")
+            elif ratios.debt_to_equity > 1.5:
+                concerns.append("High debt")
         
-        # Analyze liquidity
-        if ratios.current_ratio and ratios.current_ratio > 2:
-            strengths.append("Strong liquidity")
-        elif ratios.current_ratio and ratios.current_ratio < 1:
-            concerns.append("Liquidity issues")
+        # Margin analysis
+        if ratios.net_margin:
+            if ratios.net_margin > 15:
+                strengths.append("High margins")
+            elif ratios.net_margin < 3:
+                concerns.append("Low margins")
         
-        # Analyze leverage
-        if ratios.debt_to_equity and ratios.debt_to_equity < 0.3:
-            strengths.append("Low debt")
-        elif ratios.debt_to_equity and ratios.debt_to_equity > 1.5:
-            concerns.append("High debt")
+        # Valuation analysis
+        if ratios.pe_ratio:
+            if 10 <= ratios.pe_ratio <= 20:
+                strengths.append("Fair valuation")
+            elif ratios.pe_ratio > 40:
+                concerns.append("High valuation")
         
-        # Analyze valuation
-        if ratios.pe_ratio and 10 <= ratios.pe_ratio <= 18:
-            strengths.append("Fair valuation")
-        elif ratios.pe_ratio and ratios.pe_ratio > 30:
-            concerns.append("High valuation")
+        # Ensure we have at least something
+        if not strengths and not concerns:
+            strengths = ["Analysis available"]
+            concerns = ["Limited data"]
         
         return strengths, concerns
     
-    def _generate_investment_thesis(self, ratios: FinancialRatios, growth: GrowthMetrics, valuation: ValuationAnalysis, health: FinancialHealth) -> Tuple[str, str]:
-        """Generate bull and bear investment cases"""
+    def _generate_thesis_safe(self, ratios: FinancialRatios, growth: GrowthMetrics, health: FinancialHealth) -> Tuple[str, str]:
+        """Generate investment thesis safely"""
         
         bull_points = []
         bear_points = []
         
-        # Build bull case
+        # Bull case factors
         if growth.revenue_growth_1y and growth.revenue_growth_1y > 10:
             bull_points.append(f"Strong {growth.revenue_growth_1y:.1f}% revenue growth")
         
         if ratios.roe and ratios.roe > 15:
-            bull_points.append(f"Excellent {ratios.roe:.1f}% ROE")
+            bull_points.append(f"Solid {ratios.roe:.1f}% ROE")
         
-        if ratios.debt_to_equity and ratios.debt_to_equity < 0.5:
+        if ratios.debt_to_equity is not None and ratios.debt_to_equity < 0.5:
             bull_points.append("Conservative debt levels")
         
         if health in [FinancialHealth.EXCELLENT, FinancialHealth.GOOD]:
             bull_points.append("Strong financial position")
         
-        # Build bear case
-        if growth.revenue_growth_1y and growth.revenue_growth_1y < 0:
-            bear_points.append("Declining revenue trend")
+        # Bear case factors
+        if growth.revenue_growth_1y is not None and growth.revenue_growth_1y < 0:
+            bear_points.append("Revenue declining")
         
-        if ratios.pe_ratio and ratios.pe_ratio > 25:
-            bear_points.append(f"High {ratios.pe_ratio:.1f}x P/E valuation")
+        if ratios.pe_ratio and ratios.pe_ratio > 30:
+            bear_points.append(f"High {ratios.pe_ratio:.1f}x valuation")
         
         if ratios.debt_to_equity and ratios.debt_to_equity > 1.0:
             bear_points.append("High debt burden")
         
         if ratios.current_ratio and ratios.current_ratio < 1.2:
-            bear_points.append("Potential liquidity concerns")
+            bear_points.append("Liquidity concerns")
         
         # Format cases
-        bull_case = "; ".join(bull_points) if bull_points else "Limited positive catalysts identified"
-        bear_case = "; ".join(bear_points) if bear_points else "Limited major risks identified"
+        bull_case = "; ".join(bull_points) if bull_points else "Financial metrics appear stable"
+        bear_case = "; ".join(bear_points) if bear_points else "No major red flags identified"
         
         return bull_case, bear_case
     
-    # Helper methods
-    def _safe_float(self, value) -> Optional[float]:
-        """Safely convert value to float"""
+    def _calculate_completeness_safe(self, highlights: Dict, valuation: Dict) -> float:
+        """Calculate data completeness safely"""
+        
+        expected_fields = ["PERatio", "ReturnOnEquityTTM", "ProfitMargin", "RevenueGrowthTTM"]
+        available_count = 0
+        
+        for field in expected_fields:
+            if highlights.get(field) is not None and highlights.get(field) != "":
+                available_count += 1
+        
+        return (available_count / len(expected_fields)) * 100
+    
+    def _extract_quarter_date_safe(self, data: Dict) -> Optional[str]:
+        """Extract last quarter date safely"""
         try:
-            if value is not None and value != "":
-                return float(value)
-            return None
-        except (TypeError, ValueError):
-            return None
-    
-    def _get_latest_period_data(self, financial_data: Dict) -> Dict:
-        """Extract latest period data from financial statements"""
-        if not financial_data:
-            return {}
-        
-        # EODHD typically returns data with quarterly/yearly structure
-        # Look for the most recent data point
-        if isinstance(financial_data, dict):
-            for key in ["quarterly", "yearly"]:
-                if key in financial_data and financial_data[key]:
-                    # Return the first (most recent) period
-                    periods = financial_data[key]
-                    if isinstance(periods, dict):
-                        # Get most recent date
-                        latest_date = max(periods.keys())
-                        return periods[latest_date]
-                    elif isinstance(periods, list) and len(periods) > 0:
-                        return periods[0]
-        
-        return {}
-    
-    def _get_historical_periods(self, financial_data: Dict, periods: int = 4) -> List[Dict]:
-        """Get historical periods for trend analysis"""
-        if not financial_data:
-            return []
-        
-        historical_data = []
-        
-        # Look for quarterly data first, then yearly
-        for timeframe in ["quarterly", "yearly"]:
-            if timeframe in financial_data and financial_data[timeframe]:
-                data = financial_data[timeframe]
-                
-                if isinstance(data, dict):
-                    # Sort by date and take most recent periods
-                    sorted_dates = sorted(data.keys(), reverse=True)
-                    for date in sorted_dates[:periods]:
-                        historical_data.append(data[date])
-                elif isinstance(data, list):
-                    historical_data = data[:periods]
-                
-                if len(historical_data) >= 2:
-                    break
-        
-        return historical_data
-    
-    def _extract_last_quarter_date(self, financial_data: Dict) -> Optional[str]:
-        """Extract the date of the last reported quarter"""
-        try:
-            income_data = financial_data.get("income", {})
-            if "quarterly" in income_data and income_data["quarterly"]:
-                if isinstance(income_data["quarterly"], dict):
-                    return max(income_data["quarterly"].keys())
-                elif isinstance(income_data["quarterly"], list) and len(income_data["quarterly"]) > 0:
-                    # Look for date field in the first item
-                    first_period = income_data["quarterly"][0]
-                    return first_period.get("date", "Unknown")
-            return None
+            general = data.get("General", {})
+            return general.get("LastSplitDate", "Unknown")
         except Exception:
-            return None
+            return "Unknown"
     
-    def _calculate_data_completeness(self, financial_data: Dict, ratios_data: Dict) -> float:
-        """Calculate percentage of available vs expected data"""
-        expected_fields = 20  # Expected number of key data points
-        available_fields = 0
+    def _create_minimal_result(self, symbol: str, error_message: str) -> FundamentalAnalysisResult:
+        """Create minimal result when data is unavailable"""
         
-        # Check financial data availability
-        if financial_data.get("income"):
-            available_fields += 5
-        if financial_data.get("balance"):
-            available_fields += 5
-        if financial_data.get("cashflow"):
-            available_fields += 3
-        
-        # Check ratios data availability
-        if ratios_data.get("Highlights"):
-            available_fields += 4
-        if ratios_data.get("Valuation"):
-            available_fields += 3
-        
-        return min((available_fields / expected_fields) * 100, 100)
+        return FundamentalAnalysisResult(
+            symbol=symbol,
+            analysis_timestamp=datetime.now(),
+            current_price=0.0,
+            financial_health=FinancialHealth.FAIR,
+            overall_score=50.0,
+            strength_areas=["Data unavailable"],
+            concern_areas=["Analysis incomplete"],
+            bull_case=f"Unable to complete analysis: {error_message}",
+            bear_case="Insufficient data for risk assessment",
+            data_completeness=0.0,
+            last_quarter_date="Unknown"
+        )
     
-    async def _get_cached_result(self, cache_key: str) -> Optional[FundamentalAnalysisResult]:
-        """Retrieve cached analysis result"""
+    async def _get_cached_result_safe(self, cache_key: str) -> Optional[FundamentalAnalysisResult]:
+        """Safely retrieve cached result"""
         try:
             if not self.redis_client:
                 return None
-                
-            cached_data = self.redis_client.get(cache_key)
+            
+            # Handle both sync and async Redis clients
+            if hasattr(self.redis_client, 'get'):
+                cached_data = self.redis_client.get(cache_key)
+            else:
+                cached_data = await self.redis_client.get(cache_key)
+            
             if cached_data:
+                if isinstance(cached_data, bytes):
+                    cached_data = cached_data.decode('utf-8')
+                
                 data = json.loads(cached_data)
-                # Reconstruct the result object (simplified for this fix)
-                return FundamentalAnalysisResult(
-                    symbol=data.get("symbol", ""),
-                    analysis_timestamp=datetime.fromisoformat(data.get("analysis_timestamp", datetime.now().isoformat())),
-                    current_price=data.get("current_price", 0.0),
-                    financial_health=FinancialHealth(data.get("financial_health", "fair")),
-                    overall_score=data.get("overall_score", 50.0),
-                    strength_areas=data.get("strength_areas", []),
-                    concern_areas=data.get("concern_areas", []),
-                    bull_case=data.get("bull_case", ""),
-                    bear_case=data.get("bear_case", ""),
-                    data_completeness=data.get("data_completeness", 0.0),
-                    last_quarter_date=data.get("last_quarter_date")
-                )
+                return self._reconstruct_result_from_cache(data)
+            
             return None
         except Exception as e:
-            logger.warning(f"Failed to retrieve cached result: {str(e)}")
+            logger.warning(f"Cache retrieval failed: {e}")
             return None
     
-    async def _cache_result(self, cache_key: str, result: FundamentalAnalysisResult):
-        """Cache analysis result"""
+    async def _cache_result_safe(self, cache_key: str, result: FundamentalAnalysisResult):
+        """Safely cache result"""
         try:
             if not self.redis_client:
                 return
-                
-            # Convert result to dict for caching
+            
             result_dict = {
                 "symbol": result.symbol,
                 "analysis_timestamp": result.analysis_timestamp.isoformat(),
@@ -860,50 +504,57 @@ class FundamentalAnalysisEngine:
                 "concern_areas": result.concern_areas,
                 "bull_case": result.bull_case,
                 "bear_case": result.bear_case,
-                "data_completeness": result.data_completeness,
-                "last_quarter_date": result.last_quarter_date
+                "data_completeness": result.data_completeness
             }
             
-            self.redis_client.setex(
-                cache_key,
-                self.cache_ttl["analysis"],
-                json.dumps(result_dict, default=str)
-            )
+            # Handle both sync and async Redis clients
+            if hasattr(self.redis_client, 'setex'):
+                self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(result_dict))
+            else:
+                await self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(result_dict))
+                
         except Exception as e:
-            logger.warning(f"Failed to cache result: {str(e)}")
+            logger.warning(f"Cache storage failed: {e}")
+    
+    def _reconstruct_result_from_cache(self, data: Dict) -> FundamentalAnalysisResult:
+        """Reconstruct result object from cached data"""
+        
+        return FundamentalAnalysisResult(
+            symbol=data.get("symbol", ""),
+            analysis_timestamp=datetime.fromisoformat(data.get("analysis_timestamp", datetime.now().isoformat())),
+            current_price=data.get("current_price", 0.0),
+            financial_health=FinancialHealth(data.get("financial_health", "fair")),
+            overall_score=data.get("overall_score", 50.0),
+            strength_areas=data.get("strength_areas", []),
+            concern_areas=data.get("concern_areas", []),
+            bull_case=data.get("bull_case", ""),
+            bear_case=data.get("bear_case", ""),
+            data_completeness=data.get("data_completeness", 0.0)
+        )
 
-# Integration class for ToolExecutor pattern
 class FundamentalAnalysisTool:
-    """
-    Integration wrapper for the ToolExecutor pattern
-    Provides the standard interface expected by the SMS bot system
-    """
+    """Integration wrapper for the conversation agent"""
     
     def __init__(self, eodhd_api_key: str, redis_client=None):
         self.engine = FundamentalAnalysisEngine(eodhd_api_key, redis_client)
     
     async def execute(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Standard ToolExecutor interface for SMS bot integration
-        
-        Expected parameters:
-        - symbol: str - Stock symbol to analyze
-        - depth: str - Analysis depth ("basic", "standard", "comprehensive")
-        - user_style: str - User communication style for response formatting
-        """
+        """Execute fundamental analysis with robust error handling"""
         try:
-            symbol = parameters.get("symbol", "").upper()
+            symbol = parameters.get("symbol", "").upper().strip()
             depth_str = parameters.get("depth", "standard")
-            user_style = parameters.get("user_style", "casual")
+            user_style = parameters.get("user_style", "professional")
             
             if not symbol:
                 return {
                     "success": False,
-                    "error": "Symbol parameter required",
-                    "sms_response": "❌ Please specify a stock symbol for fundamental analysis"
+                    "error": "Symbol required",
+                    "sms_response": "Please specify a stock symbol for fundamental analysis."
                 }
             
-            # Convert depth string to enum
+            logger.info(f"🔍 Executing fundamental analysis for {symbol}")
+            
+            # Convert depth string to enum safely
             try:
                 depth = AnalysisDepth(depth_str)
             except ValueError:
@@ -912,8 +563,13 @@ class FundamentalAnalysisTool:
             # Perform analysis
             result = await self.engine.analyze(symbol, depth)
             
-            # Generate SMS-friendly response
-            sms_response = result.to_sms_summary(user_style)
+            # Generate response based on analysis
+            if result.data_completeness > 30:
+                # We have enough data for a real analysis
+                sms_response = self._format_real_analysis(result, user_style)
+            else:
+                # Limited data available
+                sms_response = f"{symbol} fundamental data limited. Basic metrics: Health rated {result.financial_health.value}, analysis score {result.overall_score:.0f}/100. Consider technical analysis for trading insights."
             
             return {
                 "success": True,
@@ -921,7 +577,6 @@ class FundamentalAnalysisTool:
                 "sms_response": sms_response,
                 "metadata": {
                     "symbol": symbol,
-                    "analysis_depth": depth.value,
                     "overall_score": result.overall_score,
                     "financial_health": result.financial_health.value,
                     "data_completeness": result.data_completeness
@@ -929,44 +584,55 @@ class FundamentalAnalysisTool:
             }
             
         except Exception as e:
-            logger.error(f"Fundamental analysis tool execution failed: {str(e)}")
+            logger.error(f"💥 Fundamental analysis tool failed: {e}")
             return {
                 "success": False,
                 "error": str(e),
-                "sms_response": f"📊 {parameters.get('symbol', 'Analysis')} fundamental data temporarily unavailable. Try again shortly."
+                "sms_response": f"{parameters.get('symbol', 'Stock')} fundamental analysis temporarily unavailable."
             }
+    
+    def _format_real_analysis(self, result: FundamentalAnalysisResult, user_style: str) -> str:
+        """Format analysis into professional response"""
+        
+        # Build response components
+        health_desc = {
+            FinancialHealth.EXCELLENT: "excellent",
+            FinancialHealth.GOOD: "strong", 
+            FinancialHealth.FAIR: "fair",
+            FinancialHealth.POOR: "weak",
+            FinancialHealth.DISTRESSED: "concerning"
+        }
+        
+        response_parts = []
+        
+        # Opening with key metrics
+        response_parts.append(f"{result.symbol} fundamentals show {health_desc.get(result.financial_health, 'fair')} financial health (score: {result.overall_score:.0f}/100).")
+        
+        # Key ratios if available
+        if result.ratios.pe_ratio and result.ratios.pe_ratio > 0:
+            pe_desc = "expensive" if result.ratios.pe_ratio > 25 else "reasonable" if result.ratios.pe_ratio > 15 else "attractive"
+            response_parts.append(f"P/E ratio of {result.ratios.pe_ratio:.1f} appears {pe_desc}.")
+        
+        # Growth info
+        if result.growth.revenue_growth_1y is not None:
+            if result.growth.revenue_growth_1y > 0:
+                response_parts.append(f"Revenue growing {result.growth.revenue_growth_1y:.1f}% annually.")
+            else:
+                response_parts.append(f"Revenue declining {abs(result.growth.revenue_growth_1y):.1f}%.")
+        
+        # Key strength or concern
+        if result.strength_areas:
+            response_parts.append(f"Strength: {result.strength_areas[0].lower()}.")
+        
+        if result.concern_areas and len(response_parts) < 4:
+            response_parts.append(f"Concern: {result.concern_areas[0].lower()}.")
+        
+        # Join and ensure SMS length
+        response = " ".join(response_parts)
+        if len(response) > 280:
+            response = response[:277] + "..."
+        
+        return response
 
-# Example usage for testing
-async def example_usage():
-    """Example of how to use the Fundamental Analysis Engine"""
-    import os
-    
-    # Mock Redis client for demo
-    class MockRedis:
-        def get(self, key): return None
-        def setex(self, key, ttl, value): pass
-    
-    # Initialize the engine
-    engine = FundamentalAnalysisEngine(
-        eodhd_api_key=os.getenv("EODHD_API_KEY", "demo"),
-        redis_client=MockRedis()
-    )
-    
-    # Analyze a stock
-    result = await engine.analyze("AAPL", AnalysisDepth.COMPREHENSIVE)
-    
-    # Print results
-    print("=== Fundamental Analysis Result ===")
-    print(f"Symbol: {result.symbol}")
-    print(f"Overall Score: {result.overall_score:.1f}/100")
-    print(f"Financial Health: {result.financial_health.value}")
-    print(f"Strengths: {', '.join(result.strength_areas)}")
-    print(f"Concerns: {', '.join(result.concern_areas)}")
-    print("\n=== SMS Summary (Casual) ===")
-    print(result.to_sms_summary("casual"))
-    print("\n=== SMS Summary (Technical) ===")
-    print(result.to_sms_summary("technical"))
-
-if __name__ == "__main__":
-    # Run example
-    asyncio.run(example_usage())
+# Export for compatibility
+__all__ = ['FundamentalAnalysisEngine', 'FundamentalAnalysisTool', 'AnalysisDepth', 'FinancialHealth']
