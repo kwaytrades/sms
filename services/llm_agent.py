@@ -1,7 +1,6 @@
 # services/data_driven_agent.py
 """
-Data-driven LLM agent that calls tools directly, sees real data,
-then generates contextual prompts for the response agent
+Simplified data-driven LLM agent - let the LLM handle conversation style
 """
 
 import json
@@ -13,11 +12,10 @@ from openai import AsyncOpenAI
 
 class DataDrivenAgent:
     """
-    LLM agent that:
+    Simplified LLM agent that:
     1. Calls tools directly based on user query
-    2. Sees and analyzes real market data
-    3. Generates contextual prompt for response agent
-    4. Response agent executes with format restrictions
+    2. Passes raw data to LLM
+    3. LLM handles everything - analysis, tone, conversation style
     """
     
     def __init__(self, openai_client, ta_service, news_service, fundamental_tool, cache_service, personality_engine):
@@ -30,34 +28,33 @@ class DataDrivenAgent:
     
     async def process_message(self, message: str, user_phone: str) -> str:
         """
-        Process message using data-driven approach:
-        1. LLM calls tools and sees real data
-        2. LLM generates contextual prompt
-        3. Response agent executes with restrictions
+        Process message using simplified approach:
+        1. LLM calls tools and gets raw data
+        2. LLM generates response directly with all context
         """
         try:
-            logger.info(f"🎯 Data-driven processing: '{message}' from {user_phone}")
+            logger.info(f"🎯 Processing: '{message}' from {user_phone}")
             
-            # Step 1: Get conversation context
+            # Step 1: Get conversation context and user profile
             context = await self._get_conversation_context(user_phone)
+            user_profile = await self._get_user_profile(user_phone)
             
             # Step 2: LLM analyzes query and calls tools directly
             tool_results = await self._llm_driven_tool_calling(message, context)
             
-            # Step 3: LLM sees real data and generates contextual prompt
-            contextual_prompt = await self._generate_contextual_prompt(message, context, tool_results)
+            # Step 3: LLM generates response with all context (simplified!)
+            response = await self._generate_intelligent_response(
+                message, context, tool_results, user_profile
+            )
             
-            # Step 4: Response agent executes with format restrictions
-            response = await self._execute_response_agent(contextual_prompt)
-            
-            # Step 5: Cache and learn
+            # Step 4: Cache and learn
             await self._cache_conversation(user_phone, message, response, context)
             
-            logger.info(f"✅ Data-driven response: {len(response)} chars")
+            logger.info(f"✅ Response generated: {len(response)} chars")
             return response
             
         except Exception as e:
-            logger.error(f"💥 Data-driven processing failed: {e}")
+            logger.error(f"💥 Processing failed: {e}")
             return "Market analysis processing. Please try again shortly."
     
     async def _llm_driven_tool_calling(self, message: str, context: Dict) -> Dict[str, Any]:
@@ -65,7 +62,6 @@ class DataDrivenAgent:
         Let LLM decide which tools to call and execute them with real data
         """
         
-        # Build context for LLM decision making
         context_summary = self._format_context_summary(context)
         
         tool_calling_prompt = f"""You are a trading analyst with access to market data tools. Analyze the user's request and call the appropriate tools to get REAL data.
@@ -82,7 +78,6 @@ INSTRUCTIONS:
 1. Determine which tools to call based on the user's request
 2. Call tools to get REAL market data
 3. You will see the actual data returned from each tool
-4. Based on the REAL data you receive, you'll then generate an analysis prompt
 
 Extract any stock symbols and call the appropriate tools now."""
 
@@ -177,74 +172,48 @@ Extract any stock symbols and call the appropriate tools now."""
             logger.error(f"Tool calling failed: {e}")
             return {}
     
-    async def _generate_contextual_prompt(self, message: str, context: Dict, tool_results: Dict) -> str:
+    async def _generate_intelligent_response(
+        self, message: str, context: Dict, tool_results: Dict, user_profile: Dict
+    ) -> str:
         """
-        LLM sees real data and generates a contextual prompt for the response agent
+        Let the LLM generate the response with full context - no rigid rules!
         """
         
-        # Format the raw data for LLM analysis - MODIFIED TO PASS RAW DATA
-        data_summary = self._format_raw_tool_results(tool_results)
+        # Format everything for the LLM
+        tool_data = self._format_raw_data_for_llm(tool_results)
         context_summary = self._format_context_summary(context)
+        personality_info = self._format_user_personality(user_profile)
         
-        prompt_generation_request = f"""You have called tools and received REAL market data. Now generate a contextual analysis prompt for the response agent.
+        # Single comprehensive prompt - let LLM handle everything
+        comprehensive_prompt = f"""You are a hyper-personalized SMS trading assistant. The user just asked: "{message}"
 
-USER'S ORIGINAL REQUEST: "{message}"
-CONVERSATION CONTEXT: {context_summary}
+CONVERSATION CONTEXT:
+{context_summary}
 
-RAW MARKET DATA RECEIVED:
-{data_summary}
+USER PERSONALITY & STYLE:
+{personality_info}
 
-YOUR TASK: Generate a contextual prompt that will guide the response agent to create an intelligent, data-driven response.
+REAL MARKET DATA AVAILABLE:
+{tool_data}
 
-The prompt should:
-1. Incorporate the RAW data you received (prices, indicators, news content)
-2. Highlight the most important insights from the raw data
-3. Connect different raw data points into a coherent narrative  
-4. Address the user's specific question with the raw data
-5. Include any important context or timing considerations
-6. Provide clear guidance on tone and focus for the response
+YOUR TASK:
+Respond to the user's question naturally and helpfully. You have access to real market data above.
 
-Generate a contextual prompt that will result in an intelligent, professional trading response:"""
+IMPORTANT GUIDELINES:
+1. Match the user's communication style and personality
+2. Answer their specific question (advice, analysis, data, whatever they asked for)
+3. Use the real market data to inform your response
+4. Be conversational when they want advice, analytical when they want analysis
+5. Keep responses SMS-friendly (under 480 characters)
+6. Be helpful and actionable
+7. Don't dump unnecessary technical data unless they specifically want it
+
+Generate your response now:"""
 
         try:
             response = await self.openai_client.chat.completions.create(
                 model="gpt-4o",
-                messages=[{"role": "user", "content": prompt_generation_request}],
-                temperature=0.3,
-                max_tokens=400
-            )
-            
-            contextual_prompt = response.choices[0].message.content.strip()
-            logger.info(f"📝 Generated contextual prompt: {len(contextual_prompt)} chars")
-            
-            return contextual_prompt
-            
-        except Exception as e:
-            logger.error(f"Contextual prompt generation failed: {e}")
-            return f"Provide a professional analysis of the market data for the user's request: {message}"
-    
-    async def _execute_response_agent(self, contextual_prompt: str) -> str:
-        """
-        Execute response agent with the contextual prompt and format restrictions
-        """
-        
-        # Add format restrictions to the contextual prompt
-        format_restricted_prompt = f"""{contextual_prompt}
-
-CRITICAL FORMAT REQUIREMENTS:
-- Keep response under 480 characters (3 SMS segments)
-- Be direct and professional - no casual greetings or emojis
-- Lead with the most important insight first
-- Include specific data points and actionable information
-- No introductory phrases like "Based on the analysis" or "Here's what I found"
-- Focus on what matters most for trading decisions
-
-Generate a professional, concise response:"""
-
-        try:
-            response = await self.openai_client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": format_restricted_prompt}],
+                messages=[{"role": "user", "content": comprehensive_prompt}],
                 temperature=0.4,
                 max_tokens=200
             )
@@ -253,11 +222,11 @@ Generate a professional, concise response:"""
             return self._clean_final_response(generated_response)
             
         except Exception as e:
-            logger.error(f"Response agent execution failed: {e}")
+            logger.error(f"Response generation failed: {e}")
             return "Market analysis completed. Please try your request again."
     
-    def _format_raw_tool_results(self, tool_results: Dict) -> str:
-        """Format RAW tool results for LLM analysis - NO PROCESSING"""
+    def _format_raw_data_for_llm(self, tool_results: Dict) -> str:
+        """Format raw tool results for LLM - keep it simple"""
         
         if not tool_results:
             return "No market data retrieved"
@@ -265,32 +234,11 @@ Generate a professional, concise response:"""
         formatted_results = []
         
         for key, data in tool_results.items():
-            if key.startswith("technical_"):
-                symbol = key.replace("technical_", "")
-                
-                # Pass raw technical data structure
-                result_text = f"RAW TECHNICAL DATA for {symbol}:\n"
-                result_text += f"Full data structure: {json.dumps(data, indent=2, default=str)}"
-                
-                formatted_results.append(result_text)
+            symbol = key.split('_', 1)[1] if '_' in key else 'UNKNOWN'
+            data_type = key.split('_', 1)[0] if '_' in key else 'unknown'
             
-            elif key.startswith("fundamental_"):
-                symbol = key.replace("fundamental_", "")
-                
-                # Pass raw fundamental data structure  
-                result_text = f"RAW FUNDAMENTAL DATA for {symbol}:\n"
-                result_text += f"Full data structure: {json.dumps(data, indent=2, default=str)}"
-                
-                formatted_results.append(result_text)
-            
-            elif key.startswith("news_"):
-                symbol = key.replace("news_", "")
-                
-                # Pass raw news data structure
-                result_text = f"RAW NEWS DATA for {symbol}:\n"
-                result_text += f"Full data structure: {json.dumps(data, indent=2, default=str)}"
-                
-                formatted_results.append(result_text)
+            result_text = f"{data_type.upper()} DATA for {symbol}:\n{json.dumps(data, indent=2, default=str)}"
+            formatted_results.append(result_text)
         
         return "\n\n".join(formatted_results)
     
@@ -308,20 +256,22 @@ Generate a professional, concise response:"""
         else:
             return "New conversation."
     
+    def _format_user_personality(self, user_profile: Dict) -> str:
+        """Format user personality for LLM context"""
+        
+        if not user_profile:
+            return "No personality data available - use default professional style"
+        
+        comm_style = user_profile.get('communication_style', {})
+        trading_style = user_profile.get('trading_personality', {})
+        
+        return f"""Communication Style: {comm_style.get('formality', 'casual')} formality, {comm_style.get('energy', 'moderate')} energy, {comm_style.get('emoji_usage', 'some')} emoji usage
+Trading Profile: {trading_style.get('experience_level', 'intermediate')} experience, {trading_style.get('risk_tolerance', 'moderate')} risk tolerance, {trading_style.get('trading_style', 'swing')} trading style"""
+    
     def _clean_final_response(self, response: str) -> str:
-        """Clean and optimize final response"""
+        """Minimal cleaning - let LLM handle most of it"""
         
-        # Remove AI artifacts
-        artifacts = [
-            "Based on the analysis:", "Looking at the data:", "According to the information:",
-            "Here's what I found:", "The data shows:", "In summary:", "To summarize:"
-        ]
-        
-        for artifact in artifacts:
-            if response.startswith(artifact):
-                response = response[len(artifact):].strip()
-        
-        # Ensure length limit
+        # Just ensure length limit
         if len(response) > 480:
             response = response[:477] + "..."
         
@@ -357,6 +307,17 @@ Generate a professional, concise response:"""
         except Exception as e:
             logger.warning(f"Context retrieval failed: {e}")
             return context
+    
+    async def _get_user_profile(self, user_phone: str) -> Dict:
+        """Get user personality profile"""
+        
+        try:
+            if self.personality_engine and hasattr(self.personality_engine, 'user_profiles'):
+                return self.personality_engine.user_profiles.get(user_phone, {})
+            return {}
+        except Exception as e:
+            logger.warning(f"Profile retrieval failed: {e}")
+            return {}
     
     async def _cache_conversation(self, user_phone: str, message: str, response: str, context: Dict):
         """Cache conversation"""
@@ -426,7 +387,7 @@ Generate a professional, concise response:"""
 
 # Drop-in replacement for existing processor
 class ComprehensiveMessageProcessor:
-    """Enhanced processor using data-driven agent"""
+    """Enhanced processor using simplified data-driven agent"""
     
     def __init__(self, openai_client, ta_service, personality_engine, 
                  cache_service=None, news_service=None, fundamental_tool=None, 
@@ -445,14 +406,14 @@ class ComprehensiveMessageProcessor:
         self.cache_service = cache_service
     
     async def process_message(self, message: str, user_phone: str) -> str:
-        """Process using data-driven agent"""
+        """Process using simplified data-driven agent"""
         
         try:
             response = await self.data_driven_agent.process_message(message, user_phone)
             return response
             
         except Exception as e:
-            logger.error(f"💥 Data-driven processing failed: {e}")
+            logger.error(f"💥 Processing failed: {e}")
             return "Market analysis processing. Please try again shortly."
 
 
