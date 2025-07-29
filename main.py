@@ -17,17 +17,18 @@ try:
 except ImportError:
     # Fallback configuration
     class Settings:
-        environment = "development"
-        log_level = "INFO"
-        testing_mode = True
-        mongodb_url = os.getenv('MONGODB_URL', 'mongodb://localhost:27017/ai')
-        openai_api_key = os.getenv('OPENAI_API_KEY')
-        anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
-        twilio_account_sid = os.getenv('TWILIO_ACCOUNT_SID')
-        twilio_auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-        twilio_phone_number = os.getenv('TWILIO_PHONE_NUMBER')
-        eodhd_api_key = os.getenv('EODHD_API_KEY')
-        prefer_claude = os.getenv('PREFER_CLAUDE', 'true').lower() == 'true'
+        def __init__(self):
+            self.environment = "development"
+            self.log_level = "INFO"
+            self.testing_mode = True
+            self.mongodb_url = os.getenv('MONGODB_URL', 'mongodb://localhost:27017/ai')
+            self.openai_api_key = os.getenv('OPENAI_API_KEY')
+            self.anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+            self.twilio_account_sid = os.getenv('TWILIO_ACCOUNT_SID')
+            self.twilio_auth_token = os.getenv('TWILIO_AUTH_TOKEN')
+            self.twilio_phone_number = os.getenv('TWILIO_PHONE_NUMBER')
+            self.eodhd_api_key = os.getenv('EODHD_API_KEY')
+            self.prefer_claude = os.getenv('PREFER_CLAUDE', 'true').lower() == 'true'
     
     settings = Settings()
 
