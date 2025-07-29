@@ -3,8 +3,10 @@
 
 from ..fundamental_analysis import FAEngine
 
-# Re-export with expected names for backward compatibility
+# Re-export with all expected names for backward compatibility
 CachedFundamentalService = FAEngine
+CachedFundamentalAnalysisService = FAEngine
 FundamentalAnalysisService = FAEngine
+FundamentalAnalysisTool = FAEngine
 
-__all__ = ['CachedFundamentalService', 'FundamentalAnalysisService', 'FAEngine']
+__all__ = ['CachedFundamentalService', 'CachedFundamentalAnalysisService', 'FundamentalAnalysisService', 'FundamentalAnalysisTool', 'FAEngine']
