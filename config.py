@@ -1,4 +1,4 @@
-# ===== config.py - COMPLETE FIXED VERSION =====
+# ===== config.py - CLAUDE-ENABLED VERSION =====
 from pydantic_settings import BaseSettings
 from typing import Optional, Dict, Any
 
@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     
     # External APIs (Optional for testing)
     openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None  # NEW: Claude support
     stripe_secret_key: Optional[str] = None
     stripe_webhook_secret: Optional[str] = None
     stripe_paid_price_id: Optional[str] = "price_mock_paid"
@@ -27,6 +28,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     testing_mode: bool = True
     database_name: str = "ai"
+    prefer_claude: bool = True  # NEW: Claude preference setting
     
     # Plan limits (used by main.py)
     free_weekly_limit: int = 10
@@ -40,6 +42,7 @@ class Settings(BaseSettings):
         """Get summary of available capabilities."""
         return {
             "openai_available": bool(self.openai_api_key),
+            "claude_available": bool(self.anthropic_api_key),  # NEW
             "stripe_available": bool(self.stripe_secret_key),
             "twilio_available": bool(self.twilio_account_sid and self.twilio_auth_token),
             "plaid_available": bool(self.plaid_client_id and self.plaid_secret),
@@ -47,7 +50,18 @@ class Settings(BaseSettings):
             "redis_configured": bool(self.redis_url),
             "mongodb_configured": bool(self.mongodb_url),
             "testing_mode": self.testing_mode,
-            "environment": self.environment
+            "environment": self.environment,
+            "prefer_claude": self.prefer_claude  # NEW
+        }
+    
+    def get_ai_config(self) -> Dict[str, Any]:
+        """Get AI service configuration."""
+        return {
+            "openai_available": bool(self.openai_api_key),
+            "claude_available": bool(self.anthropic_api_key),
+            "prefer_claude": self.prefer_claude,
+            "active_provider": "claude" if self.prefer_claude and self.anthropic_api_key else "openai" if self.openai_api_key else "none",
+            "fallback_available": bool(self.openai_api_key and self.anthropic_api_key)
         }
     
     def validate_runtime_requirements(self) -> Dict[str, Any]:
@@ -61,14 +75,25 @@ class Settings(BaseSettings):
         if not capabilities["twilio_available"] and not self.testing_mode:
             issues.append("Twilio not configured for SMS")
         
+        # AI services
+        if not capabilities["openai_available"] and not capabilities["claude_available"]:
+            issues.append("No AI service configured - need OpenAI or Claude")
+        
         # Recommended services
         warnings = []
-        if not capabilities["openai_available"]:
-            warnings.append("OpenAI not configured - AI features limited")
+        if not capabilities["openai_available"] and not capabilities["claude_available"]:
+            warnings.append("No AI services configured")
+        elif not capabilities["openai_available"]:
+            warnings.append("OpenAI not configured - no fallback if Claude fails")
+        elif not capabilities["claude_available"]:
+            warnings.append("Claude not configured - missing superior reasoning")
+        
         if not capabilities["stripe_available"]:
             warnings.append("Stripe not configured - payments disabled")
         if not capabilities["redis_configured"]:
             warnings.append("Redis not configured - caching disabled")
+        if not capabilities["eodhd_available"]:
+            warnings.append("EODHD not configured - market data limited")
         
         ready_for_production = len(issues) == 0 and not self.testing_mode
         
@@ -77,6 +102,7 @@ class Settings(BaseSettings):
             "critical_issues": issues,
             "warnings": warnings,
             "capabilities": capabilities,
+            "ai_config": self.get_ai_config(),
             "testing_mode": self.testing_mode
         }
     
@@ -88,6 +114,7 @@ class Settings(BaseSettings):
             "webhook_secrets_configured": bool(self.stripe_webhook_secret),
             "api_keys_configured": {
                 "openai": bool(self.openai_api_key),
+                "claude": bool(self.anthropic_api_key),  # NEW
                 "stripe": bool(self.stripe_secret_key),
                 "twilio": bool(self.twilio_auth_token),
                 "plaid": bool(self.plaid_secret),
