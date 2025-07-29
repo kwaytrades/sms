@@ -1,7 +1,4 @@
-# services/fundamental_analysis.py - FIXED VERSION
-"""
-SMS Trading Bot - Fundamental Analysis Engine (ROBUST ERROR HANDLING)
-"""
+# services/fundamental_analysis.py - MODIFIED for cache-first hybrid approach (RAW DATA ONLY)
 
 import asyncio
 import aiohttp
@@ -9,8 +6,11 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 import json
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, asdict
 from enum import Enum
+from motor.motor_asyncio import AsyncIOMotorClient
+import redis.asyncio as aioredis
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -55,7 +55,7 @@ class GrowthMetrics:
 
 @dataclass
 class FundamentalAnalysisResult:
-    """Complete fundamental analysis result"""
+    """Complete fundamental analysis result - RAW DATA ONLY"""
     symbol: str
     analysis_timestamp: datetime
     current_price: float
@@ -69,6 +69,9 @@ class FundamentalAnalysisResult:
     bear_case: str = "Analysis pending"
     data_completeness: float = 0.0
     last_quarter_date: Optional[str] = None
+    data_source: str = "unknown"
+    response_time_ms: float = 0.0
+    cache_hit: bool = False
     
     def __post_init__(self):
         """Initialize default values after creation"""
@@ -81,28 +84,413 @@ class FundamentalAnalysisResult:
         if self.concern_areas is None:
             self.concern_areas = []
 
-class FundamentalAnalysisEngine:
-    """Robust Fundamental Analysis Engine with comprehensive error handling"""
+class HybridFundamentalAnalysisService:
+    """
+    Hybrid Fundamental Analysis Service - Cache First with Live API Fallback:
+    1. Check background cache (MongoDB/Redis) - <100ms
+    2. If cache miss, use live EODHD API - 3-5s
+    3. Cache the live result for future requests
+    4. Returns RAW fundamental data only (no SMS formatting)
+    """
     
-    def __init__(self, eodhd_api_key: str, redis_client=None):
-        self.eodhd_api_key = eodhd_api_key
-        self.redis_client = redis_client
+    def __init__(self, mongodb_url: str = None, redis_url: str = None):
+        # API configuration
+        self.eodhd_api_key = os.getenv('EODHD_API_KEY')
         self.base_url = "https://eodhd.com/api"
-        self.cache_ttl = 7 * 24 * 3600  # 1 week
+        
+        # Background cache connections
+        self.mongodb_url = mongodb_url or os.getenv('MONGODB_URL')
+        self.redis_url = redis_url or os.getenv('REDIS_URL')
+        self.mongo_client = None
+        self.db = None
+        self.redis_client = None
+        
+        # Memory cache (from your original logic)
+        self.memory_cache = {}
+        self.memory_cache_ttl = 7 * 24 * 3600  # 1 week
+        
+        # Performance tracking
+        self.stats = {
+            "total_requests": 0,
+            "background_cache_hits": 0,
+            "memory_cache_hits": 0,
+            "live_api_calls": 0,
+            "avg_response_time_ms": 0
+        }
+        
+        logger.info("✅ Hybrid Fundamental Analysis Service initialized")
+        logger.info(f"   EODHD API: {'Set' if self.eodhd_api_key else 'Not Set'}")
+        logger.info(f"   Background Cache: {'Enabled' if self.mongodb_url else 'Disabled'}")
+    
+    async def initialize(self):
+        """Initialize background cache connections"""
+        try:
+            if self.mongodb_url and self.redis_url:
+                # MongoDB connection
+                self.mongo_client = AsyncIOMotorClient(self.mongodb_url)
+                self.db = self.mongo_client.trading_bot
+                
+                # Redis connection
+                self.redis_client = aioredis.from_url(self.redis_url)
+                
+                # Test connections
+                await self.db.command("ping")
+                await self.redis_client.ping()
+                
+                logger.info("✅ Background cache connections established")
+            else:
+                logger.info("📡 Running in API-only mode (no background cache)")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Background cache unavailable, using API-only mode: {e}")
+            self.mongo_client = None
+            self.db = None
+            self.redis_client = None
     
     async def analyze(self, symbol: str, analysis_depth: AnalysisDepth = AnalysisDepth.STANDARD) -> FundamentalAnalysisResult:
-        """Main analysis method with comprehensive error handling"""
+        """
+        Main analysis method - Cache first, API fallback (RAW DATA ONLY)
+        
+        Order of operations:
+        1. Check background cache (Redis/MongoDB) - ~50ms
+        2. Check memory cache - ~1ms  
+        3. Make live API call - ~3-5s
+        4. Cache result in both systems
+        """
+        start_time = datetime.now()
+        symbol = symbol.upper()
+        
         try:
-            logger.info(f"🔍 Starting fundamental analysis for {symbol}")
+            self.stats["total_requests"] += 1
             
-            # Check cache first (with proper error handling)
+            # Step 1: Check background cache first (fastest for popular stocks)
+            if self.redis_client or self.db:
+                background_result = await self._get_from_background_cache(symbol)
+                if background_result:
+                    self.stats["background_cache_hits"] += 1
+                    response_time = (datetime.now() - start_time).total_seconds() * 1000
+                    self._update_avg_response_time(response_time)
+                    
+                    logger.info(f"⚡ Background cache HIT for {symbol} in {response_time:.1f}ms")
+                    
+                    # Add metadata
+                    background_result.data_source = "background_cache"
+                    background_result.response_time_ms = round(response_time, 1)
+                    background_result.cache_hit = True
+                    
+                    return background_result
+            
+            # Step 2: Check memory cache (existing logic)
+            memory_result = self._get_from_memory_cache(symbol, analysis_depth)
+            if memory_result:
+                self.stats["memory_cache_hits"] += 1
+                response_time = (datetime.now() - start_time).total_seconds() * 1000
+                self._update_avg_response_time(response_time)
+                
+                logger.info(f"💾 Memory cache HIT for {symbol} in {response_time:.1f}ms")
+                
+                # Add metadata
+                memory_result.data_source = "memory_cache"
+                memory_result.response_time_ms = round(response_time, 1)
+                memory_result.cache_hit = True
+                
+                return memory_result
+            
+            # Step 3: Cache miss - use live API (your existing logic)
+            self.stats["live_api_calls"] += 1
+            
+            logger.info(f"📡 Cache MISS for {symbol} - fetching from live API")
+            
+            live_result = await self._analyze_with_live_api(symbol, analysis_depth)
+            
+            if live_result and not hasattr(live_result, 'error'):
+                # Step 4: Cache the result in both systems
+                await self._cache_live_result(symbol, live_result)
+                
+                response_time = (datetime.now() - start_time).total_seconds() * 1000
+                self._update_avg_response_time(response_time)
+                
+                # Add metadata
+                live_result.data_source = "live_api"
+                live_result.response_time_ms = round(response_time, 1)
+                live_result.cache_hit = False
+                
+                logger.info(f"✅ Live API success for {symbol} in {response_time:.1f}ms")
+            else:
+                response_time = (datetime.now() - start_time).total_seconds() * 1000
+                logger.error(f"❌ Live API failed for {symbol}")
+            
+            return live_result
+            
+        except Exception as e:
+            logger.error(f"❌ Fundamental analysis failed for {symbol}: {e}")
+            return self._create_minimal_result(symbol, f"Analysis error: {str(e)}")
+    
+    async def _get_from_background_cache(self, symbol: str) -> Optional[FundamentalAnalysisResult]:
+        """Get fundamental data from background cache (Redis/MongoDB)"""
+        try:
+            # Try Redis first (fastest)
+            if self.redis_client:
+                redis_data = await self._get_redis_fundamental_data(symbol)
+                if redis_data:
+                    return self._format_background_cache_result(symbol, redis_data, "redis")
+            
+            # Try MongoDB (daily pipeline data)
+            if self.db:
+                mongodb_data = await self._get_mongodb_fundamental_data(symbol)
+                if mongodb_data:
+                    # Promote to Redis for next time
+                    if self.redis_client:
+                        await self._promote_to_redis_cache(symbol, mongodb_data)
+                    
+                    return self._format_background_cache_result(symbol, mongodb_data, "mongodb")
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Background cache error for {symbol}: {e}")
+            return None
+    
+    async def _get_redis_fundamental_data(self, symbol: str) -> Optional[Dict]:
+        """Get fundamental data from Redis cache"""
+        try:
+            # Get fundamental data from Redis hash
+            fundamental_data = await self.redis_client.hgetall(f"stock:{symbol}:fundamental")
+            basic_data = await self.redis_client.hgetall(f"stock:{symbol}:basic")
+            
+            if fundamental_data and basic_data:
+                # Convert Redis data back to proper format
+                converted_fund = {}
+                for key, value in fundamental_data.items():
+                    key = key.decode() if isinstance(key, bytes) else key
+                    value = value.decode() if isinstance(value, bytes) else value
+                    
+                    if key in ['pe', 'pb', 'roe', 'debt_to_equity', 'dividend_yield', 'eps', 
+                              'revenue_growth', 'profit_margin', 'market_cap', 'beta']:
+                        try:
+                            converted_fund[key] = float(value)
+                        except (ValueError, TypeError):
+                            converted_fund[key] = value
+                    else:
+                        converted_fund[key] = value
+                
+                converted_basic = {}
+                for key, value in basic_data.items():
+                    key = key.decode() if isinstance(key, bytes) else key
+                    value = value.decode() if isinstance(value, bytes) else value
+                    
+                    if key in ['price', 'market_cap']:
+                        try:
+                            converted_basic[key] = float(value)
+                        except (ValueError, TypeError):
+                            converted_basic[key] = value
+                    else:
+                        converted_basic[key] = value
+                
+                return {"fundamental": converted_fund, "basic": converted_basic}
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Redis get failed for {symbol}: {e}")
+            return None
+    
+    async def _get_mongodb_fundamental_data(self, symbol: str) -> Optional[Dict]:
+        """Get fundamental data from MongoDB (daily pipeline)"""
+        try:
+            stock_data = await self.db.stocks.find_one(
+                {"symbol": symbol},
+                {"fundamental": 1, "basic": 1, "last_updated": 1}
+            )
+            
+            if stock_data and stock_data.get("fundamental") and stock_data.get("basic"):
+                # Check data freshness (within 2 days)
+                last_updated = stock_data.get("last_updated", datetime.now())
+                if isinstance(last_updated, str):
+                    try:
+                        last_updated = datetime.fromisoformat(last_updated)
+                    except ValueError:
+                        last_updated = datetime.now()
+                
+                age = datetime.now() - last_updated
+                if age < timedelta(days=2):
+                    return {
+                        "fundamental": stock_data["fundamental"],
+                        "basic": stock_data["basic"]
+                    }
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"⚠️ MongoDB get failed for {symbol}: {e}")
+            return None
+    
+    def _format_background_cache_result(self, symbol: str, cache_data: Dict, cache_source: str) -> FundamentalAnalysisResult:
+        """Format background cache data to match analysis result format"""
+        try:
+            fundamental = cache_data.get("fundamental", {})
+            basic = cache_data.get("basic", {})
+            
+            # Create ratios from cached data
+            ratios = FinancialRatios(
+                pe_ratio=fundamental.get("pe", None),
+                pb_ratio=fundamental.get("pb", None),
+                roe=fundamental.get("roe", None),
+                debt_to_equity=fundamental.get("debt_to_equity", None),
+                gross_margin=fundamental.get("profit_margin", None),  # Use profit_margin if available
+                net_margin=fundamental.get("profit_margin", None)
+            )
+            
+            # Create growth metrics from cached data
+            growth = GrowthMetrics(
+                revenue_growth_1y=fundamental.get("revenue_growth", None),
+                eps_growth_1y=fundamental.get("eps_growth", None)
+            )
+            
+            # Assess financial health from cached data
+            financial_health = self._assess_health_from_cache(fundamental)
+            
+            # Calculate score from cached data
+            overall_score = self._calculate_score_from_cache(fundamental)
+            
+            return FundamentalAnalysisResult(
+                symbol=symbol,
+                analysis_timestamp=datetime.now(),
+                current_price=float(basic.get("price", 0)),
+                ratios=ratios,
+                growth=growth,
+                financial_health=financial_health,
+                overall_score=overall_score,
+                strength_areas=["Cached analysis"],
+                concern_areas=["Limited cache data"],
+                bull_case="Based on cached fundamental metrics",
+                bear_case="Cache data may be outdated",
+                data_completeness=70.0,  # Assume reasonable completeness for cached data
+                last_quarter_date="Unknown",
+                data_source=f"background_cache_{cache_source}",
+                cache_hit=True
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Error formatting cache data for {symbol}: {e}")
+            return self._create_minimal_result(symbol, "Cache formatting error")
+    
+    def _assess_health_from_cache(self, fundamental: Dict) -> FinancialHealth:
+        """Assess financial health from cached data"""
+        try:
+            score = 0
+            factors = 0
+            
+            # ROE assessment
+            roe = fundamental.get("roe")
+            if roe and roe > 0:
+                factors += 1
+                if roe > 20:
+                    score += 4
+                elif roe > 15:
+                    score += 3
+                elif roe > 10:
+                    score += 2
+                else:
+                    score += 1
+            
+            # Debt assessment
+            debt_to_equity = fundamental.get("debt_to_equity")
+            if debt_to_equity is not None:
+                factors += 1
+                if debt_to_equity < 0.3:
+                    score += 3
+                elif debt_to_equity < 0.6:
+                    score += 2
+                elif debt_to_equity < 1.0:
+                    score += 1
+            
+            # Growth assessment
+            revenue_growth = fundamental.get("revenue_growth")
+            if revenue_growth is not None:
+                factors += 1
+                if revenue_growth > 15:
+                    score += 3
+                elif revenue_growth > 5:
+                    score += 2
+                elif revenue_growth > 0:
+                    score += 1
+            
+            # Calculate final health rating
+            if factors == 0:
+                return FinancialHealth.FAIR
+            
+            avg_score = score / factors
+            
+            if avg_score >= 3.5:
+                return FinancialHealth.EXCELLENT
+            elif avg_score >= 2.5:
+                return FinancialHealth.GOOD
+            elif avg_score >= 1.5:
+                return FinancialHealth.FAIR
+            elif avg_score >= 0.5:
+                return FinancialHealth.POOR
+            else:
+                return FinancialHealth.DISTRESSED
+                
+        except Exception:
+            return FinancialHealth.FAIR
+    
+    def _calculate_score_from_cache(self, fundamental: Dict) -> float:
+        """Calculate score from cached fundamental data"""
+        try:
+            total_score = 0
+            components = 0
+            
+            # ROE component
+            roe = fundamental.get("roe")
+            if roe and roe > 0:
+                components += 1
+                total_score += min(roe, 25)
+            
+            # Growth component
+            revenue_growth = fundamental.get("revenue_growth")
+            if revenue_growth is not None:
+                components += 1
+                growth_score = max(0, min(revenue_growth + 10, 25))
+                total_score += growth_score
+            
+            # Margin component
+            profit_margin = fundamental.get("profit_margin")
+            if profit_margin and profit_margin > 0:
+                components += 1
+                total_score += min(profit_margin, 25)
+            
+            if components > 0:
+                return min(total_score / components * 4, 100)
+            else:
+                return 50.0
+                
+        except Exception:
+            return 50.0
+    
+    def _get_from_memory_cache(self, symbol: str, analysis_depth: AnalysisDepth) -> Optional[FundamentalAnalysisResult]:
+        """Get from existing memory cache (your original logic)"""
+        try:
             cache_key = f"fundamental_analysis:{symbol}:{analysis_depth.value}"
-            cached_result = await self._get_cached_result_safe(cache_key)
-            if cached_result:
-                logger.info(f"✅ Returning cached fundamental analysis for {symbol}")
-                return cached_result
             
-            # Fetch data with timeout and error handling
+            if cache_key in self.memory_cache:
+                cached_data = self.memory_cache[cache_key]
+                if (datetime.now() - cached_data['timestamp']).total_seconds() < self.memory_cache_ttl:
+                    return cached_data['data']
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Memory cache error: {e}")
+            return None
+    
+    async def _analyze_with_live_api(self, symbol: str, analysis_depth: AnalysisDepth) -> FundamentalAnalysisResult:
+        """Use your existing live API analysis logic"""
+        try:
+            logger.info(f"🔍 Starting live fundamental analysis for {symbol}")
+            
+            # Fetch data with timeout and error handling (your existing logic)
             try:
                 data = await asyncio.wait_for(
                     self._fetch_all_data(symbol), 
@@ -115,21 +503,155 @@ class FundamentalAnalysisEngine:
                 logger.error(f"❌ Data fetch failed for {symbol}: {e}")
                 return self._create_minimal_result(symbol, "Data unavailable")
             
-            # Perform analysis with the fetched data
+            # Perform analysis with the fetched data (your existing logic)
             result = await self._perform_robust_analysis(symbol, data)
             
-            # Cache result safely
-            await self._cache_result_safe(cache_key, result)
+            # Cache result in memory (your existing logic)
+            cache_key = f"fundamental_analysis:{symbol}:{analysis_depth.value}"
+            self.memory_cache[cache_key] = {
+                'data': result,
+                'timestamp': datetime.now()
+            }
             
-            logger.info(f"✅ Completed fundamental analysis for {symbol}")
             return result
             
         except Exception as e:
-            logger.error(f"💥 Fundamental analysis failed for {symbol}: {e}")
+            logger.error(f"❌ Live API analysis failed for {symbol}: {e}")
             return self._create_minimal_result(symbol, f"Analysis error: {str(e)}")
     
+    async def _cache_live_result(self, symbol: str, result: FundamentalAnalysisResult):
+        """Cache live API result in background cache for future requests"""
+        try:
+            if not result or hasattr(result, 'error'):
+                return
+            
+            # Prepare cache data structure
+            cache_data = {
+                "symbol": symbol,
+                "last_updated": datetime.now(),
+                "basic": {
+                    "price": result.current_price,
+                    "market_cap": getattr(result.ratios, 'market_cap', 0) if result.ratios else 0,
+                    "sector": "Unknown",
+                    "exchange": "US"
+                },
+                "fundamental": {
+                    "pe": result.ratios.pe_ratio if result.ratios else None,
+                    "pb": result.ratios.pb_ratio if result.ratios else None,
+                    "roe": result.ratios.roe if result.ratios else None,
+                    "debt_to_equity": result.ratios.debt_to_equity if result.ratios else None,
+                    "dividend_yield": 0,
+                    "eps": 0,
+                    "revenue_growth": result.growth.revenue_growth_1y if result.growth else None,
+                    "profit_margin": result.ratios.net_margin if result.ratios else None,
+                    "market_cap": result.current_price * 1000000,  # Estimate
+                    "beta": 1.0
+                },
+                "api_cached": True,  # Mark as API-cached data
+                "cache_source": "live_fundamental_api"
+            }
+            
+            # Store in MongoDB
+            if self.db:
+                await self.db.stocks.replace_one(
+                    {"symbol": symbol},
+                    cache_data,
+                    upsert=True
+                )
+            
+            # Store in Redis
+            if self.redis_client:
+                await self._store_in_redis_cache(symbol, cache_data)
+            
+            logger.info(f"✅ Cached live fundamental result for {symbol}")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to cache live fundamental result for {symbol}: {e}")
+    
+    async def _promote_to_redis_cache(self, symbol: str, mongodb_data: Dict):
+        """Promote MongoDB data to Redis for faster future access"""
+        try:
+            if not self.redis_client:
+                return
+            
+            await self._store_in_redis_cache(symbol, {
+                "basic": mongodb_data.get("basic", {}),
+                "fundamental": mongodb_data.get("fundamental", {})
+            })
+            
+            logger.info(f"✅ Promoted {symbol} fundamental data to Redis cache")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Redis promotion failed for {symbol}: {e}")
+    
+    async def _store_in_redis_cache(self, symbol: str, cache_data: Dict):
+        """Store data in Redis cache"""
+        try:
+            pipe = self.redis_client.pipeline()
+            
+            # Store basic data
+            if "basic" in cache_data:
+                basic_data = {k: str(v) for k, v in cache_data["basic"].items()}
+                pipe.hset(f"stock:{symbol}:basic", mapping=basic_data)
+                pipe.expire(f"stock:{symbol}:basic", 7200)  # 2 hours for API-cached data
+            
+            # Store fundamental data  
+            if "fundamental" in cache_data:
+                fund_data = {k: str(v) for k, v in cache_data["fundamental"].items() if v is not None}
+                pipe.hset(f"stock:{symbol}:fundamental", mapping=fund_data)
+                pipe.expire(f"stock:{symbol}:fundamental", 7200)  # 2 hours for API-cached data
+            
+            # Store timestamp
+            pipe.set(f"stock:{symbol}:last_updated", datetime.now().isoformat())
+            pipe.expire(f"stock:{symbol}:last_updated", 7200)
+            
+            await pipe.execute()
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Redis storage failed for {symbol}: {e}")
+    
+    def _update_avg_response_time(self, response_time_ms: float):
+        """Update running average response time"""
+        current_avg = self.stats["avg_response_time_ms"]
+        total_requests = self.stats["total_requests"]
+        
+        self.stats["avg_response_time_ms"] = (
+            (current_avg * (total_requests - 1) + response_time_ms) / total_requests
+        )
+    
+    async def get_performance_stats(self) -> Dict[str, Any]:
+        """Get service performance statistics"""
+        total_requests = self.stats["total_requests"]
+        
+        return {
+            "service_mode": "hybrid_cache_first",
+            "performance_stats": self.stats,
+            "cache_efficiency": {
+                "background_cache_hit_rate": round((self.stats["background_cache_hits"] / max(total_requests, 1)) * 100, 2),
+                "memory_cache_hit_rate": round((self.stats["memory_cache_hits"] / max(total_requests, 1)) * 100, 2),
+                "overall_cache_hit_rate": round(((self.stats["background_cache_hits"] + self.stats["memory_cache_hits"]) / max(total_requests, 1)) * 100, 2),
+                "live_api_usage_rate": round((self.stats["live_api_calls"] / max(total_requests, 1)) * 100, 2)
+            },
+            "response_times": {
+                "background_cache": "~50ms",
+                "memory_cache": "~1ms", 
+                "live_api": "~3-5s",
+                "avg_response_time_ms": round(self.stats["avg_response_time_ms"], 1)
+            },
+            "capabilities": {
+                "cached_stocks": "800+ popular stocks (instant)",
+                "live_api_stocks": "Any stock symbol (3-5s)",
+                "auto_caching": "Live results cached for future requests",
+                "background_cache": "Enabled" if self.db else "Disabled"
+            },
+            "data_format": "raw_fundamental_data_only",
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    # === YOUR EXISTING METHODS (unchanged) ===
+    
     async def _fetch_all_data(self, symbol: str) -> Dict:
-        """Fetch all required data with proper error handling"""
+        """Your existing data fetching logic - UNCHANGED"""
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as session:
             try:
                 # Fetch fundamentals data
@@ -149,8 +671,7 @@ class FundamentalAnalysisEngine:
                 return {}
     
     async def _perform_robust_analysis(self, symbol: str, data: Dict) -> FundamentalAnalysisResult:
-        """Perform analysis with robust error handling"""
-        
+        """Your existing analysis logic - UNCHANGED"""
         # Safe data extraction
         highlights = data.get("Highlights", {}) or {}
         valuation = data.get("Valuation", {}) or {}
@@ -200,7 +721,7 @@ class FundamentalAnalysisEngine:
         )
     
     def _safe_float(self, value, default: float = 0.0) -> float:
-        """Safely convert value to float with default"""
+        """Your existing safe float conversion - UNCHANGED"""
         try:
             if value is None or value == "" or value == "None":
                 return default
@@ -216,8 +737,7 @@ class FundamentalAnalysisEngine:
             return default
     
     def _calculate_ratios_safe(self, highlights: Dict, valuation: Dict) -> FinancialRatios:
-        """Calculate ratios with comprehensive safety checks"""
-        
+        """Your existing ratios calculation - UNCHANGED"""
         return FinancialRatios(
             pe_ratio=self._safe_float(highlights.get("PERatio")),
             peg_ratio=self._safe_float(highlights.get("PEGRatio")),
@@ -233,8 +753,7 @@ class FundamentalAnalysisEngine:
         )
     
     def _calculate_growth_safe(self, data: Dict) -> GrowthMetrics:
-        """Calculate growth metrics safely"""
-        
+        """Your existing growth calculation - UNCHANGED"""
         highlights = data.get("Highlights", {}) or {}
         
         return GrowthMetrics(
@@ -244,8 +763,7 @@ class FundamentalAnalysisEngine:
         )
     
     def _assess_health_safe(self, ratios: FinancialRatios, growth: GrowthMetrics) -> FinancialHealth:
-        """Assess financial health with safety checks"""
-        
+        """Your existing health assessment - UNCHANGED"""
         score = 0
         factors = 0
         
@@ -309,8 +827,7 @@ class FundamentalAnalysisEngine:
             return FinancialHealth.DISTRESSED
     
     def _calculate_score_safe(self, ratios: FinancialRatios, growth: GrowthMetrics) -> float:
-        """Calculate composite score safely"""
-        
+        """Your existing score calculation - UNCHANGED"""
         total_score = 0
         components = 0
         
@@ -342,8 +859,7 @@ class FundamentalAnalysisEngine:
             return 50.0  # Default if no data
     
     def _identify_areas_safe(self, ratios: FinancialRatios, growth: GrowthMetrics) -> Tuple[List[str], List[str]]:
-        """Identify strengths and concerns safely"""
-        
+        """Your existing areas identification - UNCHANGED"""
         strengths = []
         concerns = []
         
@@ -390,8 +906,7 @@ class FundamentalAnalysisEngine:
         return strengths, concerns
     
     def _generate_thesis_safe(self, ratios: FinancialRatios, growth: GrowthMetrics, health: FinancialHealth) -> Tuple[str, str]:
-        """Generate investment thesis safely"""
-        
+        """Your existing thesis generation - UNCHANGED"""
         bull_points = []
         bear_points = []
         
@@ -428,8 +943,7 @@ class FundamentalAnalysisEngine:
         return bull_case, bear_case
     
     def _calculate_completeness_safe(self, highlights: Dict, valuation: Dict) -> float:
-        """Calculate data completeness safely"""
-        
+        """Your existing completeness calculation - UNCHANGED"""
         expected_fields = ["PERatio", "ReturnOnEquityTTM", "ProfitMargin", "RevenueGrowthTTM"]
         available_count = 0
         
@@ -440,7 +954,7 @@ class FundamentalAnalysisEngine:
         return (available_count / len(expected_fields)) * 100
     
     def _extract_quarter_date_safe(self, data: Dict) -> Optional[str]:
-        """Extract last quarter date safely"""
+        """Your existing quarter date extraction - UNCHANGED"""
         try:
             general = data.get("General", {})
             return general.get("LastSplitDate", "Unknown")
@@ -448,8 +962,7 @@ class FundamentalAnalysisEngine:
             return "Unknown"
     
     def _create_minimal_result(self, symbol: str, error_message: str) -> FundamentalAnalysisResult:
-        """Create minimal result when data is unavailable"""
-        
+        """Your existing minimal result creation - UNCHANGED"""
         return FundamentalAnalysisResult(
             symbol=symbol,
             analysis_timestamp=datetime.now(),
@@ -464,175 +977,47 @@ class FundamentalAnalysisEngine:
             last_quarter_date="Unknown"
         )
     
-    async def _get_cached_result_safe(self, cache_key: str) -> Optional[FundamentalAnalysisResult]:
-        """Safely retrieve cached result"""
-        try:
-            if not self.redis_client:
-                return None
-            
-            # Handle both sync and async Redis clients
-            if hasattr(self.redis_client, 'get'):
-                cached_data = self.redis_client.get(cache_key)
-            else:
-                cached_data = await self.redis_client.get(cache_key)
-            
-            if cached_data:
-                if isinstance(cached_data, bytes):
-                    cached_data = cached_data.decode('utf-8')
-                
-                data = json.loads(cached_data)
-                return self._reconstruct_result_from_cache(data)
-            
-            return None
-        except Exception as e:
-            logger.warning(f"Cache retrieval failed: {e}")
-            return None
-    
-    async def _cache_result_safe(self, cache_key: str, result: FundamentalAnalysisResult):
-        """Safely cache result"""
-        try:
-            if not self.redis_client:
-                return
-            
-            result_dict = {
-                "symbol": result.symbol,
-                "analysis_timestamp": result.analysis_timestamp.isoformat(),
-                "current_price": result.current_price,
-                "financial_health": result.financial_health.value,
-                "overall_score": result.overall_score,
-                "strength_areas": result.strength_areas,
-                "concern_areas": result.concern_areas,
-                "bull_case": result.bull_case,
-                "bear_case": result.bear_case,
-                "data_completeness": result.data_completeness
-            }
-            
-            # Handle both sync and async Redis clients
-            if hasattr(self.redis_client, 'setex'):
-                self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(result_dict))
-            else:
-                await self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(result_dict))
-                
-        except Exception as e:
-            logger.warning(f"Cache storage failed: {e}")
-    
-    def _reconstruct_result_from_cache(self, data: Dict) -> FundamentalAnalysisResult:
-        """Reconstruct result object from cached data"""
+    async def close(self):
+        """Cleanup method"""
+        self.memory_cache.clear()
         
-        return FundamentalAnalysisResult(
-            symbol=data.get("symbol", ""),
-            analysis_timestamp=datetime.fromisoformat(data.get("analysis_timestamp", datetime.now().isoformat())),
-            current_price=data.get("current_price", 0.0),
-            financial_health=FinancialHealth(data.get("financial_health", "fair")),
-            overall_score=data.get("overall_score", 50.0),
-            strength_areas=data.get("strength_areas", []),
-            concern_areas=data.get("concern_areas", []),
-            bull_case=data.get("bull_case", ""),
-            bear_case=data.get("bear_case", ""),
-            data_completeness=data.get("data_completeness", 0.0)
-        )
+        if self.mongo_client:
+            self.mongo_client.close()
+        if self.redis_client:
+            await self.redis_client.close()
+            
+        logger.info("✅ Hybrid Fundamental Analysis service closed")
 
-class FundamentalAnalysisTool:
-    """Integration wrapper for the conversation agent"""
-    
-    def __init__(self, eodhd_api_key: str, redis_client=None):
-        self.engine = FundamentalAnalysisEngine(eodhd_api_key, redis_client)
-    
-    async def execute(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute fundamental analysis with robust error handling"""
-        try:
-            symbol = parameters.get("symbol", "").upper().strip()
-            depth_str = parameters.get("depth", "standard")
-            user_style = parameters.get("user_style", "professional")
-            
-            if not symbol:
-                return {
-                    "success": False,
-                    "error": "Symbol required",
-                    "sms_response": "Please specify a stock symbol for fundamental analysis."
-                }
-            
-            logger.info(f"🔍 Executing fundamental analysis for {symbol}")
-            
-            # Convert depth string to enum safely
-            try:
-                depth = AnalysisDepth(depth_str)
-            except ValueError:
-                depth = AnalysisDepth.STANDARD
-            
-            # Perform analysis
-            result = await self.engine.analyze(symbol, depth)
-            
-            # Generate response based on analysis
-            if result.data_completeness > 30:
-                # We have enough data for a real analysis
-                sms_response = self._format_real_analysis(result, user_style)
-            else:
-                # Limited data available
-                sms_response = f"{symbol} fundamental data limited. Basic metrics: Health rated {result.financial_health.value}, analysis score {result.overall_score:.0f}/100. Consider technical analysis for trading insights."
-            
-            return {
-                "success": True,
-                "analysis_result": result,
-                "sms_response": sms_response,
-                "metadata": {
-                    "symbol": symbol,
-                    "overall_score": result.overall_score,
-                    "financial_health": result.financial_health.value,
-                    "data_completeness": result.data_completeness
-                }
-            }
-            
-        except Exception as e:
-            logger.error(f"💥 Fundamental analysis tool failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "sms_response": f"{parameters.get('symbol', 'Stock')} fundamental analysis temporarily unavailable."
-            }
-    
-    def _format_real_analysis(self, result: FundamentalAnalysisResult, user_style: str) -> str:
-        """Format analysis into professional response"""
-        
-        # Build response components
-        health_desc = {
-            FinancialHealth.EXCELLENT: "excellent",
-            FinancialHealth.GOOD: "strong", 
-            FinancialHealth.FAIR: "fair",
-            FinancialHealth.POOR: "weak",
-            FinancialHealth.DISTRESSED: "concerning"
-        }
-        
-        response_parts = []
-        
-        # Opening with key metrics
-        response_parts.append(f"{result.symbol} fundamentals show {health_desc.get(result.financial_health, 'fair')} financial health (score: {result.overall_score:.0f}/100).")
-        
-        # Key ratios if available
-        if result.ratios.pe_ratio and result.ratios.pe_ratio > 0:
-            pe_desc = "expensive" if result.ratios.pe_ratio > 25 else "reasonable" if result.ratios.pe_ratio > 15 else "attractive"
-            response_parts.append(f"P/E ratio of {result.ratios.pe_ratio:.1f} appears {pe_desc}.")
-        
-        # Growth info
-        if result.growth.revenue_growth_1y is not None:
-            if result.growth.revenue_growth_1y > 0:
-                response_parts.append(f"Revenue growing {result.growth.revenue_growth_1y:.1f}% annually.")
-            else:
-                response_parts.append(f"Revenue declining {abs(result.growth.revenue_growth_1y):.1f}%.")
-        
-        # Key strength or concern
-        if result.strength_areas:
-            response_parts.append(f"Strength: {result.strength_areas[0].lower()}.")
-        
-        if result.concern_areas and len(response_parts) < 4:
-            response_parts.append(f"Concern: {result.concern_areas[0].lower()}.")
-        
-        # Join and ensure SMS length
-        response = " ".join(response_parts)
-        if len(response) > 280:
-            response = response[:277] + "..."
-        
-        return response
 
-# Export for compatibility
-__all__ = ['FundamentalAnalysisEngine', 'FundamentalAnalysisTool', 'AnalysisDepth', 'FinancialHealth']
+# Example usage in your main app
+async def setup_hybrid_fundamental_service():
+    """Setup the hybrid fundamental service"""
+    fundamental_service = HybridFundamentalAnalysisService(
+        mongodb_url=os.getenv('MONGODB_URL'),
+        redis_url=os.getenv('REDIS_URL')
+    )
+    
+    await fundamental_service.initialize()
+    return fundamental_service
+
+# Usage example - RAW DATA ONLY
+async def test_hybrid_fundamental_service():
+    service = await setup_hybrid_fundamental_service()
+    
+    # This returns RAW fundamental data (no SMS formatting)
+    result = await service.analyze("AAPL")
+    
+    print(f"Symbol: {result.symbol}")
+    print(f"Financial Health: {result.financial_health.value}")
+    print(f"Overall Score: {result.overall_score}")
+    print(f"PE Ratio: {result.ratios.pe_ratio}")
+    print(f"ROE: {result.ratios.roe}")
+    print(f"Revenue Growth: {result.growth.revenue_growth_1y}")
+    print(f"Data Source: {result.data_source}")
+    print(f"Response Time: {result.response_time_ms}ms")
+    print(f"Cache Hit: {result.cache_hit}")
+
+
+# Export for compatibility - RAW DATA ONLY
+__all__ = ['HybridFundamentalAnalysisService', 'FundamentalAnalysisResult', 
+           'FinancialRatios', 'GrowthMetrics', 'AnalysisDepth', 'FinancialHealth']
