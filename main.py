@@ -14,6 +14,13 @@ from typing import Dict, List, Any
 # Import configuration
 try:
     from config import settings
+    # Ensure the settings object has all required attributes
+    if not hasattr(settings, 'anthropic_api_key'):
+        # Monkey patch the missing attribute if config.py doesn't have it
+        settings.anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+    if not hasattr(settings, 'prefer_claude'):
+        settings.prefer_claude = os.getenv('PREFER_CLAUDE', 'true').lower() == 'true'
+    logger.info("✅ Configuration loaded from config.py")
 except ImportError:
     # Fallback configuration
     class Settings:
@@ -31,6 +38,7 @@ except ImportError:
             self.prefer_claude = os.getenv('PREFER_CLAUDE', 'true').lower() == 'true'
     
     settings = Settings()
+    logger.info("✅ Configuration loaded from fallback")
 
 # Import services with error handling
 try:
@@ -847,4 +855,3 @@ if __name__ == "__main__":
         port=port,
         reload=settings.environment == "development"
     )
-    
