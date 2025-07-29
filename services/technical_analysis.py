@@ -710,3 +710,6 @@ async def test_hybrid_service():
     # Get performance stats
     stats = await ta_service.get_performance_stats()
     print(f"Cache hit rate: {stats['cache_efficiency']['overall_cache_hit_rate']}%")
+
+# For backward compatibility with existing imports
+TechnicalAnalysisService = HybridTechnicalAnalysisService
