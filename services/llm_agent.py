@@ -376,8 +376,8 @@ Generate the response:"""
             response = response[1:-1]
         
         # Ensure reasonable length for SMS
-        if len(response) > 300:
-            response = response[:297] + "..."
+        if len(response) > 480:
+            response = response[:477] + "..."
         
         return response.strip()
     
