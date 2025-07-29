@@ -1,15 +1,16 @@
-# ===== core/message_handler.py - ENHANCED WITH CONTEXT-RICH PROCESSING =====
+# ===== core/message_handler.py - MINIMAL UPDATES FOR ORCHESTRATOR =====
 from typing import Dict, Optional
 from datetime import datetime, timedelta, timezone
 from loguru import logger
 from models.user import UserProfile
 
 class MessageHandler:
-    def __init__(self, db_service, openai_service, twilio_service, user_manager=None):
+    def __init__(self, db_service, openai_service, twilio_service, user_manager=None, message_processor=None):
         self.db = db_service
         self.openai = openai_service
         self.twilio = twilio_service
-        self.user_manager = user_manager  # NEW: Add user manager for context
+        self.user_manager = user_manager
+        self.message_processor = message_processor  # NEW: Add orchestrator processor
         logger.info("✅ Enhanced message handler initialized with context support")
     
     async def process_incoming_message(self, phone_number: str, message_body: str) -> bool:
@@ -26,20 +27,24 @@ class MessageHandler:
                 await self._send_limit_message(user, usage_check)
                 return True
             
-            # NEW: Get conversation context for enhanced response generation
-            conversation_context = await self._get_conversation_context(phone_number)
+            # NEW: Use orchestrator if available, otherwise use existing logic
+            if self.message_processor:
+                # Use new orchestrator processor
+                response = await self.message_processor.process_message(
+                    message_body, phone_number
+                )
+            else:
+                # Fallback to existing enhanced response generation
+                conversation_context = await self._get_conversation_context(phone_number)
+                response = await self._generate_context_aware_response(user, message_body, conversation_context)
+                # Update conversation context for existing flow
+                await self._update_conversation_context(phone_number, message_body, response)
             
-            # Generate response with context (enhanced)
-            response = await self._generate_context_aware_response(user, message_body, conversation_context)
-            
-            # Send response
+            # Send response (existing functionality)
             await self.twilio.send_sms(phone_number, response)
             
             # Update usage (existing functionality)
             await self._update_weekly_usage(user)
-            
-            # NEW: Update conversation context
-            await self._update_conversation_context(phone_number, message_body, response)
             
             return True
             
@@ -47,7 +52,7 @@ class MessageHandler:
             logger.error(f"❌ Error processing message from {phone_number}: {e}")
             return False
     
-    # EXISTING METHODS - UNCHANGED
+    # ALL EXISTING METHODS REMAIN UNCHANGED
     async def _get_or_create_user(self, phone_number: str) -> UserProfile:
         """Get existing user or create new one"""
         if self.db:
@@ -112,7 +117,7 @@ class MessageHandler:
         except Exception as e:
             logger.error(f"❌ Error updating usage: {e}")
     
-    # NEW: Context-rich methods
+    # EXISTING CONTEXT METHODS REMAIN UNCHANGED
     async def _get_conversation_context(self, phone_number: str) -> Dict:
         """Get conversation context for enhanced response generation"""
         try:
