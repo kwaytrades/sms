@@ -110,10 +110,11 @@ class MessageHandler:
         await self.twilio.send_message(user.phone_number, message)  # ✅ FIXED: send_sms → send_message
     
     async def _update_weekly_usage(self, user: UserProfile):
-        """Update weekly usage counter"""
+        """Update weekly usage counter with FIXED method call"""
         try:
             if self.db:
-                await self.db.update_user_activity(user.phone_number, "received")
+                # FIXED: Use correct method signature - only phone_number argument
+                await self.db.update_user_activity(user.phone_number)
         except Exception as e:
             logger.error(f"❌ Error updating usage: {e}")
     
