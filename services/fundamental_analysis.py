@@ -122,11 +122,9 @@ class FAEngine:
         logger.info(f"   EODHD API: {'Set' if self.eodhd_api_key else 'Not Set'}")
         logger.info(f"   Background Cache: {'Enabled' if self.mongodb_url else 'Disabled'}")
 
-
     async def execute(self, symbol: str) -> Dict[str, Any]:
         """Execute fundamental analysis - wrapper for Claude compatibility"""
-                return await self.analyze_fundamentals(symbol)
-
+        return await self.analyze_fundamentals(symbol)
     
     async def initialize(self):
         """Initialize background cache connections"""
@@ -998,7 +996,7 @@ class FAEngine:
 # Example usage in your main app
 async def setup_hybrid_fundamental_service():
     """Setup the hybrid fundamental service"""
-    fundamental_service = HybridFundamentalAnalysisService(
+    fundamental_service = FAEngine(
         mongodb_url=os.getenv('MONGODB_URL'),
         redis_url=os.getenv('REDIS_URL')
     )
@@ -1025,10 +1023,8 @@ async def test_hybrid_fundamental_service():
 
 
 # Export for compatibility - RAW DATA ONLY
-__all__ = ['HybridFundamentalAnalysisService', 'FundamentalAnalysisResult', 
+__all__ = ['FAEngine', 'FundamentalAnalysisResult', 
            'FinancialRatios', 'GrowthMetrics', 'AnalysisDepth', 'FinancialHealth']
-
-# Add at the bottom of services/fundamental_analysis.py
 
 # For backward compatibility with existing imports
 FundamentalAnalysisEngine = FAEngine
