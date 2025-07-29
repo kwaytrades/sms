@@ -84,7 +84,7 @@ class FundamentalAnalysisResult:
         if self.concern_areas is None:
             self.concern_areas = []
 
-class HybridFundamentalAnalysisService:
+class FAEngine:
     """
     Hybrid Fundamental Analysis Service - Cache First with Live API Fallback:
     1. Check background cache (MongoDB/Redis) - <100ms
@@ -1025,5 +1025,5 @@ __all__ = ['HybridFundamentalAnalysisService', 'FundamentalAnalysisResult',
 # Add at the bottom of services/fundamental_analysis.py
 
 # For backward compatibility with existing imports
-FundamentalAnalysisEngine = HybridFundamentalAnalysisService
-FundamentalAnalysisTool = HybridFundamentalAnalysisService  # or create a wrapper if needed
+FundamentalAnalysisEngine = FAEngine
+FundamentalAnalysisTool = FAEngine  # or create a wrapper if needed
