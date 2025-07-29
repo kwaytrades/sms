@@ -182,8 +182,8 @@ Extract any stock symbols and call the appropriate tools now."""
         LLM sees real data and generates a contextual prompt for the response agent
         """
         
-        # Format the real data for LLM analysis
-        data_summary = self._format_tool_results_for_analysis(tool_results)
+        # Format the raw data for LLM analysis - MODIFIED TO PASS RAW DATA
+        data_summary = self._format_raw_tool_results(tool_results)
         context_summary = self._format_context_summary(context)
         
         prompt_generation_request = f"""You have called tools and received REAL market data. Now generate a contextual analysis prompt for the response agent.
@@ -191,16 +191,16 @@ Extract any stock symbols and call the appropriate tools now."""
 USER'S ORIGINAL REQUEST: "{message}"
 CONVERSATION CONTEXT: {context_summary}
 
-REAL MARKET DATA RECEIVED:
+RAW MARKET DATA RECEIVED:
 {data_summary}
 
 YOUR TASK: Generate a contextual prompt that will guide the response agent to create an intelligent, data-driven response.
 
 The prompt should:
-1. Incorporate the REAL data you received
-2. Highlight the most important insights from the data
-3. Connect different data points into a coherent narrative  
-4. Address the user's specific question with the real data
+1. Incorporate the RAW data you received (prices, indicators, news content)
+2. Highlight the most important insights from the raw data
+3. Connect different raw data points into a coherent narrative  
+4. Address the user's specific question with the raw data
 5. Include any important context or timing considerations
 6. Provide clear guidance on tone and focus for the response
 
@@ -256,8 +256,8 @@ Generate a professional, concise response:"""
             logger.error(f"Response agent execution failed: {e}")
             return "Market analysis completed. Please try your request again."
     
-    def _format_tool_results_for_analysis(self, tool_results: Dict) -> str:
-        """Format tool results for LLM analysis"""
+    def _format_raw_tool_results(self, tool_results: Dict) -> str:
+        """Format RAW tool results for LLM analysis - NO PROCESSING"""
         
         if not tool_results:
             return "No market data retrieved"
@@ -267,40 +267,28 @@ Generate a professional, concise response:"""
         for key, data in tool_results.items():
             if key.startswith("technical_"):
                 symbol = key.replace("technical_", "")
-                price_info = data.get('price', {})
-                indicators = data.get('indicators', {})
                 
-                result_text = f"TECHNICAL DATA for {symbol}:\n"
-                result_text += f"- Current Price: ${price_info.get('current', 'N/A')}\n"
-                result_text += f"- Change: {price_info.get('change_percent', 0):+.1f}%\n"
-                result_text += f"- RSI: {indicators.get('RSI', {}).get('value', 'N/A')}\n"
-                result_text += f"- Support: ${indicators.get('support_level', 'N/A')}\n"
-                result_text += f"- Resistance: ${indicators.get('resistance_level', 'N/A')}"
+                # Pass raw technical data structure
+                result_text = f"RAW TECHNICAL DATA for {symbol}:\n"
+                result_text += f"Full data structure: {json.dumps(data, indent=2, default=str)}"
                 
                 formatted_results.append(result_text)
             
             elif key.startswith("fundamental_"):
                 symbol = key.replace("fundamental_", "")
                 
-                result_text = f"FUNDAMENTAL DATA for {symbol}:\n"
-                if hasattr(data, 'overall_score'):
-                    result_text += f"- Overall Score: {data.overall_score:.0f}/100\n"
-                    result_text += f"- Financial Health: {data.financial_health.value}\n"
-                    result_text += f"- Strengths: {', '.join(data.strength_areas[:3])}\n"
-                    result_text += f"- Concerns: {', '.join(data.concern_areas[:3])}"
-                else:
-                    result_text += "- Analysis data available but limited"
+                # Pass raw fundamental data structure  
+                result_text = f"RAW FUNDAMENTAL DATA for {symbol}:\n"
+                result_text += f"Full data structure: {json.dumps(data, indent=2, default=str)}"
                 
                 formatted_results.append(result_text)
             
             elif key.startswith("news_"):
                 symbol = key.replace("news_", "")
-                news_data = data.get('news_sentiment', {})
                 
-                result_text = f"NEWS DATA for {symbol}:\n"
-                result_text += f"- Sentiment: {news_data.get('sentiment', 'neutral')}\n"
-                result_text += f"- Impact Score: {news_data.get('impact_score', 0):.1f}\n"
-                result_text += f"- Summary: {news_data.get('summary', 'No significant news')[:100]}"
+                # Pass raw news data structure
+                result_text = f"RAW NEWS DATA for {symbol}:\n"
+                result_text += f"Full data structure: {json.dumps(data, indent=2, default=str)}"
                 
                 formatted_results.append(result_text)
         
