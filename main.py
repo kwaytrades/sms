@@ -291,7 +291,6 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"⚠️ Cached screener initialization failed: {e}")
         
         # Initialize options analyzer
-        # Initialize options analyzer
         if OptionsAnalyzer and settings.eodhd_api_key:
             try:
                 options_analyzer = OptionsAnalyzer(
@@ -299,7 +298,7 @@ async def lifespan(app: FastAPI):
                     redis_url=settings.redis_url,
                     eodhd_api_key=settings.eodhd_api_key
                 )
-            await options_analyzer.initialize()  # Don't forget to initialize!
+                await options_analyzer.initialize()  # Don't forget to initialize!
                 logger.info("✅ Options analyzer initialized")
             except Exception as e:
                 logger.warning(f"⚠️ Options analyzer initialization failed: {e}")
