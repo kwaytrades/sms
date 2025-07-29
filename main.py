@@ -77,11 +77,11 @@ except Exception as e:
     logger.error(f"❌ TwilioService failed: {e}")
 
 try:
-    from services.technical_analysis import TechnicalAnalysisService
-    logger.info("✅ TechnicalAnalysisService imported")
+    from services.technical_analysis import TAEngine
+    logger.info("✅ TAEngine imported")
 except Exception as e:
-    TechnicalAnalysisService = None
-    logger.error(f"❌ TechnicalAnalysisService failed: {e}")
+    TAEngine = None
+    logger.error(f"❌ TAEngine failed: {e}")
 
 # Import both OpenAI and Claude agents
 try:
@@ -114,11 +114,11 @@ except Exception as e:
     logger.error(f"❌ NewsSentimentService failed: {e}")
 
 try:
-    from services.fundamental_analysis import FundamentalAnalysisTool
-    logger.info("✅ FundamentalAnalysisTool imported")
+    from services.fundamental_analysis import FAEngine
+    logger.info("✅ FAEngine imported")
 except Exception as e:
-    FundamentalAnalysisTool = None
-    logger.error(f"❌ FundamentalAnalysisTool failed: {e}")
+    FAEngine = None
+    logger.error(f"❌ FAEngine failed: {e}")
 
 # Import background job services
 try:
@@ -232,8 +232,8 @@ async def lifespan(app: FastAPI):
             twilio_service = TwilioService()
             logger.info("✅ Twilio service initialized")
         
-        if TechnicalAnalysisService:
-            ta_service = TechnicalAnalysisService()
+        if TAEngine:
+            ta_service = TAEngine()
             logger.info("✅ Technical Analysis service initialized")
         
         if NewsSentimentService:
@@ -243,13 +243,16 @@ async def lifespan(app: FastAPI):
             )
             logger.info("✅ News Sentiment service initialized")
         
-        if FundamentalAnalysisTool and settings.eodhd_api_key:
-            fundamental_tool = FundamentalAnalysisTool(
+        if FAEngine and settings.eodhd_api_key:
+            fundamental_tool = FAEngine(
                 eodhd_api_key=settings.eodhd_api_key,
                 redis_client=db_service.redis if db_service else None
             )
             logger.info("✅ Fundamental Analysis tool initialized")
         
+        TechnicalAnalysisService = TAEngine  # Backward compatibility
+        FundamentalAnalysisTool = FAEngine   # Backward compatibility
+
         # Initialize background data pipeline
         if BackgroundDataPipeline and settings.eodhd_api_key and settings.mongodb_url:
             try:
