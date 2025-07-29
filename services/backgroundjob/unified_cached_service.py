@@ -54,4 +54,7 @@ class UnifiedCachedService:
             logger.error(f"❌ Failed to get cached basic data for {symbol}: {e}")
             return None
 
-__all__ = ['UnifiedCachedService']
+# Create alias for expected class name
+UnifiedCachedDataService = UnifiedCachedService
+
+__all__ = ['UnifiedCachedService', 'UnifiedCachedDataService']
