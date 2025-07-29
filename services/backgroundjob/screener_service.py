@@ -10,7 +10,7 @@ import redis.asyncio as aioredis
 
 logger = logging.getLogger(__name__)
 
-class CachedScreenerService:
+class EODHDScreener:
     """
     Stock Screener with intelligent caching strategy:
     - Primary: Query cached MongoDB data (90% of cases) - <100ms response
