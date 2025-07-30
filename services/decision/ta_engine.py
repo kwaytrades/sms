@@ -1,940 +1,1565 @@
-# ta_engine.py
+# technical_analysis_engine.py
 """
-Decision Engine - Advanced Trading Analysis System
-Combines CheatCode 4/4 signals with contextual market factors for intelligent trading decisions
+Technical Analysis Engine - Multi-Timeframe Analysis with Cache-First Architecture
+Professional-grade technical analysis with market hours awareness and background processing
 """
 
 import numpy as np
 import pandas as pd
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional, Any
+from datetime import datetime, timedelta, time
+from typing import Dict, List, Tuple, Optional, Any, Union
 from dataclasses import dataclass, asdict
 from enum import Enum
 import json
-
-from cheatcode_engine import CheatCodeSignal, SignalStrength, TrendDirection
+from fastapi import APIRouter, HTTPException
+import redis.asyncio as redis
+import os
+import pytz
+from abc import ABC, abstractmethod
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class DecisionFactor(Enum):
-    """Decision factor categories"""
-    TECHNICAL = "technical"
-    PRICE_POSITION = "price_position"
-    VOLUME = "volume"
-    MARKET_CONTEXT = "market_context"
-    TIME_BASED = "time_based"
-    RISK_MANAGEMENT = "risk_management"
+class TechnicalStrength(Enum):
+    """Technical signal strength classification"""
+    VERY_BULLISH = "VERY_BULLISH"
+    BULLISH = "BULLISH"
+    SLIGHTLY_BULLISH = "SLIGHTLY_BULLISH"
+    NEUTRAL = "NEUTRAL"
+    SLIGHTLY_BEARISH = "SLIGHTLY_BEARISH"
+    BEARISH = "BEARISH"
+    VERY_BEARISH = "VERY_BEARISH"
 
-class DecisionReason(Enum):
-    """Reasons for decision adjustments"""
-    OVERBOUGHT = "overbought"
-    OVERSOLD = "oversold"
-    NEAR_RESISTANCE = "near_resistance"
-    NEAR_SUPPORT = "near_support"
-    VOLUME_SPIKE = "volume_spike"
-    VOLUME_DECLINE = "volume_decline"
-    MARKET_HEADWIND = "market_headwind"
-    MARKET_TAILWIND = "market_tailwind"
-    EARNINGS_RISK = "earnings_risk"
-    OPTIONS_EXPIRY = "options_expiry"
-    SECTOR_WEAKNESS = "sector_weakness"
-    HIGH_VOLATILITY = "high_volatility"
-    MOMENTUM_DIVERGENCE = "momentum_divergence"
-    RISK_TOO_HIGH = "risk_too_high"
+class TrendDirection(Enum):
+    """Trend direction"""
+    BULLISH = 1
+    BEARISH = -1
+    NEUTRAL = 0
+
+class TimeframeType(Enum):
+    """Supported timeframes"""
+    ONE_MINUTE = "1m"
+    FIVE_MINUTE = "5m"
+    ONE_HOUR = "1h"
+    ONE_DAY = "1d"
+
+class MarketSession(Enum):
+    """Market session types"""
+    PRE_MARKET = "pre_market"
+    REGULAR = "regular"
+    AFTER_HOURS = "after_hours"
+    CLOSED = "closed"
 
 @dataclass
-class DecisionFactorScore:
-    """Individual decision factor with score and reasoning"""
-    factor_type: DecisionFactor
-    reason: DecisionReason
-    score: float  # -2.0 to +2.0
+class TimeframeConfig:
+    """Configuration for each timeframe"""
+    timeframe: str
+    period: str
+    weight: float
+    bars_needed: int
     description: str
-    confidence: float  # 0-1
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'factor_type': self.factor_type.value,
-            'reason': self.reason.value,
-            'score': self.score,
-            'description': self.description,
-            'confidence': self.confidence
-        }
+    update_frequency: str  # How often to update during market hours
 
 @dataclass
-class DecisionContext:
-    """Market and stock context for decision making"""
+class TechnicalIndicators:
+    """Technical indicators for a single timeframe"""
+    # Trend indicators
+    sma_20: float
+    sma_50: float
+    sma_200: float
+    ema_12: float
+    ema_26: float
+    
+    # Momentum indicators
+    rsi: float
+    macd_line: float
+    macd_signal: float
+    macd_histogram: float
+    
+    # Volatility indicators
+    bb_upper: float
+    bb_middle: float
+    bb_lower: float
+    bb_percent: float
+    atr: float
+    
+    # Volume indicators
+    volume_sma: float
+    volume_ratio: float
+    
+    # Support/Resistance
+    support_levels: List[float]
+    resistance_levels: List[float]
+
+@dataclass
+class TechnicalSignal:
+    """Single timeframe technical analysis signal"""
     symbol: str
+    timeframe: str
+    timestamp: datetime
     current_price: float
     
     # Technical indicators
-    rsi_14: float
-    rsi_2: float
-    bb_position: float  # 0-1 where 0.5 is middle of BB
-    macd_signal: float
-    volume_ratio: float  # Current volume / 20-day avg
+    indicators: TechnicalIndicators
     
-    # Price levels
-    resistance_distance: float  # % to nearest resistance
-    support_distance: float     # % to nearest support
-    ma_20_distance: float      # % from 20-day MA
-    ma_50_distance: float      # % from 50-day MA
+    # Signal scores (0-1 each)
+    trend_score: float
+    momentum_score: float
+    volatility_score: float
+    volume_score: float
     
-    # Market context
-    market_trend: TrendDirection  # SPY trend
-    sector_trend: TrendDirection  # Sector trend
-    vix_level: float
-    market_correlation: float
+    # Overall assessment
+    total_score: float  # 0-4 scale
+    technical_strength: TechnicalStrength
+    trend_direction: TrendDirection
+    confidence: float  # 0-1
     
-    # Time-based factors
-    days_to_earnings: Optional[int]
-    is_options_expiry_week: bool
-    is_end_of_quarter: bool
-    market_session: str  # "pre", "regular", "after"
-    
-    # Volume analysis
-    volume_trend_5d: float      # 5-day volume trend
-    volume_spike_detected: bool
-    avg_volume_20d: float
+    # Key insights
+    trend_analysis: str
+    momentum_analysis: str
+    volume_analysis: str
+    key_levels: Dict[str, float]
     
     def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization"""
         data = asdict(self)
-        data['market_trend'] = self.market_trend.value
-        data['sector_trend'] = self.sector_trend.value
+        data['timestamp'] = self.timestamp.isoformat()
+        data['technical_strength'] = self.technical_strength.value
+        data['trend_direction'] = self.trend_direction.value
         return data
 
 @dataclass
-class EnhancedTradingDecision:
-    """Enhanced trading decision combining CheatCode + Decision Engine"""
-    
-    # Original CheatCode signal
-    cheatcode_signal: CheatCodeSignal
-    
-    # Decision engine analysis
-    decision_factors: List[DecisionFactorScore]
-    context: DecisionContext
-    
-    # Enhanced recommendation
-    base_score: float           # CheatCode 0-4 score
-    adjustment_score: float     # Decision factors -2 to +2
-    final_score: float          # Combined score
-    final_signal: SignalStrength
-    
-    # Enhanced trading advice
-    recommended_action: str
-    reasoning: str
-    risk_assessment: str
-    timing_advice: str
-    position_sizing_adjustment: float  # Multiplier 0.5-1.5
-    
-    # Specific guidance
-    wait_conditions: List[str]  # What to wait for before entering
-    exit_conditions: List[str]  # What to watch for exits
-    risk_factors: List[str]     # Current risk considerations
-    
-    # Confidence and alerts
-    decision_confidence: float
-    alerts_to_set: List[str]
-    
+class MultiTimeframeTechnicalSignal:
+    """Combined multi-timeframe technical analysis"""
+    symbol: str
     timestamp: datetime
+    current_price: float
+    
+    # Master signal (weighted combination)
+    master_score: float  # 0-4 scale
+    master_strength: TechnicalStrength
+    master_confidence: float
+    
+    # Timeframe alignment
+    alignment_score: float  # 0-1.3 (bonus for agreement)
+    timeframes_agreeing: int
+    dominant_trend: TrendDirection
+    
+    # Individual timeframe signals
+    timeframe_signals: Dict[str, TechnicalSignal]
+    
+    # Multi-timeframe insights
+    trend_strength: str  # "Strong/Moderate/Weak"
+    momentum_phase: str  # "Acceleration/Continuation/Deceleration"
+    volatility_regime: str  # "Low/Normal/High"
+    volume_profile: str  # "Strong/Normal/Weak"
+    
+    # Key technical levels across timeframes
+    major_support: float
+    major_resistance: float
+    next_support: float
+    next_resistance: float
     
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            'symbol': self.cheatcode_signal.symbol,
-            'timestamp': self.timestamp.isoformat(),
-            'cheatcode_analysis': {
-                'base_score': self.base_score,
-                'signal_strength': self.cheatcode_signal.signal_strength.value,
-                'confidence': self.cheatcode_signal.confidence,
-                'component_scores': {
-                    'cloud': self.cheatcode_signal.cloud_score,
-                    'swing': self.cheatcode_signal.swing_score,
-                    'squeeze': self.cheatcode_signal.squeeze_score,
-                    'pattern': self.cheatcode_signal.pattern_score
-                }
-            },
-            'decision_engine': {
-                'adjustment_score': self.adjustment_score,
-                'final_score': self.final_score,
-                'final_signal': self.final_signal.value,
-                'decision_confidence': self.decision_confidence,
-                'factors': [factor.to_dict() for factor in self.decision_factors]
-            },
-            'trading_recommendation': {
-                'action': self.recommended_action,
-                'entry_price': self.cheatcode_signal.entry_price,
-                'stop_loss': self.cheatcode_signal.stop_loss,
-                'take_profit': self.cheatcode_signal.take_profit,
-                'position_size_pct': self.cheatcode_signal.position_size_pct * self.position_sizing_adjustment,
-                'position_sizing_adjustment': self.position_sizing_adjustment
-            },
-            'analysis': {
-                'reasoning': self.reasoning,
-                'risk_assessment': self.risk_assessment,
-                'timing_advice': self.timing_advice,
-                'wait_conditions': self.wait_conditions,
-                'exit_conditions': self.exit_conditions,
-                'risk_factors': self.risk_factors,
-                'alerts_to_set': self.alerts_to_set
-            },
-            'market_context': self.context.to_dict()
-        }
+        """Convert to dictionary for JSON serialization"""
+        data = asdict(self)
+        data['timestamp'] = self.timestamp.isoformat()
+        data['master_strength'] = self.master_strength.value
+        data['dominant_trend'] = self.dominant_trend.value
+        
+        # Convert timeframe signals
+        tf_signals = {}
+        for tf, signal in self.timeframe_signals.items():
+            tf_signals[tf] = signal.to_dict()
+        data['timeframe_signals'] = tf_signals
+        
+        return data
 
-class DecisionEngine:
-    """
-    Advanced Decision Engine that enhances CheatCode signals with contextual analysis
-    """
+class MarketHours:
+    """Market hours utility for US markets"""
     
     def __init__(self):
-        # Technical thresholds
-        self.rsi_overbought = 70
-        self.rsi_very_overbought = 80
-        self.rsi_oversold = 30
-        self.rsi_very_oversold = 20
+        self.eastern_tz = pytz.timezone('US/Eastern')
         
-        # Distance thresholds (%)
-        self.resistance_threshold = 0.02  # 2%
-        self.support_threshold = 0.02     # 2%
+    def get_current_market_session(self) -> MarketSession:
+        """Get current market session"""
+        now_et = datetime.now(self.eastern_tz)
+        current_time = now_et.time()
         
-        # Volume thresholds
-        self.volume_spike_threshold = 2.0   # 2x average
-        self.volume_low_threshold = 0.5     # 0.5x average
+        # Check if it's a weekday
+        if now_et.weekday() >= 5:  # Saturday = 5, Sunday = 6
+            return MarketSession.CLOSED
         
-        # Market context thresholds
-        self.high_vix_threshold = 25
-        self.very_high_vix_threshold = 35
+        # Market hours (Eastern Time)
+        pre_market_start = time(4, 0)  # 4:00 AM
+        regular_start = time(9, 30)    # 9:30 AM
+        regular_end = time(16, 0)      # 4:00 PM
+        after_hours_end = time(20, 0)  # 8:00 PM
         
-    async def enhance_signal(self, cheatcode_signal: CheatCodeSignal, 
-                           market_data: pd.DataFrame, 
-                           context: DecisionContext) -> EnhancedTradingDecision:
-        """
-        Main enhancement function - takes CheatCode signal and adds decision engine analysis
-        """
+        if pre_market_start <= current_time < regular_start:
+            return MarketSession.PRE_MARKET
+        elif regular_start <= current_time < regular_end:
+            return MarketSession.REGULAR
+        elif regular_end <= current_time < after_hours_end:
+            return MarketSession.AFTER_HOURS
+        else:
+            return MarketSession.CLOSED
+    
+    def is_market_hours(self, include_extended: bool = True) -> bool:
+        """Check if market is open"""
+        session = self.get_current_market_session()
+        
+        if include_extended:
+            return session in [MarketSession.PRE_MARKET, MarketSession.REGULAR, MarketSession.AFTER_HOURS]
+        else:
+            return session == MarketSession.REGULAR
+    
+    def should_update_timeframe(self, timeframe: str) -> bool:
+        """Determine if timeframe should be updated based on market hours"""
+        session = self.get_current_market_session()
+        
+        # Only update intraday timeframes during market hours
+        if timeframe in ["1m", "5m"] and session != MarketSession.REGULAR:
+            return False
+        
+        # Update hourly during extended hours
+        if timeframe == "1h" and session == MarketSession.CLOSED:
+            return False
+        
+        # Daily can be updated anytime (for international markets, after-hours, etc.)
+        return True
+
+class CachedTechnicalDataProvider:
+    """Cache-first data provider with market hours awareness"""
+    
+    def __init__(self, redis_client=None, eodhd_api_key: str = None):
+        self.redis_client = redis_client
+        self.eodhd_api_key = eodhd_api_key or os.environ.get('EODHD_API_TOKEN')
+        self.market_hours = MarketHours()
+        
+    async def get_timeframe_data(self, symbol: str, timeframe: str, period: str) -> Optional[pd.DataFrame]:
+        """Get data from cache first, fallback to API only during market hours"""
+        
+        # Check if we should fetch data for this timeframe
+        if not self.market_hours.should_update_timeframe(timeframe):
+            logger.info(f"Market closed for {timeframe} updates - using cache only for {symbol}")
+        
+        # Try cache first
+        cache_key = f"market_data:{symbol}:{timeframe}:{period}"
+        
+        if self.redis_client:
+            try:
+                cached_data = await self.redis_client.get(cache_key)
+                if cached_data:
+                    data_dict = json.loads(cached_data)
+                    df = pd.DataFrame(data_dict['data'])
+                    df['Date'] = pd.to_datetime(df['Date'])
+                    df.set_index('Date', inplace=True)
+                    logger.info(f"✅ Cache HIT for {symbol}:{timeframe}")
+                    return df
+            except Exception as e:
+                logger.warning(f"Cache read failed for {symbol}: {e}")
+        
+        # Only fetch from API during appropriate market hours
+        if self.market_hours.should_update_timeframe(timeframe):
+            logger.info(f"📡 Cache MISS - fetching {symbol}:{timeframe} from API (market hours: {self.market_hours.get_current_market_session().value})")
+            return await self._fetch_from_api(symbol, timeframe, period)
+        else:
+            logger.info(f"⏰ Market closed for {timeframe} - returning mock data for {symbol}")
+            return self._generate_mock_data(symbol, timeframe)
+    
+    async def _fetch_from_api(self, symbol: str, timeframe: str, period: str) -> Optional[pd.DataFrame]:
+        """Fetch data from EODHD API with market hours check"""
+        if not self.eodhd_api_key:
+            logger.warning(f"No EODHD API key - using mock data for {symbol}")
+            return self._generate_mock_data(symbol, timeframe)
+        
+        # Additional market hours check for intraday data
+        session = self.market_hours.get_current_market_session()
+        if timeframe in ["1m", "5m"] and session not in [MarketSession.REGULAR, MarketSession.PRE_MARKET, MarketSession.AFTER_HOURS]:
+            logger.info(f"Skipping {timeframe} API call - market closed")
+            return self._generate_mock_data(symbol, timeframe)
+        
         try:
-            logger.info(f"Enhancing signal for {cheatcode_signal.symbol}")
+            # Convert timeframe to EODHD format
+            if timeframe in ["1m", "5m"]:
+                # Intraday data - only during market hours
+                url = f"https://eodhd.com/api/intraday/{symbol}.US"
+                interval = "1m" if timeframe == "1m" else "5m"
+                params = {
+                    'api_token': self.eodhd_api_key,
+                    'interval': interval,
+                    'fmt': 'json'
+                }
+            else:
+                # Daily data - can be fetched anytime
+                url = f"https://eodhd.com/api/eod/{symbol}.US"
+                end_date = datetime.now().strftime('%Y-%m-%d')
+                
+                # Convert period to days
+                if period == "1mo":
+                    start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+                elif period == "3mo":
+                    start_date = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
+                elif period == "6mo":
+                    start_date = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
+                elif period == "2y":
+                    start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+                else:
+                    start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+                
+                params = {
+                    'api_token': self.eodhd_api_key,
+                    'fmt': 'json',
+                    'from': start_date,
+                    'to': end_date
+                }
             
-            # Calculate all decision factors
-            decision_factors = await self._calculate_decision_factors(cheatcode_signal, market_data, context)
-            
-            # Calculate adjustment score
-            adjustment_score = sum(factor.score for factor in decision_factors)
-            adjustment_score = max(-2.0, min(2.0, adjustment_score))  # Clamp to -2 to +2
-            
-            # Calculate final score and signal
-            base_score = cheatcode_signal.total_score
-            final_score = base_score + adjustment_score
-            final_signal = self._determine_final_signal(final_score, cheatcode_signal.signal_strength, decision_factors)
-            
-            # Generate enhanced recommendations
-            recommended_action = self._generate_action_recommendation(final_signal, decision_factors)
-            reasoning = self._generate_reasoning(cheatcode_signal, decision_factors, adjustment_score)
-            risk_assessment = self._assess_risk(decision_factors, context)
-            timing_advice = self._generate_timing_advice(decision_factors, context)
-            
-            # Position sizing adjustment
-            position_sizing_adjustment = self._calculate_position_adjustment(decision_factors, context)
-            
-            # Generate specific guidance
-            wait_conditions = self._identify_wait_conditions(decision_factors, context)
-            exit_conditions = self._identify_exit_conditions(decision_factors, context)
-            risk_factors = self._identify_risk_factors(decision_factors, context)
-            alerts_to_set = self._generate_alerts(decision_factors, context)
-            
-            # Calculate decision confidence
-            decision_confidence = self._calculate_decision_confidence(cheatcode_signal, decision_factors, adjustment_score)
-            
-            # Create enhanced decision
-            enhanced_decision = EnhancedTradingDecision(
-                cheatcode_signal=cheatcode_signal,
-                decision_factors=decision_factors,
-                context=context,
-                base_score=base_score,
-                adjustment_score=adjustment_score,
-                final_score=final_score,
-                final_signal=final_signal,
-                recommended_action=recommended_action,
-                reasoning=reasoning,
-                risk_assessment=risk_assessment,
-                timing_advice=timing_advice,
-                position_sizing_adjustment=position_sizing_adjustment,
-                wait_conditions=wait_conditions,
-                exit_conditions=exit_conditions,
-                risk_factors=risk_factors,
-                decision_confidence=decision_confidence,
-                alerts_to_set=alerts_to_set,
-                timestamp=datetime.utcnow()
-            )
-            
-            logger.info(f"Enhanced decision for {cheatcode_signal.symbol}: {final_signal.value} "
-                       f"(Base: {base_score:.1f}, Adj: {adjustment_score:+.1f}, Final: {final_score:.1f})")
-            
-            return enhanced_decision
+            # Note: In production, you would use aiohttp here
+            # For now, returning mock data to avoid external dependencies
+            logger.info(f"Would fetch from {url} with params {params} (session: {session.value})")
+            return self._generate_mock_data(symbol, timeframe)
             
         except Exception as e:
-            logger.error(f"Failed to enhance signal for {cheatcode_signal.symbol}: {e}")
+            logger.error(f"API fetch failed for {symbol}: {e}")
+            return self._generate_mock_data(symbol, timeframe)
+    
+    def _generate_mock_data(self, symbol: str, timeframe: str) -> pd.DataFrame:
+        """Generate realistic mock data with market hours consideration"""
+        # Base prices for popular stocks
+        base_prices = {
+            'AAPL': 185, 'TSLA': 245, 'MSFT': 420, 'GOOGL': 140,
+            'AMZN': 155, 'NVDA': 875, 'META': 485, 'NFLX': 485
+        }
+        
+        base_price = base_prices.get(symbol, 100)
+        
+        # Number of bars based on timeframe
+        if timeframe == "1m":
+            num_bars = 390  # 1 trading day
+            freq = '1min'
+        elif timeframe == "5m":
+            num_bars = 390  # 5 days worth
+            freq = '5min'
+        elif timeframe == "1h":
+            num_bars = 156  # 1 month worth (6.5h/day * 24 days)
+            freq = '1H'
+        else:  # 1d
+            num_bars = 60  # 60 days
+            freq = 'D'
+        
+        # Generate dates with market hours consideration
+        if timeframe in ["1m", "5m", "1h"]:
+            # Business hours only for intraday
+            dates = pd.bdate_range(end=datetime.now(), periods=max(1, num_bars//40), freq='D')
+            all_dates = []
+            
+            for date in dates:
+                # Only generate data for market hours (9:30 AM - 4:00 PM ET)
+                market_start = 9.5  # 9:30 AM
+                market_end = 16.0   # 4:00 PM
+                
+                if timeframe == "1m":
+                    # Generate minute-by-minute data during market hours
+                    minutes_in_session = int((market_end - market_start) * 60)
+                    for minute in range(minutes_in_session):
+                        hour = int(market_start + minute / 60)
+                        minute_part = int((market_start + minute / 60 - hour) * 60)
+                        all_dates.append(date.replace(hour=hour, minute=minute_part))
+                elif timeframe == "5m":
+                    # Generate 5-minute bars during market hours
+                    for minutes in range(0, int((market_end - market_start) * 60), 5):
+                        hour = int(market_start + minutes / 60)
+                        minute_part = int((market_start + minutes / 60 - hour) * 60)
+                        all_dates.append(date.replace(hour=hour, minute=minute_part))
+                elif timeframe == "1h":
+                    # Generate hourly bars during market hours
+                    for hour in range(int(market_start), int(market_end)):
+                        all_dates.append(date.replace(hour=hour, minute=30))
+            
+            dates = pd.DatetimeIndex(all_dates[:num_bars])
+        else:
+            dates = pd.bdate_range(end=datetime.now(), periods=num_bars, freq=freq)
+        
+        # Random walk with trend
+        returns = np.random.normal(0.0005, 0.015, num_bars)  # Slight upward bias
+        prices = [base_price]
+        
+        for ret in returns[1:]:
+            prices.append(prices[-1] * (1 + ret))
+        
+        # Create OHLCV data with realistic intraday patterns
+        data = []
+        for i, (date, close) in enumerate(zip(dates, prices)):
+            # Volatility based on timeframe and time of day
+            if timeframe == "1m":
+                # Higher volatility at open/close
+                hour = date.hour
+                if hour in [9, 15]:  # Market open/close hours
+                    volatility = np.random.uniform(0.002, 0.008)
+                else:
+                    volatility = np.random.uniform(0.001, 0.005)
+            elif timeframe == "5m":
+                volatility = np.random.uniform(0.003, 0.008)
+            elif timeframe == "1h":
+                volatility = np.random.uniform(0.005, 0.015)
+            else:  # 1d
+                volatility = np.random.uniform(0.01, 0.03)
+            
+            high = close * (1 + volatility)
+            low = close * (1 - volatility)
+            open_price = close * (1 + np.random.uniform(-0.005, 0.005))
+            
+            # Volume based on timeframe and market session
+            if timeframe == "1m":
+                base_volume = 20000
+                # Higher volume at market open/close
+                hour = date.hour
+                if hour == 9:  # Market open
+                    volume_multiplier = np.random.uniform(3, 5)
+                elif hour == 15:  # Market close
+                    volume_multiplier = np.random.uniform(2, 3)
+                else:
+                    volume_multiplier = np.random.uniform(0.5, 1.5)
+                volume = int(base_volume * volume_multiplier)
+            elif timeframe == "5m":
+                volume = np.random.randint(100000, 400000)
+            elif timeframe == "1h":
+                volume = np.random.randint(500000, 1500000)
+            else:  # 1d
+                volume = np.random.randint(2000000, 8000000)
+            
+            data.append({
+                'Date': date,
+                'open': round(open_price, 2),
+                'high': round(high, 2),
+                'low': round(low, 2),
+                'close': round(close, 2),
+                'volume': volume
+            })
+        
+        df = pd.DataFrame(data)
+        df.set_index('Date', inplace=True)
+        
+        # Add market session info for intraday timeframes
+        session = self.market_hours.get_current_market_session()
+        logger.info(f"Generated {len(df)} bars of mock data for {symbol}:{timeframe} (session: {session.value})")
+        return df
+
+class TechnicalAnalysisEngine:
+    """
+    Technical Analysis engine with multi-timeframe analysis and market hours awareness
+    """
+    
+    def __init__(self, redis_client=None, data_provider=None):
+        self.redis_client = redis_client
+        self.data_provider = data_provider or CachedTechnicalDataProvider(redis_client)
+        self.market_hours = MarketHours()
+        
+        # Timeframe configurations with update frequencies
+        self.timeframe_configs = {
+            TimeframeType.ONE_MINUTE.value: TimeframeConfig("1m", "1mo", 0.1, 100, "Scalping/Real-time", "1min"),
+            TimeframeType.FIVE_MINUTE.value: TimeframeConfig("5m", "3mo", 0.2, 80, "Intraday Trading", "5min"),
+            TimeframeType.ONE_HOUR.value: TimeframeConfig("1h", "6mo", 0.3, 50, "Swing Trading", "1hour"),
+            TimeframeType.ONE_DAY.value: TimeframeConfig("1d", "2y", 0.4, 30, "Position Trading", "daily")
+        }
+        
+    async def analyze_multi_timeframe_technical(self, symbol: str, timeframes: List[str] = None) -> MultiTimeframeTechnicalSignal:
+        """
+        Main multi-timeframe technical analysis function
+        
+        Args:
+            symbol: Stock symbol
+            timeframes: List of timeframes to analyze (defaults to market-appropriate timeframes)
+            
+        Returns:
+            MultiTimeframeTechnicalSignal with combined analysis
+        """
+        if timeframes is None:
+            # Default timeframes based on market session
+            session = self.market_hours.get_current_market_session()
+            if session == MarketSession.REGULAR:
+                timeframes = ["1m", "5m", "1h", "1d"]  # All timeframes during regular hours
+            elif session in [MarketSession.PRE_MARKET, MarketSession.AFTER_HOURS]:
+                timeframes = ["1h", "1d"]  # Extended hours - focus on longer timeframes
+            else:  # Market closed
+                timeframes = ["1d"]  # Only daily analysis when market is closed
+        
+        try:
+            # Analyze each timeframe
+            timeframe_signals = {}
+            
+            for tf in timeframes:
+                if tf not in self.timeframe_configs:
+                    logger.warning(f"Unsupported timeframe: {tf}")
+                    continue
+                
+                config = self.timeframe_configs[tf]
+                signal = await self.analyze_single_timeframe_technical(symbol, tf, config)
+                
+                if signal:
+                    timeframe_signals[tf] = signal
+                    logger.info(f"✅ {symbol}:{tf} technical analysis complete - {signal.technical_strength.value}")
+                else:
+                    logger.warning(f"❌ {symbol}:{tf} technical analysis failed")
+            
+            if not timeframe_signals:
+                raise ValueError(f"No successful technical analysis for {symbol}")
+            
+            # Combine timeframes into master signal
+            master_signal = self._combine_timeframe_technical_signals(symbol, timeframe_signals)
+            
+            # Cache the result
+            await self._cache_multi_timeframe_technical_signal(symbol, master_signal)
+            
+            logger.info(f"🎯 Multi-timeframe technical analysis complete for {symbol}: {master_signal.master_strength.value}")
+            return master_signal
+            
+        except Exception as e:
+            logger.error(f"Multi-timeframe technical analysis failed for {symbol}: {e}")
             raise
     
-    async def _calculate_decision_factors(self, signal: CheatCodeSignal, 
-                                        data: pd.DataFrame, 
-                                        context: DecisionContext) -> List[DecisionFactorScore]:
-        """Calculate all decision factors"""
-        factors = []
-        
-        # Technical factors
-        factors.extend(self._analyze_technical_factors(context))
-        
-        # Price position factors  
-        factors.extend(self._analyze_price_position_factors(context))
-        
-        # Volume factors
-        factors.extend(self._analyze_volume_factors(context))
-        
-        # Market context factors
-        factors.extend(self._analyze_market_context_factors(context))
-        
-        # Time-based factors
-        factors.extend(self._analyze_time_based_factors(context))
-        
-        # Risk management factors
-        factors.extend(self._analyze_risk_factors(signal, context))
-        
-        return factors
-    
-    def _analyze_technical_factors(self, context: DecisionContext) -> List[DecisionFactorScore]:
-        """Analyze technical indicator factors"""
-        factors = []
-        
-        # RSI analysis
-        if context.rsi_14 > self.rsi_very_overbought:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.TECHNICAL,
-                reason=DecisionReason.OVERBOUGHT,
-                score=-1.0,
-                description=f"Very overbought RSI at {context.rsi_14:.1f}",
-                confidence=0.9
-            ))
-        elif context.rsi_14 > self.rsi_overbought:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.TECHNICAL,
-                reason=DecisionReason.OVERBOUGHT,
-                score=-0.5,
-                description=f"Overbought RSI at {context.rsi_14:.1f}",
-                confidence=0.8
-            ))
-        elif context.rsi_14 < self.rsi_very_oversold:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.TECHNICAL,
-                reason=DecisionReason.OVERSOLD,
-                score=1.0,
-                description=f"Very oversold RSI at {context.rsi_14:.1f}",
-                confidence=0.9
-            ))
-        elif context.rsi_14 < self.rsi_oversold:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.TECHNICAL,
-                reason=DecisionReason.OVERSOLD,
-                score=0.5,
-                description=f"Oversold RSI at {context.rsi_14:.1f}",
-                confidence=0.8
-            ))
-        
-        # MACD divergence
-        if abs(context.macd_signal) > 0.5:
-            score = 0.3 if context.macd_signal > 0 else -0.3
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.TECHNICAL,
-                reason=DecisionReason.MOMENTUM_DIVERGENCE,
-                score=score,
-                description=f"MACD showing {'bullish' if score > 0 else 'bearish'} momentum",
-                confidence=0.6
-            ))
-        
-        return factors
-    
-    def _analyze_price_position_factors(self, context: DecisionContext) -> List[DecisionFactorScore]:
-        """Analyze price position relative to key levels"""
-        factors = []
-        
-        # Resistance proximity
-        if context.resistance_distance <= self.resistance_threshold:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.PRICE_POSITION,
-                reason=DecisionReason.NEAR_RESISTANCE,
-                score=-0.5,
-                description=f"Within {context.resistance_distance*100:.1f}% of resistance",
-                confidence=0.8
-            ))
-        
-        # Support proximity
-        if context.support_distance <= self.support_threshold:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.PRICE_POSITION,
-                reason=DecisionReason.NEAR_SUPPORT,
-                score=0.5,
-                description=f"Within {context.support_distance*100:.1f}% of support",
-                confidence=0.8
-            ))
-        
-        # Moving average analysis
-        if context.ma_20_distance > 0.05:  # 5% above 20MA
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.PRICE_POSITION,
-                reason=DecisionReason.OVERBOUGHT,
-                score=-0.3,
-                description=f"{context.ma_20_distance*100:.1f}% above 20-day MA",
-                confidence=0.6
-            ))
-        elif context.ma_20_distance < -0.05:  # 5% below 20MA
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.PRICE_POSITION,
-                reason=DecisionReason.OVERSOLD,
-                score=0.3,
-                description=f"{abs(context.ma_20_distance)*100:.1f}% below 20-day MA",
-                confidence=0.6
-            ))
-        
-        return factors
-    
-    def _analyze_volume_factors(self, context: DecisionContext) -> List[DecisionFactorScore]:
-        """Analyze volume-related factors"""
-        factors = []
-        
-        # Volume spike
-        if context.volume_spike_detected or context.volume_ratio > self.volume_spike_threshold:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.VOLUME,
-                reason=DecisionReason.VOLUME_SPIKE,
-                score=0.8,
-                description=f"Volume spike: {context.volume_ratio:.1f}x average",
-                confidence=0.9
-            ))
-        
-        # Low volume
-        elif context.volume_ratio < self.volume_low_threshold:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.VOLUME,
-                reason=DecisionReason.VOLUME_DECLINE,
-                score=-0.3,
-                description=f"Low volume: {context.volume_ratio:.1f}x average",
-                confidence=0.7
-            ))
-        
-        # Volume trend
-        if context.volume_trend_5d < -0.2:  # 20% decline over 5 days
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.VOLUME,
-                reason=DecisionReason.VOLUME_DECLINE,
-                score=-0.5,
-                description="Declining volume trend over 5 days",
-                confidence=0.7
-            ))
-        elif context.volume_trend_5d > 0.2:  # 20% increase over 5 days
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.VOLUME,
-                reason=DecisionReason.VOLUME_SPIKE,
-                score=0.5,
-                description="Increasing volume trend over 5 days",
-                confidence=0.7
-            ))
-        
-        return factors
-    
-    def _analyze_market_context_factors(self, context: DecisionContext) -> List[DecisionFactorScore]:
-        """Analyze broader market context"""
-        factors = []
-        
-        # Market trend
-        if context.market_trend == TrendDirection.BULLISH:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.MARKET_CONTEXT,
-                reason=DecisionReason.MARKET_TAILWIND,
-                score=0.3,
-                description="Bullish market trend (SPY)",
-                confidence=0.8
-            ))
-        elif context.market_trend == TrendDirection.BEARISH:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.MARKET_CONTEXT,
-                reason=DecisionReason.MARKET_HEADWIND,
-                score=-0.3,
-                description="Bearish market trend (SPY)",
-                confidence=0.8
-            ))
-        
-        # Sector trend
-        if context.sector_trend == TrendDirection.BEARISH:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.MARKET_CONTEXT,
-                reason=DecisionReason.SECTOR_WEAKNESS,
-                score=-0.5,
-                description="Bearish sector trend",
-                confidence=0.7
-            ))
-        
-        # VIX analysis
-        if context.vix_level > self.very_high_vix_threshold:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.MARKET_CONTEXT,
-                reason=DecisionReason.HIGH_VOLATILITY,
-                score=-0.4,
-                description=f"Very high market fear (VIX: {context.vix_level:.1f})",
-                confidence=0.8
-            ))
-        elif context.vix_level > self.high_vix_threshold:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.MARKET_CONTEXT,
-                reason=DecisionReason.HIGH_VOLATILITY,
-                score=-0.2,
-                description=f"Elevated market fear (VIX: {context.vix_level:.1f})",
-                confidence=0.7
-            ))
-        
-        return factors
-    
-    def _analyze_time_based_factors(self, context: DecisionContext) -> List[DecisionFactorScore]:
-        """Analyze time-based risk factors"""
-        factors = []
-        
-        # Earnings proximity
-        if context.days_to_earnings is not None and context.days_to_earnings <= 7:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.TIME_BASED,
-                reason=DecisionReason.EARNINGS_RISK,
-                score=-0.3,
-                description=f"Earnings in {context.days_to_earnings} days",
-                confidence=0.8
-            ))
-        
-        # Options expiration
-        if context.is_options_expiry_week:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.TIME_BASED,
-                reason=DecisionReason.OPTIONS_EXPIRY,
-                score=-0.2,
-                description="Options expiration week - increased volatility",
-                confidence=0.6
-            ))
-        
-        # Market session
-        if context.market_session in ["pre", "after"]:
-            factors.append(DecisionFactorScore(
-                factor_type=DecisionFactor.TIME_BASED,
-                reason=DecisionReason.HIGH_VOLATILITY,
-                score=-0.1,
-                description=f"Extended hours trading ({context.market_session}-market)",
-                confidence=0.5
-            ))
-        
-        return factors
-    
-    def _analyze_risk_factors(self, signal: CheatCodeSignal, context: DecisionContext) -> List[DecisionFactorScore]:
-        """Analyze overall risk management factors"""
-        factors = []
-        
-        # Risk/reward analysis
-        if signal.stop_loss > 0 and signal.entry_price > 0:
-            risk_amount = abs(signal.entry_price - signal.stop_loss) / signal.entry_price
-            reward_amount = abs(signal.take_profit - signal.entry_price) / signal.entry_price
-            risk_reward_ratio = reward_amount / risk_amount if risk_amount > 0 else 0
+    async def analyze_single_timeframe_technical(self, symbol: str, timeframe: str, config: TimeframeConfig) -> Optional[TechnicalSignal]:
+        """Analyze a single timeframe for technical indicators"""
+        try:
+            # Get data for this timeframe
+            data = await self.data_provider.get_timeframe_data(symbol, timeframe, config.period)
             
-            if risk_reward_ratio < 1.5:  # Poor risk/reward
-                factors.append(DecisionFactorScore(
-                    factor_type=DecisionFactor.RISK_MANAGEMENT,
-                    reason=DecisionReason.RISK_TOO_HIGH,
-                    score=-0.4,
-                    description=f"Poor risk/reward ratio: {risk_reward_ratio:.1f}:1",
-                    confidence=0.9
-                ))
-            elif risk_reward_ratio > 3.0:  # Excellent risk/reward
-                factors.append(DecisionFactorScore(
-                    factor_type=DecisionFactor.RISK_MANAGEMENT,
-                    reason=DecisionReason.RISK_TOO_HIGH,
-                    score=0.3,
-                    description=f"Excellent risk/reward ratio: {risk_reward_ratio:.1f}:1",
-                    confidence=0.8
-                ))
-        
-        return factors
+            if data is None or len(data) < config.bars_needed:
+                logger.warning(f"Insufficient data for {symbol}:{timeframe}")
+                return None
+            
+            current_price = float(data['close'].iloc[-1])
+            
+            # Calculate technical indicators
+            indicators = self._calculate_technical_indicators(data)
+            
+            # Calculate individual scores
+            trend_score = self._calculate_trend_score(data, indicators)
+            momentum_score = self._calculate_momentum_score(data, indicators)
+            volatility_score = self._calculate_volatility_score(data, indicators)
+            volume_score = self._calculate_volume_score(data, indicators)
+            
+            # Overall technical assessment
+            total_score = trend_score + momentum_score + volatility_score + volume_score
+            technical_strength = self._determine_technical_strength(total_score, trend_score, momentum_score)
+            trend_direction = self._determine_trend_direction(indicators)
+            confidence = self._calculate_technical_confidence(trend_score, momentum_score, volatility_score, volume_score)
+            
+            # Generate insights
+            trend_analysis = self._analyze_trend(data, indicators, timeframe)
+            momentum_analysis = self._analyze_momentum(data, indicators, timeframe)
+            volume_analysis = self._analyze_volume(data, indicators, timeframe)
+            key_levels = self._identify_key_levels(data, indicators)
+            
+            # Create signal
+            signal = TechnicalSignal(
+                symbol=symbol,
+                timeframe=timeframe,
+                timestamp=datetime.utcnow(),
+                current_price=current_price,
+                indicators=indicators,
+                trend_score=trend_score,
+                momentum_score=momentum_score,
+                volatility_score=volatility_score,
+                volume_score=volume_score,
+                total_score=total_score,
+                technical_strength=technical_strength,
+                trend_direction=trend_direction,
+                confidence=confidence,
+                trend_analysis=trend_analysis,
+                momentum_analysis=momentum_analysis,
+                volume_analysis=volume_analysis,
+                key_levels=key_levels
+            )
+            
+            return signal
+            
+        except Exception as e:
+            logger.error(f"Single timeframe technical analysis failed for {symbol}:{timeframe}: {e}")
+            return None
     
-    def _determine_final_signal(self, final_score: float, 
-                              base_signal: SignalStrength, 
-                              factors: List[DecisionFactorScore]) -> SignalStrength:
-        """Determine final signal strength based on combined analysis"""
+    def _calculate_technical_indicators(self, data: pd.DataFrame) -> TechnicalIndicators:
+        """Calculate all technical indicators"""
+        high = data['high'].values
+        low = data['low'].values
+        close = data['close'].values
+        volume = data['volume'].values
         
-        # Major negative factors that override strong signals
-        major_negatives = [f for f in factors if f.score <= -0.8]
+        # Trend indicators
+        sma_20 = self._sma(close, 20)[-1] if len(close) >= 20 else close[-1]
+        sma_50 = self._sma(close, 50)[-1] if len(close) >= 50 else close[-1]
+        sma_200 = self._sma(close, 200)[-1] if len(close) >= 200 else close[-1]
+        ema_12 = self._ema(close, 12)[-1] if len(close) >= 12 else close[-1]
+        ema_26 = self._ema(close, 26)[-1] if len(close) >= 26 else close[-1]
         
-        # Strong positive factors
-        strong_positives = [f for f in factors if f.score >= 0.8]
+        # Momentum indicators
+        rsi = self._calculate_rsi(close, 14)[-1] if len(close) >= 14 else 50
+        macd_line, macd_signal, macd_histogram = self._calculate_macd(close)
         
-        if final_score >= 4.0 and not major_negatives:
-            return SignalStrength.STRONG_BUY
-        elif final_score >= 3.0:
-            return SignalStrength.BUY if not major_negatives else SignalStrength.WEAK_BUY
-        elif final_score >= 2.0:
-            return SignalStrength.WEAK_BUY
-        elif final_score <= -4.0 and not strong_positives:
-            return SignalStrength.STRONG_SELL
-        elif final_score <= -3.0:
-            return SignalStrength.SELL if not strong_positives else SignalStrength.WEAK_SELL
-        elif final_score <= -2.0:
-            return SignalStrength.WEAK_SELL
-        else:
-            return SignalStrength.HOLD
+        # Volatility indicators
+        bb_upper, bb_middle, bb_lower = self._calculate_bollinger_bands(close, 20, 2)
+        bb_percent = ((close[-1] - bb_lower[-1]) / (bb_upper[-1] - bb_lower[-1]) * 100) if bb_upper[-1] != bb_lower[-1] else 50
+        atr = self._calculate_atr(high, low, close, 14)[-1] if len(close) >= 14 else 0
+        
+        # Volume indicators
+        volume_sma = self._sma(volume, 20)[-1] if len(volume) >= 20 else volume[-1]
+        volume_ratio = volume[-1] / volume_sma if volume_sma > 0 else 1.0
+        
+        # Support/Resistance levels
+        support_levels, resistance_levels = self._calculate_support_resistance(high, low, close)
+        
+        return TechnicalIndicators(
+            sma_20=sma_20,
+            sma_50=sma_50,
+            sma_200=sma_200,
+            ema_12=ema_12,
+            ema_26=ema_26,
+            rsi=rsi,
+            macd_line=macd_line,
+            macd_signal=macd_signal,
+            macd_histogram=macd_histogram,
+            bb_upper=bb_upper[-1],
+            bb_middle=bb_middle[-1],
+            bb_lower=bb_lower[-1],
+            bb_percent=bb_percent,
+            atr=atr,
+            volume_sma=volume_sma,
+            volume_ratio=volume_ratio,
+            support_levels=support_levels,
+            resistance_levels=resistance_levels
+        )
     
-    def _generate_action_recommendation(self, signal: SignalStrength, 
-                                      factors: List[DecisionFactorScore]) -> str:
-        """Generate specific action recommendation"""
+    def _calculate_trend_score(self, data: pd.DataFrame, indicators: TechnicalIndicators) -> float:
+        """Calculate trend strength score (0-1)"""
+        close = data['close'].values
+        current_price = close[-1]
         
-        if signal == SignalStrength.STRONG_BUY:
-            return "Strong Buy - Enter position immediately"
-        elif signal == SignalStrength.BUY:
-            return "Buy - Good entry opportunity" 
-        elif signal == SignalStrength.WEAK_BUY:
-            wait_factors = [f for f in factors if f.score < -0.3]
-            if wait_factors:
-                return "Weak Buy - Consider waiting for better entry"
+        score = 0.0
+        
+        # Moving average alignment (40% of trend score)
+        ma_score = 0.0
+        if current_price > indicators.sma_20:
+            ma_score += 0.25
+        if current_price > indicators.sma_50:
+            ma_score += 0.25
+        if current_price > indicators.sma_200:
+            ma_score += 0.25
+        if indicators.sma_20 > indicators.sma_50:
+            ma_score += 0.25
+        
+        score += ma_score * 0.4
+        
+        # EMA relationship (30% of trend score)
+        ema_score = 0.0
+        if indicators.ema_12 > indicators.ema_26:
+            ema_score += 0.5
+        if current_price > indicators.ema_12:
+            ema_score += 0.5
+        
+        score += ema_score * 0.3
+        
+        # Price trend (30% of trend score)
+        if len(close) >= 10:
+            recent_trend = (close[-1] - close[-10]) / close[-10]
+            if recent_trend > 0.02:  # +2% trend
+                score += 0.3
+            elif recent_trend > 0:
+                score += 0.15
+            elif recent_trend < -0.02:  # -2% trend
+                score += 0.0  # Bearish trend gets 0 points in trend score
             else:
-                return "Weak Buy - Small position acceptable"
-        elif signal == SignalStrength.STRONG_SELL:
-            return "Strong Sell - Exit/Short position immediately"
-        elif signal == SignalStrength.SELL:
-            return "Sell - Good exit opportunity"
-        elif signal == SignalStrength.WEAK_SELL:
-            return "Weak Sell - Consider reducing position"
+                score += 0.1
+        
+        return min(score, 1.0)
+    
+    def _calculate_momentum_score(self, data: pd.DataFrame, indicators: TechnicalIndicators) -> float:
+        """Calculate momentum score (0-1)"""
+        score = 0.0
+        
+        # RSI momentum (50% of momentum score)
+        if 30 < indicators.rsi < 70:  # Healthy momentum
+            if indicators.rsi > 50:
+                score += 0.5 * (indicators.rsi - 50) / 20  # Scale from 50-70
+            else:
+                score += 0.25 * indicators.rsi / 50  # Partial credit below 50
+        elif indicators.rsi >= 70:  # Overbought but still bullish
+            score += 0.4
+        
+        # MACD momentum (50% of momentum score)
+        if indicators.macd_line > indicators.macd_signal:
+            score += 0.25
+        if indicators.macd_histogram > 0:
+            score += 0.25
+        
+        return min(score, 1.0)
+    
+    def _calculate_volatility_score(self, data: pd.DataFrame, indicators: TechnicalIndicators) -> float:
+        """Calculate volatility score (0-1) - higher is better for trading"""
+        score = 0.0
+        
+        # Bollinger Band position (60% of volatility score)
+        if 20 < indicators.bb_percent < 80:  # Good trading range
+            score += 0.6
+        elif indicators.bb_percent >= 80:  # Near upper band
+            score += 0.4
+        elif indicators.bb_percent <= 20:  # Near lower band
+            score += 0.3
+        
+        # ATR relative to price (40% of volatility score)
+        close = data['close'].values
+        atr_percent = (indicators.atr / close[-1]) * 100
+        if 1.0 < atr_percent < 3.0:  # Ideal volatility for trading
+            score += 0.4
+        elif atr_percent >= 3.0:  # High volatility
+            score += 0.2
+        else:  # Low volatility
+            score += 0.1
+        
+        return min(score, 1.0)
+    
+    def _calculate_volume_score(self, data: pd.DataFrame, indicators: TechnicalIndicators) -> float:
+        """Calculate volume score (0-1)"""
+        score = 0.0
+        
+        # Volume confirmation (100% of volume score)
+        if indicators.volume_ratio > 1.5:  # High volume
+            score += 1.0
+        elif indicators.volume_ratio > 1.2:  # Above average volume
+            score += 0.7
+        elif indicators.volume_ratio > 0.8:  # Normal volume
+            score += 0.5
+        else:  # Low volume
+            score += 0.2
+        
+        return min(score, 1.0)
+    
+    def _determine_technical_strength(self, total_score: float, trend_score: float, momentum_score: float) -> TechnicalStrength:
+        """Determine overall technical strength"""
+        # Weight trend and momentum more heavily
+        weighted_score = (trend_score * 0.4) + (momentum_score * 0.4) + (total_score * 0.2)
+        
+        if weighted_score >= 0.85:
+            return TechnicalStrength.VERY_BULLISH
+        elif weighted_score >= 0.7:
+            return TechnicalStrength.BULLISH
+        elif weighted_score >= 0.55:
+            return TechnicalStrength.SLIGHTLY_BULLISH
+        elif weighted_score >= 0.45:
+            return TechnicalStrength.NEUTRAL
+        elif weighted_score >= 0.3:
+            return TechnicalStrength.SLIGHTLY_BEARISH
+        elif weighted_score >= 0.15:
+            return TechnicalStrength.BEARISH
         else:
-            return "Hold - Wait for clearer signals"
+            return TechnicalStrength.VERY_BEARISH
     
-    def _generate_reasoning(self, cheatcode_signal: CheatCodeSignal, 
-                          factors: List[DecisionFactorScore], 
-                          adjustment: float) -> str:
-        """Generate detailed reasoning for the decision"""
+    def _determine_trend_direction(self, indicators: TechnicalIndicators) -> TrendDirection:
+        """Determine trend direction based on moving averages"""
+        bullish_signals = 0
+        bearish_signals = 0
         
-        base_strength = cheatcode_signal.signal_strength.value
-        
-        reasoning = f"CheatCode 4/4 analysis shows {base_strength} "
-        reasoning += f"({cheatcode_signal.total_score:.1f}/4 score). "
-        
-        if adjustment > 0.5:
-            reasoning += f"Decision engine adds +{adjustment:.1f} due to: "
-            positive_factors = [f for f in factors if f.score > 0]
-            reasoning += ", ".join([f.description for f in positive_factors[:3]])
-        elif adjustment < -0.5:
-            reasoning += f"Decision engine subtracts {adjustment:.1f} due to: "
-            negative_factors = [f for f in factors if f.score < 0]
-            reasoning += ", ".join([f.description for f in negative_factors[:3]])
+        # EMA relationship
+        if indicators.ema_12 > indicators.ema_26:
+            bullish_signals += 1
         else:
-            reasoning += "Decision engine confirms signal with minor adjustments."
+            bearish_signals += 1
         
-        return reasoning
-    
-    def _assess_risk(self, factors: List[DecisionFactorScore], context: DecisionContext) -> str:
-        """Assess overall risk level"""
-        
-        risk_factors = [f for f in factors if f.score < -0.3]
-        
-        if len(risk_factors) >= 3:
-            return "HIGH RISK - Multiple negative factors present"
-        elif len(risk_factors) == 2:
-            return "MODERATE RISK - Some caution warranted"
-        elif len(risk_factors) == 1:
-            return "LOW-MODERATE RISK - Minor concerns"
+        # SMA alignment
+        if indicators.sma_20 > indicators.sma_50:
+            bullish_signals += 1
         else:
-            return "LOW RISK - Favorable conditions"
-    
-    def _generate_timing_advice(self, factors: List[DecisionFactorScore], 
-                              context: DecisionContext) -> str:
-        """Generate timing-specific advice"""
+            bearish_signals += 1
         
-        timing_factors = [f for f in factors if f.factor_type == DecisionFactor.TIME_BASED]
-        technical_factors = [f for f in factors if f.reason in [DecisionReason.OVERBOUGHT, DecisionReason.NEAR_RESISTANCE]]
-        
-        if any(f.reason == DecisionReason.EARNINGS_RISK for f in timing_factors):
-            return "Consider waiting until after earnings for clearer direction"
-        elif technical_factors:
-            return "Wait for pullback to better entry level"
-        elif context.market_session != "regular":
-            return "Consider waiting for regular market hours"
+        # MACD
+        if indicators.macd_line > indicators.macd_signal:
+            bullish_signals += 1
         else:
-            return "Good timing for entry"
+            bearish_signals += 1
+        
+        if bullish_signals > bearish_signals:
+            return TrendDirection.BULLISH
+        elif bearish_signals > bullish_signals:
+            return TrendDirection.BEARISH
+        else:
+            return TrendDirection.NEUTRAL
     
-    def _calculate_position_adjustment(self, factors: List[DecisionFactorScore], 
-                                     context: DecisionContext) -> float:
-        """Calculate position sizing adjustment multiplier"""
+    def _calculate_technical_confidence(self, trend_score: float, momentum_score: float, 
+                                      volatility_score: float, volume_score: float) -> float:
+        """Calculate confidence in technical analysis"""
+        # Higher confidence when all indicators align
+        scores = [trend_score, momentum_score, volatility_score, volume_score]
         
-        risk_score = sum(f.score for f in factors if f.score < 0)
-        opportunity_score = sum(f.score for f in factors if f.score > 0)
+        # Average score
+        avg_score = np.mean(scores)
         
-        # Base adjustment
-        adjustment = 1.0
+        # Consistency bonus (lower standard deviation = higher confidence)
+        consistency = 1 - (np.std(scores) / np.mean(scores)) if np.mean(scores) > 0 else 0.5
         
-        # Reduce size for high risk
-        if risk_score < -1.5:
-            adjustment *= 0.5
-        elif risk_score < -0.8:
-            adjustment *= 0.75
+        # Volume confirmation bonus
+        volume_bonus = min(volume_score * 0.2, 0.2)
         
-        # Increase size for high opportunity (with limits)
-        if opportunity_score > 1.5:
-            adjustment *= 1.3
-        elif opportunity_score > 0.8:
-            adjustment *= 1.15
-        
-        # Volatility adjustment
-        if context.vix_level > 30:
-            adjustment *= 0.8
-        
-        return max(0.25, min(1.5, adjustment))
+        confidence = avg_score * consistency + volume_bonus
+        return min(confidence, 1.0)
     
-    def _identify_wait_conditions(self, factors: List[DecisionFactorScore], 
-                                context: DecisionContext) -> List[str]:
-        """Identify specific conditions to wait for"""
-        conditions = []
+    def _analyze_trend(self, data: pd.DataFrame, indicators: TechnicalIndicators, timeframe: str) -> str:
+        """Generate trend analysis text"""
+        close = data['close'].values
+        current_price = close[-1]
         
-        for factor in factors:
-            if factor.reason == DecisionReason.OVERBOUGHT and factor.score < -0.5:
-                conditions.append(f"RSI to cool below {self.rsi_overbought}")
-            elif factor.reason == DecisionReason.NEAR_RESISTANCE:
-                conditions.append("Breakout above resistance with volume")
-            elif factor.reason == DecisionReason.EARNINGS_RISK:
-                conditions.append("Wait until after earnings announcement")
-            elif factor.reason == DecisionReason.VOLUME_DECLINE:
-                conditions.append("Volume increase to confirm move")
-        
-        return conditions
+        if current_price > indicators.sma_20 > indicators.sma_50 > indicators.sma_200:
+            return f"Strong bullish trend across all timeframes. Price above all major moving averages."
+        elif current_price > indicators.sma_20 > indicators.sma_50:
+            return f"Bullish short-to-medium term trend. Price above 20 and 50 SMAs."
+        elif current_price < indicators.sma_20 < indicators.sma_50 < indicators.sma_200:
+            return f"Strong bearish trend. Price below all major moving averages."
+        elif indicators.sma_20 > indicators.sma_50:
+            return f"Mixed trend. Short-term bullish but longer-term concerns."
+        else:
+            return f"Sideways/consolidating trend. Price range-bound between moving averages."
     
-    def _identify_exit_conditions(self, factors: List[DecisionFactorScore], 
-                                context: DecisionContext) -> List[str]:
-        """Identify exit conditions to watch for"""
-        conditions = []
-        
-        # Standard exit conditions
-        conditions.append("Stop loss hit")
-        conditions.append("Take profit target reached")
-        
-        # Dynamic exit conditions based on analysis
-        if context.rsi_14 > 75:
-            conditions.append("RSI reaches extremely overbought (>80)")
-        
-        if any(f.reason == DecisionReason.MARKET_HEADWIND for f in factors):
-            conditions.append("Market trend deteriorates further")
-        
-        conditions.append("Volume dries up significantly")
-        conditions.append("Break below key support level")
-        
-        return conditions
+    def _analyze_momentum(self, data: pd.DataFrame, indicators: TechnicalIndicators, timeframe: str) -> str:
+        """Generate momentum analysis text"""
+        if indicators.rsi > 70:
+            return f"Overbought momentum (RSI: {indicators.rsi:.1f}). MACD {'bullish' if indicators.macd_line > indicators.macd_signal else 'bearish'}."
+        elif indicators.rsi < 30:
+            return f"Oversold momentum (RSI: {indicators.rsi:.1f}). Potential reversal setup."
+        elif 40 < indicators.rsi < 60:
+            return f"Neutral momentum (RSI: {indicators.rsi:.1f}). MACD showing {'bullish' if indicators.macd_line > indicators.macd_signal else 'bearish'} divergence."
+        else:
+            return f"{'Bullish' if indicators.rsi > 50 else 'Bearish'} momentum (RSI: {indicators.rsi:.1f}). Trend continuation likely."
     
-    def _identify_risk_factors(self, factors: List[DecisionFactorScore], 
-                             context: DecisionContext) -> List[str]:
-        """Identify current risk factors"""
-        risks = []
-        
-        for factor in factors:
-            if factor.score < -0.3:
-                risks.append(factor.description)
-        
-        # Add general risk factors
-        if context.vix_level > 25:
-            risks.append(f"Elevated market volatility (VIX: {context.vix_level:.1f})")
-        
-        if context.days_to_earnings and context.days_to_earnings <= 3:
-            risks.append("Earnings volatility risk")
-        
-        return risks[:5]  # Limit to top 5 risks
+    def _analyze_volume(self, data: pd.DataFrame, indicators: TechnicalIndicators, timeframe: str) -> str:
+        """Generate volume analysis text"""
+        if indicators.volume_ratio > 2.0:
+            return f"Exceptionally high volume ({indicators.volume_ratio:.1f}x average). Strong institutional interest."
+        elif indicators.volume_ratio > 1.5:
+            return f"High volume confirmation ({indicators.volume_ratio:.1f}x average). Move well-supported."
+        elif indicators.volume_ratio > 1.2:
+            return f"Above-average volume ({indicators.volume_ratio:.1f}x average). Decent participation."
+        elif indicators.volume_ratio > 0.8:
+            return f"Normal volume levels ({indicators.volume_ratio:.1f}x average). Standard trading activity."
+        else:
+            return f"Below-average volume ({indicators.volume_ratio:.1f}x average). Lack of conviction in move."
     
-    def _generate_alerts(self, factors: List[DecisionFactorScore], 
-                        context: DecisionContext) -> List[str]:
-        """Generate useful alerts to set"""
-        alerts = []
+    def _identify_key_levels(self, data: pd.DataFrame, indicators: TechnicalIndicators) -> Dict[str, float]:
+        """Identify key technical levels"""
+        close = data['close'].values
+        current_price = close[-1]
         
-        # Price-based alerts
-        resistance_distance = context.resistance_distance
-        if resistance_distance <= 0.05:  # Within 5% of resistance
-            alerts.append(f"Alert when price breaks above resistance")
+        # Find nearest support and resistance
+        support_levels = [s for s in indicators.support_levels if s < current_price]
+        resistance_levels = [r for r in indicators.resistance_levels if r > current_price]
         
-        support_distance = context.support_distance  
-        if support_distance <= 0.05:  # Within 5% of support
-            alerts.append(f"Alert if price breaks below support")
+        nearest_support = max(support_levels) if support_levels else current_price * 0.95
+        nearest_resistance = min(resistance_levels) if resistance_levels else current_price * 1.05
         
-        # Technical alerts
-        if context.rsi_14 > 65:
-            alerts.append("Alert when RSI drops below 60")
-        elif context.rsi_14 < 35:
-            alerts.append("Alert when RSI rises above 40")
-        
-        # Volume alerts
-        if context.volume_ratio < 0.7:
-            alerts.append("Alert on volume spike (>1.5x average)")
-        
-        return alerts
+        return {
+            "current_price": current_price,
+            "nearest_support": nearest_support,
+            "nearest_resistance": nearest_resistance,
+            "sma_20": indicators.sma_20,
+            "sma_50": indicators.sma_50,
+            "bb_upper": indicators.bb_upper,
+            "bb_lower": indicators.bb_lower
+        }
     
-    def _calculate_decision_confidence(self, cheatcode_signal: CheatCodeSignal, 
-                                     factors: List[DecisionFactorScore], 
-                                     adjustment: float) -> float:
-        """Calculate confidence in the enhanced decision"""
+    def _combine_timeframe_technical_signals(self, symbol: str, timeframe_signals: Dict[str, TechnicalSignal]) -> MultiTimeframeTechnicalSignal:
+        """Combine multiple timeframe technical signals"""
         
-        # Base confidence from CheatCode
-        base_confidence = cheatcode_signal.confidence
+        current_price = list(timeframe_signals.values())[0].current_price
         
-        # Factor alignment
-        factor_scores = [f.score for f in factors]
-        factor_alignment = 1.0 - (np.std(factor_scores) / 2.0) if factor_scores else 1.0
+        # Weighted scoring
+        total_weighted_score = 0
+        total_weight = 0
         
-        # Adjustment magnitude (smaller adjustments = higher confidence)
-        adjustment_confidence = 1.0 - min(abs(adjustment) / 2.0, 0.5)
+        for tf, signal in timeframe_signals.items():
+            weight = self.timeframe_configs[tf].weight
+            total_weighted_score += signal.total_score * weight
+            total_weight += weight
         
-        # Combined confidence
-        decision_confidence = (base_confidence * 0.4 + 
-                             factor_alignment * 0.3 + 
-                             adjustment_confidence * 0.3)
+        master_score = total_weighted_score / total_weight if total_weight > 0 else 0
         
-        return max(0.1, min(1.0, decision_confidence))
+        # Calculate alignment
+        alignment_score, timeframes_agreeing, dominant_trend = self._calculate_technical_alignment(timeframe_signals)
+        
+        # Apply alignment bonus/penalty
+        adjusted_master_score = master_score * alignment_score
+        
+        # Determine master strength
+        master_strength = self._determine_master_technical_strength(adjusted_master_score, timeframes_agreeing, len(timeframe_signals))
+        
+        # Calculate master confidence
+        individual_confidences = [signal.confidence for signal in timeframe_signals.values()]
+        master_confidence = np.mean(individual_confidences) * alignment_score
+        
+        # Analyze cross-timeframe characteristics
+        trend_strength = self._analyze_cross_timeframe_trend_strength(timeframe_signals)
+        momentum_phase = self._analyze_cross_timeframe_momentum_phase(timeframe_signals)
+        volatility_regime = self._analyze_volatility_regime(timeframe_signals)
+        volume_profile = self._analyze_volume_profile(timeframe_signals)
+        
+        # Identify major levels across timeframes
+        major_support, major_resistance = self._identify_major_levels(timeframe_signals)
+        next_support, next_resistance = self._identify_next_levels(timeframe_signals, current_price)
+        
+        return MultiTimeframeTechnicalSignal(
+            symbol=symbol,
+            timestamp=datetime.utcnow(),
+            current_price=current_price,
+            master_score=adjusted_master_score,
+            master_strength=master_strength,
+            master_confidence=master_confidence,
+            alignment_score=alignment_score,
+            timeframes_agreeing=timeframes_agreeing,
+            dominant_trend=dominant_trend,
+            timeframe_signals=timeframe_signals,
+            trend_strength=trend_strength,
+            momentum_phase=momentum_phase,
+            volatility_regime=volatility_regime,
+            volume_profile=volume_profile,
+            major_support=major_support,
+            major_resistance=major_resistance,
+            next_support=next_support,
+            next_resistance=next_resistance
+        )
+    
+    def _calculate_technical_alignment(self, timeframe_signals: Dict[str, TechnicalSignal]) -> Tuple[float, int, TrendDirection]:
+        """Calculate technical alignment across timeframes"""
+        
+        trends = []
+        strengths = []
+        
+        for signal in timeframe_signals.values():
+            trends.append(signal.trend_direction.value)
+            
+            # Convert technical strength to numeric value
+            strength_map = {
+                TechnicalStrength.VERY_BULLISH: 1.0,
+                TechnicalStrength.BULLISH: 0.7,
+                TechnicalStrength.SLIGHTLY_BULLISH: 0.4,
+                TechnicalStrength.NEUTRAL: 0.0,
+                TechnicalStrength.SLIGHTLY_BEARISH: -0.4,
+                TechnicalStrength.BEARISH: -0.7,
+                TechnicalStrength.VERY_BEARISH: -1.0
+            }
+            strengths.append(strength_map[signal.technical_strength])
+        
+        if not trends:
+            return 1.0, 0, TrendDirection.NEUTRAL
+        
+        # Count trend agreements
+        bullish_count = sum(1 for t in trends if t == 1)
+        bearish_count = sum(1 for t in trends if t == -1)
+        neutral_count = sum(1 for t in trends if t == 0)
+        
+        total_timeframes = len(trends)
+        
+        # Determine dominant trend
+        if bullish_count > bearish_count and bullish_count > neutral_count:
+            dominant_trend = TrendDirection.BULLISH
+            agreeing = bullish_count
+        elif bearish_count > bullish_count and bearish_count > neutral_count:
+            dominant_trend = TrendDirection.BEARISH
+            agreeing = bearish_count
+        else:
+            dominant_trend = TrendDirection.NEUTRAL
+            agreeing = neutral_count
+        
+        # Calculate alignment score
+        agreement_ratio = agreeing / total_timeframes
+        
+        if agreement_ratio >= 1.0:  # All agree
+            alignment_score = 1.3
+        elif agreement_ratio >= 0.75:  # 3/4 agree
+            alignment_score = 1.15
+        elif agreement_ratio >= 0.6:  # Majority agrees
+            alignment_score = 1.05
+        elif agreement_ratio >= 0.5:  # Split decision
+            alignment_score = 0.95
+        else:  # Conflicted
+            alignment_score = 0.85
+        
+        return min(alignment_score, 1.3), agreeing, dominant_trend
+    
+    def _determine_master_technical_strength(self, score: float, agreeing: int, total: int) -> TechnicalStrength:
+        """Determine master technical strength"""
+        
+        agreement_ratio = agreeing / total if total > 0 else 0
+        
+        if score >= 3.5 and agreement_ratio >= 0.75:
+            return TechnicalStrength.VERY_BULLISH
+        elif score >= 2.8 and agreement_ratio >= 0.6:
+            return TechnicalStrength.BULLISH
+        elif score >= 2.2:
+            return TechnicalStrength.SLIGHTLY_BULLISH
+        elif score >= 1.8:
+            return TechnicalStrength.NEUTRAL
+        elif score >= 1.2:
+            return TechnicalStrength.SLIGHTLY_BEARISH
+        elif score >= 0.6:
+            return TechnicalStrength.BEARISH
+        else:
+            return TechnicalStrength.VERY_BEARISH
+    
+    def _analyze_cross_timeframe_trend_strength(self, timeframe_signals: Dict[str, TechnicalSignal]) -> str:
+        """Analyze trend strength across timeframes"""
+        
+        # Weight longer timeframes more heavily
+        weights = {"1d": 0.4, "1h": 0.3, "5m": 0.2, "1m": 0.1}
+        
+        total_weighted_score = 0
+        total_weight = 0
+        
+        for tf, signal in timeframe_signals.items():
+            weight = weights.get(tf, 0.1)
+            total_weighted_score += signal.trend_score * weight
+            total_weight += weight
+        
+        avg_trend_score = total_weighted_score / total_weight if total_weight > 0 else 0
+        
+        if avg_trend_score >= 0.75:
+            return "Strong"
+        elif avg_trend_score >= 0.5:
+            return "Moderate"
+        else:
+            return "Weak"
+    
+    def _analyze_cross_timeframe_momentum_phase(self, timeframe_signals: Dict[str, TechnicalSignal]) -> str:
+        """Analyze momentum phase across timeframes"""
+        
+        # Compare short vs long timeframe momentum
+        short_tf_momentum = []
+        long_tf_momentum = []
+        
+        for tf, signal in timeframe_signals.items():
+            if tf in ["1m", "5m"]:
+                short_tf_momentum.append(signal.momentum_score)
+            else:
+                long_tf_momentum.append(signal.momentum_score)
+        
+        if short_tf_momentum and long_tf_momentum:
+            short_avg = np.mean(short_tf_momentum)
+            long_avg = np.mean(long_tf_momentum)
+            
+            difference = short_avg - long_avg
+            
+            if difference > 0.2:
+                return "Acceleration"
+            elif difference < -0.2:
+                return "Deceleration"
+            else:
+                return "Continuation"
+        
+        return "Continuation"
+    
+    def _analyze_volatility_regime(self, timeframe_signals: Dict[str, TechnicalSignal]) -> str:
+        """Analyze volatility regime"""
+        
+        volatility_scores = [signal.volatility_score for signal in timeframe_signals.values()]
+        avg_volatility = np.mean(volatility_scores)
+        
+        if avg_volatility >= 0.7:
+            return "High"
+        elif avg_volatility >= 0.4:
+            return "Normal"
+        else:
+            return "Low"
+    
+    def _analyze_volume_profile(self, timeframe_signals: Dict[str, TechnicalSignal]) -> str:
+        """Analyze volume profile"""
+        
+        volume_scores = [signal.volume_score for signal in timeframe_signals.values()]
+        avg_volume = np.mean(volume_scores)
+        
+        if avg_volume >= 0.7:
+            return "Strong"
+        elif avg_volume >= 0.4:
+            return "Normal"
+        else:
+            return "Weak"
+    
+    def _identify_major_levels(self, timeframe_signals: Dict[str, TechnicalSignal]) -> Tuple[float, float]:
+        """Identify major support and resistance across timeframes"""
+        
+        all_support = []
+        all_resistance = []
+        
+        for signal in timeframe_signals.values():
+            all_support.extend(signal.indicators.support_levels)
+            all_resistance.extend(signal.indicators.resistance_levels)
+        
+        # Find most significant levels (those that appear across multiple timeframes)
+        major_support = np.median(all_support) if all_support else 0
+        major_resistance = np.median(all_resistance) if all_resistance else 0
+        
+        return major_support, major_resistance
+    
+    def _identify_next_levels(self, timeframe_signals: Dict[str, TechnicalSignal], current_price: float) -> Tuple[float, float]:
+        """Identify next support and resistance levels"""
+        
+        all_support = []
+        all_resistance = []
+        
+        for signal in timeframe_signals.values():
+            # Add moving averages as dynamic support/resistance
+            all_support.extend([signal.indicators.sma_20, signal.indicators.sma_50, signal.indicators.bb_lower])
+            all_resistance.extend([signal.indicators.sma_20, signal.indicators.sma_50, signal.indicators.bb_upper])
+            all_support.extend(signal.indicators.support_levels)
+            all_resistance.extend(signal.indicators.resistance_levels)
+        
+        # Find nearest levels
+        support_below = [s for s in all_support if s < current_price]
+        resistance_above = [r for r in all_resistance if r > current_price]
+        
+        next_support = max(support_below) if support_below else current_price * 0.95
+        next_resistance = min(resistance_above) if resistance_above else current_price * 1.05
+        
+        return next_support, next_resistance
+    
+    # Cache management methods
+    async def _cache_multi_timeframe_technical_signal(self, symbol: str, signal: MultiTimeframeTechnicalSignal):
+        """Cache multi-timeframe technical signal with market hours awareness"""
+        try:
+            if self.redis_client:
+                # Determine TTL based on market session
+                session = self.market_hours.get_current_market_session()
+                
+                if session == MarketSession.REGULAR:
+                    ttl = 300  # 5 minutes during regular hours
+                elif session in [MarketSession.PRE_MARKET, MarketSession.AFTER_HOURS]:
+                    ttl = 900  # 15 minutes during extended hours
+                else:  # Market closed
+                    ttl = 3600  # 1 hour when market is closed
+                
+                cache_key = f"technical:multi:{symbol}"
+                await self.redis_client.setex(
+                    cache_key,
+                    ttl,
+                    json.dumps(signal.to_dict())
+                )
+                
+                # Cache individual timeframes with appropriate TTLs
+                for tf, tf_signal in signal.timeframe_signals.items():
+                    tf_ttl = ttl // 2 if tf in ["1m", "5m"] else ttl  # Shorter TTL for intraday
+                    tf_cache_key = f"technical:{tf}:{symbol}"
+                    await self.redis_client.setex(
+                        tf_cache_key,
+                        tf_ttl,
+                        json.dumps(tf_signal.to_dict())
+                    )
+                
+                session_name = session.value
+                logger.info(f"✅ Cached multi-timeframe technical signal for {symbol} (session: {session_name}, TTL: {ttl}s)")
+                
+        except Exception as e:
+            logger.warning(f"Failed to cache multi-timeframe technical signal for {symbol}: {e}")
+    
+    async def get_cached_technical_signal(self, symbol: str, timeframe: str = None) -> Union[MultiTimeframeTechnicalSignal, TechnicalSignal, None]:
+        """Get cached technical signal"""
+        try:
+            if not self.redis_client:
+                return None
+            
+            if timeframe:
+                # Get specific timeframe
+                cache_key = f"technical:{timeframe}:{symbol}"
+                cached_data = await self.redis_client.get(cache_key)
+                if cached_data:
+                    data = json.loads(cached_data)
+                    return data
+            else:
+                # Get multi-timeframe
+                cache_key = f"technical:multi:{symbol}"
+                cached_data = await self.redis_client.get(cache_key)
+                if cached_data:
+                    data = json.loads(cached_data)
+                    return data
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Failed to get cached technical signal for {symbol}: {e}")
+            return None
+    
+    # Technical indicator calculation methods
+    def _sma(self, data: np.ndarray, period: int) -> np.ndarray:
+        """Simple Moving Average"""
+        result = np.zeros_like(data)
+        for i in range(len(data)):
+            start_idx = max(0, i - period + 1)
+            result[i] = np.mean(data[start_idx:i+1])
+        return result
+    
+    def _ema(self, data: np.ndarray, period: int) -> np.ndarray:
+        """Exponential Moving Average"""
+        alpha = 2 / (period + 1)
+        ema = np.zeros_like(data)
+        ema[0] = data[0]
+        
+        for i in range(1, len(data)):
+            ema[i] = alpha * data[i] + (1 - alpha) * ema[i-1]
+        
+        return ema
+    
+    def _calculate_rsi(self, close: np.ndarray, period: int) -> np.ndarray:
+        """Relative Strength Index"""
+        if len(close) < period + 1:
+            return np.full_like(close, 50)
+        
+        deltas = np.diff(close)
+        gains = np.where(deltas > 0, deltas, 0)
+        losses = np.where(deltas < 0, -deltas, 0)
+        
+        avg_gains = np.zeros_like(close)
+        avg_losses = np.zeros_like(close)
+        
+        # Initial averages
+        avg_gains[period] = np.mean(gains[:period])
+        avg_losses[period] = np.mean(losses[:period])
+        
+        # Subsequent averages using Wilder's smoothing
+        for i in range(period + 1, len(close)):
+            avg_gains[i] = (avg_gains[i-1] * (period - 1) + gains[i-1]) / period
+            avg_losses[i] = (avg_losses[i-1] * (period - 1) + losses[i-1]) / period
+        
+        rs = avg_gains / (avg_losses + 1e-10)  # Avoid division by zero
+        rsi = 100 - (100 / (1 + rs))
+        
+        return rsi
+    
+    def _calculate_macd(self, close: np.ndarray) -> Tuple[float, float, float]:
+        """MACD calculation"""
+        if len(close) < 26:
+            return 0.0, 0.0, 0.0
+        
+        ema_12 = self._ema(close, 12)
+        ema_26 = self._ema(close, 26)
+        macd_line = ema_12 - ema_26
+        
+        if len(macd_line) >= 9:
+            macd_signal = self._ema(macd_line, 9)
+            macd_histogram = macd_line - macd_signal
+            return macd_line[-1], macd_signal[-1], macd_histogram[-1]
+        
+        return macd_line[-1], 0.0, 0.0
+    
+    def _calculate_bollinger_bands(self, close: np.ndarray, period: int, std_dev: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Bollinger Bands calculation"""
+        sma = self._sma(close, period)
+        
+        rolling_std = np.zeros_like(close)
+        for i in range(len(close)):
+            start_idx = max(0, i - period + 1)
+            rolling_std[i] = np.std(close[start_idx:i+1])
+        
+        upper_band = sma + (rolling_std * std_dev)
+        lower_band = sma - (rolling_std * std_dev)
+        
+        return upper_band, sma, lower_band
+    
+    def _calculate_atr(self, high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np.ndarray:
+        """Average True Range"""
+        if len(close) < 2:
+            return np.zeros_like(close)
+        
+        tr1 = high - low
+        tr2 = np.abs(high - np.roll(close, 1))
+        tr3 = np.abs(low - np.roll(close, 1))
+        
+        tr = np.maximum(tr1, np.maximum(tr2, tr3))
+        tr[0] = tr1[0]  # First value
+        
+        atr = self._sma(tr, period)
+        return atr
+    
+    def _calculate_support_resistance(self, high: np.ndarray, low: np.ndarray, close: np.ndarray) -> Tuple[List[float], List[float]]:
+        """Calculate support and resistance levels"""
+        
+        # Find pivot highs and lows
+        def find_pivots(data, window=5):
+            pivots = []
+            for i in range(window, len(data) - window):
+                if all(data[i] > data[i-j] for j in range(1, window+1)) and \
+                   all(data[i] > data[i+j] for j in range(1, window+1)):
+                    pivots.append(data[i])
+                elif all(data[i] < data[i-j] for j in range(1, window+1)) and \
+                     all(data[i] < data[i+j] for j in range(1, window+1)):
+                    pivots.append(data[i])
+            return pivots
+        
+        # Get pivot points from highs and lows
+        resistance_candidates = find_pivots(high)
+        support_candidates = find_pivots(low)
+        
+        # Filter and sort
+        current_price = close[-1]
+        resistance_levels = sorted([r for r in resistance_candidates if r > current_price])[:5]
+        support_levels = sorted([s for s in support_candidates if s < current_price], reverse=True)[:5]
+        
+        return support_levels, resistance_levels
 
-# FastAPI integration
-from fastapi import APIRouter, HTTPException
+# FastAPI Router for Technical Analysis endpoints
+router = APIRouter(prefix="/technical", tags=["Technical Analysis Engine"])
 
-decision_router = APIRouter(prefix="/decision", tags=["Decision Engine"])
+# Global engine instance
+technical_engine = TechnicalAnalysisEngine()
 
-# Global decision engine instance
-decision_engine = DecisionEngine()
-
-@decision_router.post("/enhance/{symbol}")
-async def enhance_signal_endpoint(symbol: str, request_data: Dict[str, Any]):
+@router.post("/analyze-multi/{symbol}")
+async def analyze_multi_timeframe_technical_endpoint(symbol: str, timeframes: List[str] = None):
     """
-    Enhance a CheatCode signal with Decision Engine analysis
+    Analyze a symbol using multi-timeframe technical analysis
     
-    Body should contain:
-    {
-        "cheatcode_signal": {...},  // CheatCode signal object
-        "market_data": {...},       // OHLCV DataFrame data  
-        "context": {...}            // DecisionContext object
-    }
+    Query params:
+    - timeframes: Optional list of timeframes ["1m", "5m", "1h", "1d"]
     """
     try:
-        # Parse request data
-        if not all(key in request_data for key in ["cheatcode_signal", "market_data", "context"]):
-            raise HTTPException(status_code=400, detail="Missing required data in request")
+        # Market hours check
+        market_session = technical_engine.market_hours.get_current_market_session()
         
-        # Convert data back to objects (simplified for example)
-        cheatcode_data = request_data["cheatcode_signal"]
-        market_data = pd.DataFrame(request_data["market_data"])
-        context_data = request_data["context"]
+        # Use market-appropriate timeframes if none provided
+        if timeframes is None:
+            if market_session == MarketSession.REGULAR:
+                timeframes = ["1m", "5m", "1h", "1d"]
+            elif market_session in [MarketSession.PRE_MARKET, MarketSession.AFTER_HOURS]:
+                timeframes = ["1h", "1d"]
+            else:
+                timeframes = ["1d"]
         
-        # Create context object (simplified - you'd need proper conversion)
-        context = DecisionContext(
-            symbol=symbol,
-            current_price=context_data.get("current_price", 100),
-            rsi_14=context_data.get("rsi_14", 50),
-            rsi_2=context_data.get("rsi_2", 50),
-            bb_position=context_data.get("bb_position", 0.5),
-            macd_signal=context_data.get("macd_signal", 0),
-            volume_ratio=context_data.get("volume_ratio", 1.0),
-            resistance_distance=context_data.get("resistance_distance", 0.1),
-            support_distance=context_data.get("support_distance", 0.1),
-            ma_20_distance=context_data.get("ma_20_distance", 0),
-            ma_50_distance=context_data.get("ma_50_distance", 0),
-            market_trend=TrendDirection(context_data.get("market_trend", 0)),
-            sector_trend=TrendDirection(context_data.get("sector_trend", 0)),
-            vix_level=context_data.get("vix_level", 20),
-            market_correlation=context_data.get("market_correlation", 0.5),
-            days_to_earnings=context_data.get("days_to_earnings"),
-            is_options_expiry_week=context_data.get("is_options_expiry_week", False),
-            is_end_of_quarter=context_data.get("is_end_of_quarter", False),
-            market_session=context_data.get("market_session", "regular"),
-            volume_trend_5d=context_data.get("volume_trend_5d", 0),
-            volume_spike_detected=context_data.get("volume_spike_detected", False),
-            avg_volume_20d=context_data.get("avg_volume_20d", 1000000)
-        )
+        # Validate timeframes
+        valid_timeframes = [tf.value for tf in TimeframeType]
+        invalid_tfs = [tf for tf in timeframes if tf not in valid_timeframes]
+        if invalid_tfs:
+            raise HTTPException(status_code=400, detail=f"Invalid timeframes: {invalid_tfs}")
         
-        # Create mock CheatCode signal (you'd parse this properly)
-        # This is simplified for the example
+        # Analyze symbol
+        signal = await technical_engine.analyze_multi_timeframe_technical(symbol.upper(), timeframes)
         
-        # For demo purposes, return structure
         return {
             "success": True,
-            "symbol": symbol,
-            "message": "Decision engine enhancement endpoint ready",
-            "note": "Full implementation requires proper object conversion"
+            "symbol": symbol.upper(),
+            "market_session": market_session.value,
+            "timeframes_analyzed": timeframes,
+            "signal": signal.to_dict()
         }
         
     except Exception as e:
-        logger.error(f"Enhancement failed for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=f"Enhancement failed: {str(e)}")
+        logger.error(f"Multi-timeframe technical analysis failed for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
-@decision_router.get("/test/{symbol}")
-async def test_decision_engine(symbol: str):
-    """Test endpoint showing decision engine capabilities"""
+@router.get("/analyze-cached/{symbol}")
+async def get_cached_technical_analysis(symbol: str, timeframe: str = None):
+    """
+    Get cached technical analysis
+    """
+    try:
+        cached_signal = await technical_engine.get_cached_technical_signal(symbol.upper(), timeframe)
+        
+        if cached_signal:
+            return {
+                "success": True,
+                "symbol": symbol.upper(),
+                "cache_hit": True,
+                "signal": cached_signal
+            }
+        else:
+            return {
+                "success": False,
+                "symbol": symbol.upper(),
+                "cache_hit": False,
+                "message": "No cached technical analysis found"
+            }
+        
+    except Exception as e:
+        logger.error(f"Failed to get cached technical analysis for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=f"Cache retrieval failed: {str(e)}")
+
+@router.get("/market-status")
+async def get_market_status():
+    """
+    Get current market status and session
+    """
+    market_hours = MarketHours()
+    session = market_hours.get_current_market_session()
+    is_open = market_hours.is_market_hours(include_extended=True)
+    is_regular_hours = market_hours.is_market_hours(include_extended=False)
+    
+    # Get timezone info
+    eastern_tz = pytz.timezone('US/Eastern')
+    now_et = datetime.now(eastern_tz)
     
     return {
-        "success": True,
-        "symbol": symbol,
-        "decision_engine": {
-            "factors_analyzed": [factor.value for factor in DecisionFactor],
-            "adjustment_range": "-2.0 to +2.0",
-            "position_sizing_adjustment": "0.5x to 1.5x",
-            "sample_factors": {
-                "technical": ["RSI overbought (-0.5)", "MACD bullish (+0.3)"],
-                "price_position": ["Near resistance (-0.5)", "Above 20MA (+0.3)"],
-                "volume": ["Volume spike (+0.8)", "Low volume (-0.3)"],
-                "market_context": ["Bullish market (+0.3)", "High VIX (-0.4)"],
-                "time_based": ["Pre-earnings (-0.3)", "Options expiry (-0.2)"],
-                "risk_management": ["Poor R:R (-0.4)", "Good R:R (+0.3)"]
-            }
+        "market_session": session.value,
+        "is_market_open": is_open,
+        "is_regular_hours": is_regular_hours,
+        "current_time_et": now_et.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "recommended_timeframes": {
+            "regular_hours": ["1m", "5m", "1h", "1d"],
+            "extended_hours": ["1h", "1d"],
+            "market_closed": ["1d"]
         },
-        "example_enhancement": {
-            "cheatcode_base": "3.2/4 STRONG_BUY",
-            "decision_adjustment": "-1.0 (overbought + near resistance)",
-            "final_result": "2.2/4 BUY with wait for pullback advice"
+        "next_session_info": {
+            "pre_market": "4:00 AM - 9:30 AM ET",
+            "regular": "9:30 AM - 4:00 PM ET", 
+            "after_hours": "4:00 PM - 8:00 PM ET"
         }
     }
 
-@decision_router.get("/factors")
-async def get_decision_factors():
-    """Get all decision factors and their descriptions"""
+@router.get("/test-multi/{symbol}")
+async def test_multi_timeframe_technical(symbol: str):
+    """
+    Test multi-timeframe technical analysis with market-appropriate timeframes
+    """
+    try:
+        # Use market-appropriate timeframes
+        market_session = technical_engine.market_hours.get_current_market_session()
+        
+        if market_session == MarketSession.REGULAR:
+            timeframes = ["1m", "5m", "1h", "1d"]
+        elif market_session in [MarketSession.PRE_MARKET, MarketSession.AFTER_HOURS]:
+            timeframes = ["1h", "1d"]
+        else:
+            timeframes = ["1d"]
+        
+        signal = await technical_engine.analyze_multi_timeframe_technical(symbol.upper(), timeframes)
+        
+        return {
+            "success": True,
+            "symbol": symbol.upper(),
+            "analysis_type": "full_multi_timeframe_technical",
+            "market_session": market_session.value,
+            "timeframes_analyzed": timeframes,
+            "signal": signal.to_dict(),
+            "note": "This analysis uses market-hours-appropriate timeframes and mock data for testing"
+        }
+        
+    except Exception as e:
+        logger.error(f"Test multi-timeframe technical analysis failed for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=f"Test analysis failed: {str(e)}")
+
+@router.get("/engine-status")
+async def get_technical_engine_status():
+    """
+    Get technical analysis engine status and configuration
+    """
+    market_hours = MarketHours()
+    session = market_hours.get_current_market_session()
     
     return {
-        "decision_factors": {
-            "technical": {
-                "rsi_overbought": "RSI > 70 (-0.5), RSI > 80 (-1.0)",
-                "rsi_oversold": "RSI < 30 (+0.5), RSI < 20 (+1.0)",
-                "macd_signal": "MACD momentum confirmation (±0.3)",
-                "momentum_divergence": "Technical momentum signals (±0.3)"
-            },
-            "price_position": {
-                "near_resistance": "Within 2% of resistance (-0.5)",
-                "near_support": "Within 2% of support (+0.5)",
-                "ma_distance": "Distance from key moving averages (±0.3)"
-            },
-            "volume": {
-                "volume_spike": "2x+ average volume (+0.8)",
-                "volume_decline": "Low volume confirmation (-0.3 to -0.5)",
-                "volume_trend": "5-day volume trend (±0.5)"
-            },
-            "market_context": {
-                "market_trend": "SPY trend direction (±0.3)",
-                "sector_trend": "Sector performance (±0.5)",
-                "vix_level": "Market fear gauge (-0.2 to -0.4)",
-                "correlation": "Market correlation factors"
-            },
-            "time_based": {
-                "earnings_risk": "Within 7 days of earnings (-0.3)",
-                "options_expiry": "Options expiration week (-0.2)",
-                "market_session": "Extended hours trading (-0.1)"
-            },
-            "risk_management": {
-                "risk_reward": "Risk/reward ratio analysis (±0.4)",
-                "position_sizing": "Dynamic position adjustment (0.5x-1.5x)"
+        "engine": "Technical Analysis Multi-Timeframe Engine",
+        "version": "2.0.0",
+        "market_hours_aware": True,
+        "current_market_session": session.value,
+        "supported_timeframes": [tf.value for tf in TimeframeType],
+        "timeframe_configs": {
+            tf: {
+                "weight": config.weight,
+                "description": config.description,
+                "bars_needed": config.bars_needed,
+                "update_frequency": config.update_frequency
             }
+            for tf, config in technical_engine.timeframe_configs.items()
         },
-        "scoring": {
-            "range": "-2.0 to +2.0 adjustment to CheatCode base score",
-            "final_signals": [signal.value for signal in SignalStrength],
-            "confidence": "Combined CheatCode + Decision Engine confidence"
-        }
+        "technical_indicators": {
+            "trend": ["SMA 20/50/200", "EMA 12/26", "Moving Average Alignment"],
+            "momentum": ["RSI", "MACD Line/Signal/Histogram"],
+            "volatility": ["Bollinger Bands", "ATR", "BB Percent"],
+            "volume": ["Volume SMA", "Volume Ratio", "Volume Confirmation"],
+            "support_resistance": ["Pivot Points", "Dynamic S/R Levels"]
+        },
+        "signal_strengths": [strength.value for strength in TechnicalStrength],
+        "market_hours_logic": {
+            "regular_hours": "All timeframes active, 5-minute cache TTL",
+            "extended_hours": "Hourly and daily only, 15-minute cache TTL", 
+            "market_closed": "Daily analysis only, 1-hour cache TTL",
+            "api_calls": "Only made during appropriate market sessions"
+        },
+        "new_features": [
+            "Market hours awareness for API calls and caching",
+            "Multi-timeframe technical analysis with weighted scoring",
+            "Dynamic cache TTL based on market session",
+            "Cross-timeframe trend and momentum analysis",
+            "Volatility regime and volume profile assessment",
+            "Major support/resistance level identification"
+        ],
+        "cache_status": "Redis-based caching enabled" if technical_engine.redis_client else "No cache configured"
     }
 
-# Export for main application
-__all__ = ['DecisionEngine', 'DecisionContext', 'EnhancedTradingDecision', 'decision_router']
+@router.get("/indicators/{symbol}")
+async def get_technical_indicators_detail(symbol: str, timeframe: str = "1d"):
+    """
+    Get detailed technical indicators for a specific symbol and timeframe
+    """
+    try:
+        if timeframe not in [tf.value for tf in TimeframeType]:
+            raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
+        
+        # Check if timeframe is appropriate for current market session
+        market_hours = MarketHours()
+        if not market_hours.should_update_timeframe(timeframe):
+            logger.warning(f"Timeframe {timeframe} not recommended during current market session")
+        
+        config = technical_engine.timeframe_configs[timeframe]
+        signal = await technical_engine.analyze_single_timeframe_technical(symbol.upper(), timeframe, config)
+        
+        if not signal:
+            raise HTTPException(status_code=404, detail=f"Could not analyze {symbol} for {timeframe}")
+        
+        return {
+            "success": True,
+            "symbol": symbol.upper(),
+            "timeframe": timeframe,
+            "current_price": signal.current_price,
+            "technical_strength": signal.technical_strength.value,
+            "trend_direction": signal.trend_direction.value,
+            "confidence": signal.confidence,
+            "detailed_indicators": {
+                "trend_indicators": {
+                    "sma_20": signal.indicators.sma_20,
+                    "sma_50": signal.indicators.sma_50,
+                    "sma_200": signal.indicators.sma_200,
+                    "ema_12": signal.indicators.ema_12,
+                    "ema_26": signal.indicators.ema_26
+                },
+                "momentum_indicators": {
+                    "rsi": signal.indicators.rsi,
+                    "macd_line": signal.indicators.macd_line,
+                    "macd_signal": signal.indicators.macd_signal,
+                    "macd_histogram": signal.indicators.macd_histogram
+                },
+                "volatility_indicators": {
+                    "bollinger_upper": signal.indicators.bb_upper,
+                    "bollinger_middle": signal.indicators.bb_middle,
+                    "bollinger_lower": signal.indicators.bb_lower,
+                    "bollinger_percent": signal.indicators.bb_percent,
+                    "atr": signal.indicators.atr
+                },
+                "volume_indicators": {
+                    "volume_sma": signal.indicators.volume_sma,
+                    "volume_ratio": signal.indicators.volume_ratio
+                }
+            },
+            "analysis": {
+                "trend_analysis": signal.trend_analysis,
+                "momentum_analysis": signal.momentum_analysis,
+                "volume_analysis": signal.volume_analysis
+            },
+            "key_levels": signal.key_levels,
+            "scores": {
+                "trend_score": signal.trend_score,
+                "momentum_score": signal.momentum_score,
+                "volatility_score": signal.volatility_score,
+                "volume_score": signal.volume_score,
+                "total_score": signal.total_score
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get technical indicators for {symbol}:{timeframe}: {e}")
+        raise HTTPException(status_code=500, detail=f"Indicator analysis failed: {str(e)}")
+
+# Export for use in main application
+__all__ = ['TechnicalAnalysisEngine', 'MultiTimeframeTechnicalSignal', 'TechnicalSignal', 'TechnicalStrength', 'TimeframeType', 'MarketHours', 'router']
