@@ -342,17 +342,44 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"⚠️ Options analyzer initialization failed: {e}")
         
         # Initialize OpenAI agent
+       # Initialize OpenAI agent
         if ComprehensiveMessageProcessor and openai_service:
-            openai_agent = ComprehensiveMessageProcessor(
-                openai_client=openai_service.client,
-                ta_service=ta_service,
-                personality_engine=personality_engine,
-                cache_service=cache_service,
-                news_service=news_service,
-                fundamental_tool=fundamental_tool,
-                memory_manager=memory_manager
-            )
-            logger.info("✅ OpenAI Agent with Memory initialized")
+            try:
+                # Check if ComprehensiveMessageProcessor accepts memory_manager parameter
+                import inspect
+                try:
+                    init_signature = inspect.signature(ComprehensiveMessageProcessor.__init__)
+                    accepts_memory_manager = 'memory_manager' in init_signature.parameters
+                except:
+                    accepts_memory_manager = False
+                
+                if accepts_memory_manager and memory_manager:
+                    # Pass memory_manager if supported
+                    openai_agent = ComprehensiveMessageProcessor(
+                        openai_client=openai_service.client,
+                        ta_service=ta_service,
+                        personality_engine=personality_engine,
+                        cache_service=cache_service,
+                        news_service=news_service,
+                        fundamental_tool=fundamental_tool,
+                        memory_manager=memory_manager
+                    )
+                    logger.info("✅ OpenAI Agent with Memory initialized")
+                else:
+                    # Don't pass memory_manager if not supported
+                    openai_agent = ComprehensiveMessageProcessor(
+                        openai_client=openai_service.client,
+                        ta_service=ta_service,
+                        personality_engine=personality_engine,
+                        cache_service=cache_service,
+                        news_service=news_service,
+                        fundamental_tool=fundamental_tool
+                    )
+                    logger.info("✅ OpenAI Agent initialized (without memory)")
+                    
+            except Exception as e:
+                logger.error(f"❌ OpenAI Agent initialization failed: {e}")
+                openai_agent = None
         
         # Initialize Claude agent
         if ClaudeMessageProcessor and anthropic_client:
