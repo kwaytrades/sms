@@ -43,6 +43,11 @@ except ImportError:
             self.eodhd_api_key = os.getenv('EODHD_API_KEY')
             self.ta_service_url = os.getenv('TA_SERVICE_URL', 'http://localhost:8001')
             self.prefer_claude = os.getenv('PREFER_CLAUDE', 'true').lower() == 'true'
+            # Memory Manager settings
+            self.pinecone_api_key = os.getenv('PINECONE_API_KEY')
+            self.pinecone_environment = os.getenv('PINECONE_ENVIRONMENT', 'us-east1-gcp')
+            self.memory_stm_limit = int(os.getenv('MEMORY_STM_LIMIT', '15'))
+            self.memory_summary_trigger = int(os.getenv('MEMORY_SUMMARY_TRIGGER', '10'))
     
     settings = Settings()
     logger.info("✅ Configuration loaded from fallback")
@@ -142,6 +147,16 @@ except Exception as e:
     OptionsAnalyzer = None
     logger.error(f"❌ OptionsAnalyzer failed: {e}")
 
+# Import MemoryManager
+try:
+    from services.memory_manager import MemoryManager, MessageDirection, AgentType
+    logger.info("✅ MemoryManager imported")
+except Exception as e:
+    MemoryManager = None
+    MessageDirection = None
+    AgentType = None
+    logger.error(f"❌ MemoryManager failed: {e}")
+
 # Configure logging
 logger.remove()
 logger.add(sys.stdout, level=settings.log_level)
@@ -189,6 +204,7 @@ openai_agent = None
 claude_agent = None
 hybrid_agent = None
 active_agent = None
+memory_manager = None
 
 # Background job services
 background_pipeline = None
@@ -200,7 +216,7 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown with Claude support and background jobs"""
     global db_service, openai_service, anthropic_client, twilio_service, ta_service, news_service
     global fundamental_tool, cache_service, openai_agent, claude_agent, hybrid_agent, active_agent
-    global background_pipeline, cached_screener, options_analyzer
+    global background_pipeline, cached_screener, options_analyzer, memory_manager
     
     logger.info("🚀 Starting SMS Trading Bot with Claude-Powered Agent and Background Jobs...")
     
@@ -250,6 +266,26 @@ async def lifespan(app: FastAPI):
             )
             await fundamental_tool.initialize()
             logger.info("✅ Fundamental Analysis tool initialized")
+        
+        # Initialize MemoryManager
+        if MemoryManager and settings.pinecone_api_key and settings.openai_api_key:
+            try:
+                memory_manager = MemoryManager(
+                    redis_url=settings.redis_url,
+                    mongodb_url=settings.mongodb_url,
+                    pinecone_api_key=settings.pinecone_api_key,
+                    pinecone_environment=settings.pinecone_environment,
+                    openai_api_key=settings.openai_api_key,
+                    stm_limit=settings.memory_stm_limit,
+                    summary_trigger=settings.memory_summary_trigger
+                )
+                await memory_manager.setup()
+                logger.info("✅ MemoryManager initialized")
+            except Exception as e:
+                logger.warning(f"⚠️ MemoryManager initialization failed: {e}")
+                memory_manager = None
+        else:
+            logger.info("⚠️ MemoryManager disabled - missing Pinecone or OpenAI API keys")
         
         TechnicalAnalysisService = TAEngine  # Backward compatibility
         FundamentalAnalysisTool = FAEngine   # Backward compatibility
@@ -313,9 +349,10 @@ async def lifespan(app: FastAPI):
                 personality_engine=personality_engine,
                 cache_service=cache_service,
                 news_service=news_service,
-                fundamental_tool=fundamental_tool
+                fundamental_tool=fundamental_tool,
+                memory_manager=memory_manager
             )
-            logger.info("✅ OpenAI Agent initialized")
+            logger.info("✅ OpenAI Agent with Memory initialized")
         
         # Initialize Claude agent
         if ClaudeMessageProcessor and anthropic_client:
@@ -325,9 +362,10 @@ async def lifespan(app: FastAPI):
                 personality_engine=personality_engine,
                 cache_service=cache_service,
                 news_service=news_service,
-                fundamental_tool=fundamental_tool
+                fundamental_tool=fundamental_tool,
+                memory_manager=memory_manager
             )
-            logger.info("✅ Claude Agent initialized")
+            logger.info("✅ Claude Agent with Memory initialized")
         
         # Initialize hybrid agent if both are available
         if HybridProcessor and claude_agent and openai_agent:
@@ -357,6 +395,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"🤖 Active Agent: {agent_type}")
         logger.info(f"🔧 Available Agents: Claude={claude_agent is not None}, OpenAI={openai_agent is not None}, Hybrid={hybrid_agent is not None}")
         logger.info(f"📊 Background Jobs: Pipeline={background_pipeline is not None}, Screener={cached_screener is not None}, Options={options_analyzer is not None}")
+        logger.info(f"🧠 Memory Manager: {memory_manager is not None}")
         logger.info("✅ Startup completed")
         
     except Exception as e:
@@ -368,6 +407,9 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("🛑 Shutting down...")
     try:
+        if memory_manager:
+            await memory_manager.cleanup()
+            logger.info("✅ Memory manager shutdown")
         if background_pipeline:
             await background_pipeline.close()
             logger.info("✅ Background pipeline shutdown")
@@ -408,7 +450,8 @@ async def root():
             "active_agent": active_agent is not None,
             "background_pipeline": background_pipeline is not None,
             "cached_screener": cached_screener is not None,
-            "options_analyzer": options_analyzer is not None
+            "options_analyzer": options_analyzer is not None,
+            "memory_manager": memory_manager is not None
         }
     }
 
@@ -442,7 +485,8 @@ async def health_check():
                 "cache": "available" if cache_service else "unavailable",
                 "openai_agent": "available" if openai_agent else "unavailable",
                 "claude_agent": "available" if claude_agent else "unavailable",
-                "hybrid_agent": "available" if hybrid_agent else "unavailable"
+                "hybrid_agent": "available" if hybrid_agent else "unavailable",
+                "memory_manager": "available" if memory_manager else "unavailable"
             },
             "background_jobs": {
                 "data_pipeline": "active" if background_pipeline else "inactive",
@@ -520,6 +564,51 @@ async def process_sms_message(message_body: str, phone_number: str) -> str:
             await twilio_service.send_message(phone_number, error_response)
         
         return error_response
+
+# ===== MEMORY MANAGER ADMIN ENDPOINTS =====
+
+@app.get("/admin/memory/user/{user_id}/stats")
+async def get_user_memory_stats(user_id: str):
+    """Get memory statistics for a user"""
+    if not memory_manager:
+        return {"error": "Memory manager not available"}
+    
+    try:
+        stats = await memory_manager.get_user_statistics(user_id)
+        return stats
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/admin/memory/user/{user_id}/cleanup")
+async def cleanup_user_memory(user_id: str):
+    """Clean up user memory data (GDPR compliance)"""
+    if not memory_manager:
+        return {"error": "Memory manager not available"}
+    
+    try:
+        success = await memory_manager.delete_user_data(user_id)
+        return {"success": success, "message": "User data deleted" if success else "Deletion failed"}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/admin/memory/health")
+async def memory_health_check():
+    """Check memory manager health"""
+    if not memory_manager:
+        return {"status": "unavailable", "reason": "Memory manager not initialized"}
+    
+    try:
+        # Test basic functionality
+        test_context = await memory_manager.get_context("health_check_user", query="test")
+        return {
+            "status": "healthy",
+            "redis": memory_manager.redis_client is not None,
+            "mongodb": memory_manager.db is not None,
+            "pinecone": memory_manager.pinecone_index is not None,
+            "openai": memory_manager.openai_client is not None
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 # ===== BACKGROUND JOB ADMIN ENDPOINTS =====
 
@@ -808,7 +897,8 @@ async def admin_dashboard():
                 "fundamental_analysis": "active" if fundamental_tool else "inactive",
                 "openai_agent": "active" if openai_agent else "inactive",
                 "claude_agent": "active" if claude_agent else "inactive",
-                "hybrid_agent": "active" if hybrid_agent else "inactive"
+                "hybrid_agent": "active" if hybrid_agent else "inactive",
+                "memory_manager": "active" if memory_manager else "inactive"
             },
             "background_jobs": {
                 "data_pipeline": "active" if background_pipeline else "inactive",
@@ -846,7 +936,9 @@ async def admin_dashboard():
                 "superior_analysis": claude_agent is not None,
                 "cached_data_pipeline": background_pipeline is not None,
                 "advanced_screening": cached_screener is not None,
-                "options_analysis": options_analyzer is not None
+                "options_analysis": options_analyzer is not None,
+                "emotional_intelligence": memory_manager is not None,
+                "memory_enhanced": memory_manager is not None
             },
             "preferences": {
                 "prefer_claude": settings.prefer_claude,
@@ -911,7 +1003,8 @@ async def test_message_processing(request: Request):
                 "smart_tool_calling": True,
                 "superior_analysis": claude_agent is not None,
                 "cached_screening": background_pipeline is not None,
-                "options_analysis": options_analyzer is not None
+                "options_analysis": options_analyzer is not None,
+                "memory_enhanced": memory_manager is not None
             }
         }
         
@@ -932,7 +1025,8 @@ async def diagnose_services():
             "REDIS_URL": "Set" if settings.redis_url else "Missing",
             "TWILIO_ACCOUNT_SID": "Set" if settings.twilio_account_sid else "Missing",
             "TA_SERVICE_URL": "Set" if settings.ta_service_url else "Missing",
-            "PREFER_CLAUDE": settings.prefer_claude
+            "PREFER_CLAUDE": settings.prefer_claude,
+            "PINECONE_API_KEY": "Set" if settings.pinecone_api_key else "Missing"
         },
         "service_status": {
             "database": db_service is not None,
@@ -948,7 +1042,8 @@ async def diagnose_services():
             "hybrid_agent": hybrid_agent is not None,
             "background_pipeline": background_pipeline is not None,
             "cached_screener": cached_screener is not None,
-            "options_analyzer": options_analyzer is not None
+            "options_analyzer": options_analyzer is not None,
+            "memory_manager": memory_manager is not None
         },
         "architecture": "claude_powered_with_background_jobs",
         "active_agent": get_agent_type(),
@@ -964,15 +1059,21 @@ async def diagnose_services():
         diagnosis["recommendations"].append("❌ Set EODHD_API_KEY for market data and background jobs")
     if not settings.mongodb_url:
         diagnosis["recommendations"].append("❌ Set MONGODB_URL for data storage")
+    if not settings.pinecone_api_key:
+        diagnosis["recommendations"].append("⚠️ Set PINECONE_API_KEY for enhanced memory features")
     if not active_agent:
         diagnosis["recommendations"].append("❌ No agents available - check API keys")
     if not background_pipeline:
         diagnosis["recommendations"].append("⚠️ Background data pipeline not running - check EODHD_API_KEY and MongoDB")
+    if not memory_manager:
+        diagnosis["recommendations"].append("⚠️ Memory manager not available - check Pinecone and OpenAI API keys")
     
-    if claude_agent and openai_agent and background_pipeline:
-        diagnosis["recommendations"].append("✅ All systems operational - Claude + OpenAI + Background Jobs active!")
-    elif claude_agent and background_pipeline:
-        diagnosis["recommendations"].append("✅ Claude agent + Background jobs operational - excellent setup!")
+    if claude_agent and openai_agent and background_pipeline and memory_manager:
+        diagnosis["recommendations"].append("✅ All systems operational - Claude + OpenAI + Background Jobs + Memory active!")
+    elif claude_agent and background_pipeline and memory_manager:
+        diagnosis["recommendations"].append("✅ Claude agent + Background jobs + Memory operational - excellent setup!")
+    elif claude_agent and memory_manager:
+        diagnosis["recommendations"].append("✅ Claude agent + Memory operational - enhanced conversations available!")
     elif background_pipeline:
         diagnosis["recommendations"].append("✅ Background jobs operational - cached data available!")
     
@@ -990,7 +1091,7 @@ async def test_interface():
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SMS Trading Bot - Claude + Background Jobs Test Interface</title>
+    <title>SMS Trading Bot - Claude + Memory + Background Jobs Test Interface</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
         .form-group { margin-bottom: 15px; }
@@ -999,6 +1100,7 @@ async def test_interface():
         button { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; margin: 5px; }
         button.claude { background: #8B5CF6; }
         button.background { background: #10B981; }
+        button.memory { background: #EC4899; }
         button.compare { background: #F59E0B; }
         .result { margin-top: 20px; padding: 15px; border-radius: 4px; background: #f8f9fa; }
         .comparison { display: flex; gap: 20px; }
@@ -1010,16 +1112,18 @@ async def test_interface():
         .badge.openai { background: #F59E0B; }
         .badge.hybrid { background: #10B981; }
         .badge.background { background: #6366F1; }
+        .badge.memory { background: #EC4899; }
         .status-panel { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
     </style>
 </head>
 <body>
-    <h1>SMS Trading Bot - Claude + Background Jobs Test Interface</h1>
+    <h1>SMS Trading Bot - Claude + Memory + Background Jobs Test Interface</h1>
     <div>
         <span class="badge">Claude-Powered</span>
         <span class="badge openai">OpenAI Fallback</span>
         <span class="badge hybrid">Hybrid Available</span>
         <span class="badge background">Background Pipeline</span>
+        <span class="badge memory">Memory Enhanced</span>
     </div>
     
     <div class="status-panel">
@@ -1042,6 +1146,12 @@ async def test_interface():
         <button class="background" onclick="testBackgroundJob('daily')">Trigger Daily Job</button>
         <button class="background" onclick="testScreener('momentum')">Test Momentum Screener</button>
         <button class="background" onclick="testOptions('AAPL')">Test Options (AAPL)</button>
+    </div>
+    
+    <div class="quick-tests">
+        <button class="memory" onclick="testMemory('health')">Check Memory Health</button>
+        <button class="memory" onclick="testMemory('stats')">Get User Stats</button>
+        <button class="memory" onclick="testConversation()">Test Memory Conversation</button>
     </div>
     
     <form onsubmit="testSMS(event)">
@@ -1088,6 +1198,7 @@ async def test_interface():
                     <strong>Agent:</strong> ${data.agent_type} | 
                     <strong>Claude:</strong> ${data.services.claude_agent} | 
                     <strong>OpenAI:</strong> ${data.services.openai_agent} | 
+                    <strong>Memory:</strong> ${data.services.memory_manager} | 
                     <strong>Background Pipeline:</strong> ${data.background_jobs.data_pipeline} | 
                     <strong>Screener:</strong> ${data.background_jobs.cached_screener} | 
                     <strong>Options:</strong> ${data.background_jobs.options_analyzer}
@@ -1100,6 +1211,77 @@ async def test_interface():
         function quickTest(message) {
             document.getElementById('message').value = message;
             testSMS(new Event('submit'));
+        }
+        
+        async function testMemory(testType) {
+            document.getElementById('result').innerHTML = `<div class="result">🔄 Testing memory ${testType}...</div>`;
+            
+            try {
+                let url = '';
+                if (testType === 'health') {
+                    url = '/admin/memory/health';
+                } else if (testType === 'stats') {
+                    url = '/admin/memory/user/+1555TEST/stats';
+                }
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                document.getElementById('result').innerHTML = 
+                    `<div class="result">
+                        <h3>✅ Memory ${testType}</h3>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </div>`;
+            } catch (error) {
+                document.getElementById('result').innerHTML = 
+                    `<div class="result" style="background: #f8d7da;">❌ Error: ${error.message}</div>`;
+            }
+        }
+        
+        async function testConversation() {
+            document.getElementById('result').innerHTML = `<div class="result">🔄 Testing memory conversation...</div>`;
+            
+            try {
+                // Send first message
+                const response1 = await fetch('/debug/test-message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        message: "What do you think about AAPL?", 
+                        phone: "+1555MEMORY",
+                        force_agent: "claude"
+                    })
+                });
+                const data1 = await response1.json();
+                
+                // Wait a moment
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Send follow-up message
+                const response2 = await fetch('/debug/test-message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        message: "How about its fundamentals?", 
+                        phone: "+1555MEMORY",
+                        force_agent: "claude"
+                    })
+                });
+                const data2 = await response2.json();
+                
+                document.getElementById('result').innerHTML = 
+                    `<div class="result">
+                        <h3>✅ Memory Conversation Test</h3>
+                        <p><strong>First Message:</strong> "${data1.input_message}"</p>
+                        <p><strong>First Response:</strong> ${data1.bot_response}</p>
+                        <p><strong>Follow-up:</strong> "${data2.input_message}"</p>
+                        <p><strong>Context-Aware Response:</strong> ${data2.bot_response}</p>
+                        <p><strong>Memory Features:</strong> ${data2.features_active?.memory_enhanced ? '✅' : '❌'} Enhanced</p>
+                    </div>`;
+            } catch (error) {
+                document.getElementById('result').innerHTML = 
+                    `<div class="result" style="background: #f8d7da;">❌ Error: ${error.message}</div>`;
+            }
         }
         
         async function testBackgroundJob(jobType) {
@@ -1188,6 +1370,7 @@ async def test_interface():
                             <h3>✅ Response from ${data.agent_used}</h3>
                             <p><strong>Input:</strong> ${data.input_message}</p>
                             <p><strong>Response:</strong> ${data.bot_response}</p>
+                            <p><strong>Memory Enhanced:</strong> ${data.features_active?.memory_enhanced ? '✅' : '❌'}</p>
                             <p><strong>Background Services:</strong> 
                                 Pipeline: ${data.background_services?.data_pipeline ? '✅' : '❌'}, 
                                 Screener: ${data.background_services?.cached_screener ? '✅' : '❌'}, 
@@ -1223,6 +1406,7 @@ async def test_interface():
                             <h3>✅ ${agentType.toUpperCase()} Response</h3>
                             <p><strong>Input:</strong> ${data.input_message}</p>
                             <p><strong>Response:</strong> ${data.bot_response}</p>
+                            <p><strong>Memory Enhanced:</strong> ${data.features_active?.memory_enhanced ? '✅' : '❌'}</p>
                         </div>`;
                 } else {
                     throw new Error(`HTTP ${response.status}`);
@@ -1291,6 +1475,7 @@ if __name__ == "__main__":
     logger.info(f"Claude Preference: {settings.prefer_claude}")
     logger.info(f"Available APIs: Claude={anthropic is not None and settings.anthropic_api_key}, OpenAI={settings.openai_api_key is not None}, EODHD={settings.eodhd_api_key is not None}")
     logger.info(f"Background Jobs: Enabled={BackgroundDataPipeline is not None and settings.eodhd_api_key is not None}")
+    logger.info(f"Memory Manager: Enabled={MemoryManager is not None and settings.pinecone_api_key is not None}")
     
     uvicorn.run(
         "main:app",
