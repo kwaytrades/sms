@@ -1,21 +1,26 @@
 # ===== main.py - CLAUDE-POWERED WITH BACKGROUND JOBS =====
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
-import uvicorn
-from contextlib import asynccontextmanager
-from loguru import logger
-import sys
+# Standard library imports
 import os
-from datetime import datetime, timezone
+import sys
 import time
-import asyncio
-from collections import defaultdict
-from typing import Dict, List, Any
-from services.stripe_service import StripeService
-from core.user_manager import UserManager, PlanType, SubscriptionStatus, AccountStatus
-import stripe
 import hmac
 import hashlib
+import asyncio
+from datetime import datetime, timezone, timedelta
+from contextlib import asynccontextmanager
+from collections import defaultdict
+from typing import Dict, List, Any, Optional
+
+# Third-party imports
+import uvicorn
+import stripe
+from fastapi import FastAPI, Request, HTTPException, Query
+from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse
+from loguru import logger
+
+# Local imports
+from services.stripe_service import StripeService
+from core.user_manager import UserManager, PlanType, SubscriptionStatus, AccountStatus
 
 # Import configuration
 try:
