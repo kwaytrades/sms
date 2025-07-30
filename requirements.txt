@@ -16,6 +16,9 @@ httpx==0.25.2
 twilio==8.10.3
 stripe==7.8.0
 
+# Memory Manager Dependencies (NEW)
+pinecone-client>=3.0.0
+tiktoken>=0.5.0
 
 # Data processing
 python-jose[cryptography]==3.3.0
@@ -34,6 +37,4 @@ pydantic-settings==2.1.0
 # Optional development tools
 pytest==7.4.3
 pytest-asyncio==0.21.1
-
 aiohttp>=3.8.0
-
