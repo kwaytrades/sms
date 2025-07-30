@@ -124,7 +124,7 @@ class FAEngine:
 
     async def execute(self, symbol: str) -> Dict[str, Any]:
         """Execute fundamental analysis - wrapper for Claude compatibility"""
-        return await self.analyze_fundamentals(symbol)
+        return await self.analyze(symbol)
     
     async def initialize(self):
         """Initialize background cache connections"""
