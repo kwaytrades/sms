@@ -249,7 +249,7 @@ Extract any stock symbols and call the appropriate tools now."""
                         # FIX: Use correct method name for FAEngine
                         elif function_name == "getFundamentals" and self.fundamental_tool:
                             # FAEngine uses execute() method, not analyze_fundamentals()
-                            result = await self.fundamental_tool.execute({
+                            result = self.fundamental_tool.execute({
                                 "symbol": symbol,
                                 "depth": "standard", 
                                 "user_style": "professional"
