@@ -1,6 +1,7 @@
 # services/data_driven_agent.py
 """
 Simplified data-driven LLM agent - let the LLM handle conversation style
+Enhanced with Context Orchestrator integration
 """
 
 import json
@@ -10,76 +11,124 @@ from loguru import logger
 from datetime import datetime
 from openai import AsyncOpenAI
 
+# Import the new Context Orchestrator
+try:
+    from services.context_orchestrator import ContextOrchestrator, StructuredContext
+    from services.memory_manager import MemoryManager, AgentType, MessageDirection
+    CONTEXT_ORCHESTRATOR_AVAILABLE = True
+except ImportError:
+    logger.warning("Context Orchestrator not available - using fallback context")
+    CONTEXT_ORCHESTRATOR_AVAILABLE = False
+
 class DataDrivenAgent:
     """
     Simplified LLM agent that:
-    1. Calls tools directly based on user query
-    2. Passes raw data to LLM
-    3. LLM handles everything - analysis, tone, conversation style
+    1. Gets intelligent context via Context Orchestrator
+    2. Calls tools directly based on user query
+    3. Passes raw data + context to LLM
+    4. LLM handles everything - analysis, tone, conversation style
     """
     
-    def __init__(self, openai_client, ta_service, news_service, fundamental_tool, cache_service, personality_engine):
+    def __init__(self, openai_client, ta_service, news_service, fundamental_tool, cache_service, personality_engine, memory_manager=None):
         self.openai_client = openai_client
         self.ta_service = ta_service
         self.news_service = news_service
         self.fundamental_tool = fundamental_tool
         self.cache_service = cache_service
         self.personality_engine = personality_engine
+        
+        # Initialize Context Orchestrator if available
+        self.context_orchestrator = None
+        if CONTEXT_ORCHESTRATOR_AVAILABLE and memory_manager:
+            self.context_orchestrator = ContextOrchestrator(memory_manager)
+            logger.info("✅ Context Orchestrator initialized")
+        else:
+            logger.warning("⚠️ Using fallback context - Context Orchestrator not available")
     
     async def process_message(self, message: str, user_phone: str) -> str:
         """
-        Process message using simplified approach:
-        1. LLM calls tools and gets raw data
-        2. LLM generates response directly with all context
+        Process message using enhanced context-aware approach:
+        1. Get intelligent 3-layer context
+        2. LLM calls tools with context awareness
+        3. LLM generates response with full context intelligence
         """
         try:
             logger.info(f"🎯 Processing: '{message}' from {user_phone}")
             
-            # Step 1: Get conversation context and user profile
-            context = await self._get_conversation_context(user_phone)
-            user_profile = await self._get_user_profile(user_phone)
+            # Step 1: Get intelligent structured context
+            structured_context = await self._get_intelligent_context(user_phone, message)
             
-            # Step 2: LLM analyzes query and calls tools directly
-            tool_results = await self._llm_driven_tool_calling(message, context)
+            # Step 2: LLM analyzes query and calls tools with context awareness
+            tool_results = await self._context_aware_tool_calling(message, structured_context)
             
-            # Step 3: LLM generates response with all context (simplified!)
-            response = await self._generate_intelligent_response(
-                message, context, tool_results, user_profile
+            # Step 3: LLM generates response with full context intelligence
+            response = await self._generate_context_aware_response(
+                message, structured_context, tool_results
             )
             
-            # Step 4: Cache and learn
-            await self._cache_conversation(user_phone, message, response, context)
+            # Step 4: Save message to memory system
+            await self._save_to_memory(user_phone, message, response, structured_context)
             
-            logger.info(f"✅ Response generated: {len(response)} chars")
+            logger.info(f"✅ Context-aware response generated: {len(response)} chars")
             return response
             
         except Exception as e:
             logger.error(f"💥 Processing failed: {e}")
             return "Market analysis processing. Please try again shortly."
     
-    async def _llm_driven_tool_calling(self, message: str, context: Dict) -> Dict[str, Any]:
+    async def _get_intelligent_context(self, user_phone: str, message: str) -> StructuredContext:
+        """Get intelligent 3-layer context via Context Orchestrator"""
+        
+        if self.context_orchestrator:
+            try:
+                # Get structured context with symbol inference and conversation threading
+                structured_context = await self.context_orchestrator.get_structured_context(
+                    user_id=user_phone,
+                    current_message=message,
+                    agent_type=AgentType.TRADING
+                )
+                
+                logger.info(f"📊 Context retrieved: {structured_context.context_confidence:.2f} confidence, "
+                           f"{len(structured_context.inferred_symbols)} symbols inferred, "
+                           f"{len(structured_context.immediate_context)} recent messages")
+                
+                return structured_context
+                
+            except Exception as e:
+                logger.error(f"Context orchestrator failed: {e}")
+                return await self._get_fallback_context(user_phone)
+        else:
+            return await self._get_fallback_context(user_phone)
+    
+    async def _context_aware_tool_calling(self, message: str, context: StructuredContext) -> Dict[str, Any]:
         """
-        Let LLM decide which tools to call and execute them with real data
+        Enhanced tool calling with context intelligence and symbol inference
         """
         
-        context_summary = self._format_context_summary(context)
+        # Format context for LLM tool calling
+        context_summary = self._format_context_for_tool_calling(context)
         
-        tool_calling_prompt = f"""You are a trading analyst with access to market data tools. Analyze the user's request and call the appropriate tools to get REAL data.
+        # Enhanced tool calling prompt with context intelligence
+        tool_calling_prompt = f"""You are a trading analyst with access to market data tools. Use the conversation context to make intelligent decisions about which tools to call.
 
 USER REQUEST: "{message}"
-CONVERSATION CONTEXT: {context_summary}
+
+CONVERSATION CONTEXT & INTELLIGENCE:
+{context_summary}
 
 AVAILABLE TOOLS:
 - getTechnical(symbol): Get technical analysis, price, RSI, support/resistance
 - getFundamentals(symbol): Get P/E ratio, financial health, growth metrics  
 - getNews(symbol): Get recent news sentiment and market impact
 
-INSTRUCTIONS:
-1. Determine which tools to call based on the user's request
-2. Call tools to get REAL market data
-3. You will see the actual data returned from each tool
+CONTEXT-AWARE INSTRUCTIONS:
+1. Use the conversation context to understand what the user is asking about
+2. If symbols are inferred from context (like "Support $160?" after TSLA discussion), use those symbols
+3. Don't ask for clarification if context makes the intent clear
+4. Call appropriate tools to get REAL market data
+5. Be intelligent about which tools are needed based on the request type
 
-Extract any stock symbols and call the appropriate tools now."""
+Extract symbols from context and current message, then call appropriate tools:"""
 
         try:
             response = await self.openai_client.chat.completions.create(
@@ -144,7 +193,7 @@ Extract any stock symbols and call the appropriate tools now."""
                     arguments = json.loads(tool_call.function.arguments)
                     symbol = arguments.get("symbol", "").upper()
                     
-                    logger.info(f"🔧 LLM requested: {function_name}({symbol})")
+                    logger.info(f"🔧 Context-aware LLM requested: {function_name}({symbol})")
                     
                     # Execute the actual tool and get real data
                     if function_name == "getTechnical" and self.ta_service:
@@ -169,51 +218,45 @@ Extract any stock symbols and call the appropriate tools now."""
             return tool_results
             
         except Exception as e:
-            logger.error(f"Tool calling failed: {e}")
+            logger.error(f"Context-aware tool calling failed: {e}")
             return {}
     
-    async def _generate_intelligent_response(
-        self, message: str, context: Dict, tool_results: Dict, user_profile: Dict
+    async def _generate_context_aware_response(
+        self, message: str, context: StructuredContext, tool_results: Dict
     ) -> str:
         """
-        Let the LLM generate the response with full context - no rigid rules!
+        Generate response with full context intelligence and conversation awareness
         """
         
-        # Format everything for the LLM
+        # Format everything for context-aware LLM response
         tool_data = self._format_raw_data_for_llm(tool_results)
-        context_summary = self._format_context_summary(context)
-        personality_info = self._format_user_personality(user_profile)
+        context_intelligence = self._format_context_intelligence_for_llm(context)
         
-        # Single comprehensive prompt - let LLM handle everything
-        comprehensive_prompt = f"""You are a hyper-personalized SMS trading assistant. The user just asked: "{message}"
+        # Enhanced comprehensive prompt with context intelligence
+        context_aware_prompt = f"""You are a hyper-personalized SMS trading assistant with advanced conversation intelligence. The user just asked: "{message}"
 
-CONVERSATION CONTEXT:
-{context_summary}
-
-USER PERSONALITY & STYLE:
-{personality_info}
+CONVERSATION INTELLIGENCE & CONTEXT:
+{context_intelligence}
 
 REAL MARKET DATA AVAILABLE:
 {tool_data}
 
-YOUR TASK:
-Respond to the user's question naturally and helpfully. You have access to real market data above.
+CONTEXT-AWARE RESPONSE GUIDELINES:
+1. Use conversation context to understand the user's intent (don't ask for clarification if context is clear)
+2. Reference previous conversation naturally when relevant
+3. Match the user's established communication style and preferences
+4. Answer their specific question with context-aware insights
+5. If you inferred symbols from context, acknowledge this naturally
+6. Use real market data to provide actionable insights
+7. Keep responses SMS-friendly (under 480 characters)
+8. Be conversational and adaptive to the user's personality
 
-IMPORTANT GUIDELINES:
-1. Match the user's communication style and personality
-2. Answer their specific question (advice, analysis, data, whatever they asked for)
-3. Use the real market data to inform your response
-4. Be conversational when they want advice, analytical when they want analysis
-5. Keep responses SMS-friendly (under 480 characters)
-6. Be helpful and actionable
-7. Don't dump unnecessary technical data unless they specifically want it
-
-Generate your response now:"""
+Generate your context-aware response now:"""
 
         try:
             response = await self.openai_client.chat.completions.create(
                 model="gpt-4o",
-                messages=[{"role": "user", "content": comprehensive_prompt}],
+                messages=[{"role": "user", "content": context_aware_prompt}],
                 temperature=0.4,
                 max_tokens=200
             )
@@ -222,8 +265,105 @@ Generate your response now:"""
             return self._clean_final_response(generated_response)
             
         except Exception as e:
-            logger.error(f"Response generation failed: {e}")
+            logger.error(f"Context-aware response generation failed: {e}")
             return "Market analysis completed. Please try your request again."
+    
+    def _format_context_for_tool_calling(self, context: StructuredContext) -> str:
+        """Format structured context for tool calling decisions"""
+        
+        context_parts = []
+        
+        # Add conversation thread info
+        thread = context.conversation_thread
+        if thread.active_symbols:
+            context_parts.append(f"ACTIVE SYMBOLS IN CONVERSATION: {', '.join(thread.active_symbols)}")
+        
+        if thread.current_topic != "general":
+            context_parts.append(f"CURRENT TOPIC: {thread.current_topic}")
+        
+        # Add recent conversation
+        if context.immediate_context:
+            context_parts.append("RECENT CONVERSATION:")
+            for msg in context.immediate_context[:3]:
+                direction = "User" if msg.get('direction') == 'user' else "Bot"
+                content = msg.get('content', '')[:80]
+                context_parts.append(f"- {direction}: {content}")
+        
+        # Add symbol inferences
+        if context.inferred_symbols:
+            context_parts.append("SYMBOL INFERENCES:")
+            for inference in context.inferred_symbols[:2]:
+                context_parts.append(f"- {inference.symbol}: {inference.reasoning} (confidence: {inference.confidence:.1f})")
+        
+        # Add user profile
+        if context.user_profile:
+            profile = context.user_profile
+            context_parts.append(f"USER PROFILE: {profile.get('trading_style', 'swing')} trader, {profile.get('risk_tolerance', 'medium')} risk tolerance")
+        
+        return "\n".join(context_parts) if context_parts else "No relevant context available"
+    
+    def _format_context_intelligence_for_llm(self, context: StructuredContext) -> str:
+        """Format full context intelligence for response generation"""
+        
+        if self.context_orchestrator:
+            # Use the built-in context formatter
+            return self.context_orchestrator.format_context_for_llm(context)
+        else:
+            return self._format_context_for_tool_calling(context)
+    
+    async def _save_to_memory(self, user_phone: str, message: str, response: str, context: StructuredContext):
+        """Save conversation to memory system"""
+        
+        if self.context_orchestrator and self.context_orchestrator.memory_manager:
+            try:
+                # Save user message
+                await self.context_orchestrator.memory_manager.save_message(
+                    user_id=user_phone,
+                    content=message,
+                    direction=MessageDirection.USER,
+                    agent_type=AgentType.TRADING
+                )
+                
+                # Save bot response
+                await self.context_orchestrator.memory_manager.save_message(
+                    user_id=user_phone,
+                    content=response,
+                    direction=MessageDirection.BOT,
+                    agent_type=AgentType.TRADING
+                )
+                
+                logger.debug(f"💾 Conversation saved to memory for {user_phone}")
+                
+            except Exception as e:
+                logger.warning(f"Memory save failed: {e}")
+        
+        # Fallback to cache service
+        await self._cache_conversation_fallback(user_phone, message, response, context)
+    
+    async def _get_fallback_context(self, user_phone: str) -> StructuredContext:
+        """Fallback context when Context Orchestrator is not available"""
+        
+        # Get basic conversation context
+        context = await self._get_conversation_context(user_phone)
+        
+        # Create minimal StructuredContext-like object
+        from types import SimpleNamespace
+        
+        fallback_context = SimpleNamespace()
+        fallback_context.conversation_thread = SimpleNamespace()
+        fallback_context.conversation_thread.active_symbols = context.get("recent_symbols", [])
+        fallback_context.conversation_thread.current_topic = context.get("last_topic", "general")
+        fallback_context.conversation_thread.emotional_state = "neutral"
+        
+        fallback_context.immediate_context = []
+        fallback_context.semantic_memories = []
+        fallback_context.user_profile = await self._get_user_profile(user_phone)
+        fallback_context.conversation_summaries = []
+        fallback_context.inferred_symbols = []
+        fallback_context.context_confidence = 0.3
+        fallback_context.missing_context_flags = ["context_orchestrator_unavailable"]
+        
+        return fallback_context
     
     def _format_raw_data_for_llm(self, tool_results: Dict) -> str:
         """Format raw tool results for LLM - keep it simple"""
@@ -242,32 +382,6 @@ Generate your response now:"""
         
         return "\n\n".join(formatted_results)
     
-    def _format_context_summary(self, context: Dict) -> str:
-        """Format conversation context"""
-        
-        if context.get("conversation_flow") == "continuing":
-            recent_symbols = context.get("recent_symbols", [])
-            last_topic = context.get("last_topic", "")
-            
-            if recent_symbols:
-                return f"Previously discussed: {', '.join(recent_symbols[:3])}. Last topic: {last_topic}."
-            else:
-                return "Continuing conversation."
-        else:
-            return "New conversation."
-    
-    def _format_user_personality(self, user_profile: Dict) -> str:
-        """Format user personality for LLM context"""
-        
-        if not user_profile:
-            return "No personality data available - use default professional style"
-        
-        comm_style = user_profile.get('communication_style', {})
-        trading_style = user_profile.get('trading_personality', {})
-        
-        return f"""Communication Style: {comm_style.get('formality', 'casual')} formality, {comm_style.get('energy', 'moderate')} energy, {comm_style.get('emoji_usage', 'some')} emoji usage
-Trading Profile: {trading_style.get('experience_level', 'intermediate')} experience, {trading_style.get('risk_tolerance', 'moderate')} risk tolerance, {trading_style.get('trading_style', 'swing')} trading style"""
-    
     def _clean_final_response(self, response: str) -> str:
         """Minimal cleaning - let LLM handle most of it"""
         
@@ -278,7 +392,7 @@ Trading Profile: {trading_style.get('experience_level', 'intermediate')} experie
         return response.strip()
     
     async def _get_conversation_context(self, user_phone: str) -> Dict[str, Any]:
-        """Get conversation context"""
+        """Get conversation context (fallback method)"""
         
         context = {
             "recent_symbols": [],
@@ -319,8 +433,8 @@ Trading Profile: {trading_style.get('experience_level', 'intermediate')} experie
             logger.warning(f"Profile retrieval failed: {e}")
             return {}
     
-    async def _cache_conversation(self, user_phone: str, message: str, response: str, context: Dict):
-        """Cache conversation"""
+    async def _cache_conversation_fallback(self, user_phone: str, message: str, response: str, context):
+        """Cache conversation (fallback method)"""
         
         try:
             if not self.cache_service:
@@ -385,13 +499,13 @@ Trading Profile: {trading_style.get('experience_level', 'intermediate')} experie
             return "general_analysis"
 
 
-# Drop-in replacement for existing processor
+# Enhanced drop-in replacement for existing processor
 class ComprehensiveMessageProcessor:
-    """Enhanced processor using simplified data-driven agent"""
+    """Enhanced processor using context-aware data-driven agent"""
     
     def __init__(self, openai_client, ta_service, personality_engine, 
                  cache_service=None, news_service=None, fundamental_tool=None, 
-                 portfolio_service=None, screener_service=None):
+                 portfolio_service=None, screener_service=None, memory_manager=None):
         
         self.data_driven_agent = DataDrivenAgent(
             openai_client=openai_client,
@@ -399,14 +513,15 @@ class ComprehensiveMessageProcessor:
             news_service=news_service,
             fundamental_tool=fundamental_tool,
             cache_service=cache_service,
-            personality_engine=personality_engine
+            personality_engine=personality_engine,
+            memory_manager=memory_manager  # Pass memory manager for context orchestrator
         )
         
         self.personality_engine = personality_engine
         self.cache_service = cache_service
     
     async def process_message(self, message: str, user_phone: str) -> str:
-        """Process using simplified data-driven agent"""
+        """Process using context-aware data-driven agent"""
         
         try:
             response = await self.data_driven_agent.process_message(message, user_phone)
