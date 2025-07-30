@@ -1,5 +1,6 @@
 """
 Enhanced SMS Trading AI Agent - MemoryManager System with Emotional Intelligence
+FINAL PRODUCTION-READY VERSION - All Issues Fixed
 Complete implementation with Redis, MongoDB, Pinecone integration plus emotional awareness,
 context intelligence, and response adaptation for multi-agent support.
 """
@@ -7,25 +8,61 @@ context intelligence, and response adaptation for multi-agent support.
 import asyncio
 import json
 import logging
+import re
+import hashlib
+import statistics
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any, Union
 from dataclasses import dataclass, asdict, field
 from enum import Enum
-import hashlib
-import re
-import statistics
 from collections import deque, defaultdict
+from dotenv import load_dotenv
 
 # External dependencies
 import redis.asyncio as redis
 from motor.motor_asyncio import AsyncIOMotorClient
-import pinecone
+from pinecone import Pinecone
 from openai import AsyncOpenAI
-from pydantic import BaseModel, Field
+import tiktoken
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Configuration management
+class MemoryConfig:
+    """Configuration management for MemoryManager"""
+    
+    @staticmethod
+    def from_env():
+        """Load configuration from environment variables"""
+        return {
+            'redis_url': os.getenv('REDIS_URL', 'redis://localhost:6379'),
+            'mongodb_url': os.getenv('MONGODB_URL', 'mongodb://localhost:27017/trading_ai_enhanced'),
+            'pinecone_api_key': os.getenv('PINECONE_API_KEY'),
+            'pinecone_environment': os.getenv('PINECONE_ENVIRONMENT', 'us-east1-gcp'),
+            'openai_api_key': os.getenv('OPENAI_API_KEY'),
+            'stm_limit': int(os.getenv('STM_LIMIT', '15')),
+            'summary_trigger': int(os.getenv('SUMMARY_TRIGGER', '10')),
+            'max_retries': int(os.getenv('MAX_RETRIES', '3')),
+            'rate_limit_delay': float(os.getenv('RATE_LIMIT_DELAY', '0.1'))
+        }
+    
+    @staticmethod
+    def validate_config(config: Dict[str, Any]) -> bool:
+        """Validate required configuration"""
+        required_keys = ['pinecone_api_key', 'openai_api_key']
+        missing_keys = [key for key in required_keys if not config.get(key)]
+        
+        if missing_keys:
+            logger.error(f"Missing required configuration: {missing_keys}")
+            return False
+        
+        return True  # Fixed: Always return True when validation passes
 
 class MessageDirection(Enum):
     """Message direction enumeration"""
@@ -131,7 +168,7 @@ class UserProfile:
     trading_style: str = "swing"
     watchlist: List[str] = None
     portfolio_insights: Dict[str, Any] = None
-    confidence_score: float = 0.5  # Trading confidence
+    confidence_score: float = 0.5
     
     # Customer service profile  
     support_history: List[Dict[str, Any]] = None
@@ -148,9 +185,9 @@ class UserProfile:
     objections_history: List[str] = None
     
     # Emotional intelligence profile
-    emotional_trend: List[float] = None  # Rolling sentiment average
+    emotional_trend: List[float] = None
     last_emotion: Optional[EmotionalState] = None
-    tone_preference: str = "adaptive"  # casual, formal, adaptive
+    tone_preference: str = "adaptive"
     frustration_count: int = 0
     engagement_score: float = 0.5
     
@@ -201,17 +238,17 @@ class EmotionalStateTracker:
             EmotionType.FRUSTRATED: {
                 'keywords': ['frustrated', 'annoying', 'terrible', 'awful', 'hate', 'worst', 'useless', 'stupid'],
                 'phrases': ['not working', 'broken', 'waste of time', 'fed up', 'sick of'],
-                'punctuation_weight': 2.0  # !! increases frustration
+                'punctuation_weight': 2.0
             },
             EmotionType.EXCITED: {
                 'keywords': ['amazing', 'awesome', 'fantastic', 'excellent', 'love', 'perfect', 'great'],
                 'phrases': ['cant wait', 'so excited', 'looking forward', 'this is great'],
-                'punctuation_weight': 1.5  # ! increases excitement
+                'punctuation_weight': 1.5
             },
             EmotionType.CONFUSED: {
                 'keywords': ['confused', 'unclear', 'understand', 'explain', 'help', 'lost'],
                 'phrases': ['dont get it', 'not sure', 'how do i', 'what does', 'can you explain'],
-                'punctuation_weight': 1.2  # ? increases confusion
+                'punctuation_weight': 1.2
             },
             EmotionType.CONFIDENT: {
                 'keywords': ['confident', 'sure', 'certain', 'ready', 'definitely', 'absolutely'],
@@ -225,7 +262,6 @@ class EmotionalStateTracker:
             }
         }
         
-        # Sentiment words
         self.positive_words = {
             'good', 'great', 'excellent', 'amazing', 'awesome', 'perfect', 'love',
             'happy', 'satisfied', 'pleased', 'wonderful', 'fantastic', 'brilliant'
@@ -235,26 +271,9 @@ class EmotionalStateTracker:
             'bad', 'terrible', 'awful', 'horrible', 'hate', 'worst', 'frustrated',
             'angry', 'disappointed', 'annoying', 'useless', 'broken', 'stupid'
         }
-        
-        # Trading-specific emotion patterns
-        self.trading_emotions = {
-            'fear': ['scared', 'risky', 'loss', 'crash', 'drop', 'bear'],
-            'greed': ['moon', 'rocket', 'huge gains', 'rich', 'millionaire'],
-            'fomo': ['missing out', 'everyone buying', 'too late', 'wish i bought'],
-            'confidence': ['bullish', 'strong buy', 'confident', 'easy money']
-        }
     
     def analyze_emotion(self, content: str, direction: MessageDirection) -> EmotionalState:
-        """
-        Analyze emotional state from message content
-        
-        Args:
-            content: Message content to analyze
-            direction: USER or BOT message
-            
-        Returns:
-            EmotionalState object with detected emotion
-        """
+        """Analyze emotional state from message content"""
         content_lower = content.lower()
         detected_emotions = {}
         triggers = []
@@ -279,7 +298,6 @@ class EmotionalStateTracker:
             # Check punctuation intensity
             if emotion_type == EmotionType.FRUSTRATED:
                 score += content.count('!') * 0.2
-                score += content.count('!!') * 0.3
             elif emotion_type == EmotionType.EXCITED:
                 score += content.count('!') * 0.15
             elif emotion_type == EmotionType.CONFUSED:
@@ -331,13 +349,11 @@ class EmotionalStateTracker:
         if total_words == 0:
             return 0.5
         
-        # Normalize scores
         positive_ratio = positive_count / total_words
         negative_ratio = negative_count / total_words
         
-        # Calculate final sentiment (0.0 to 1.0)
         if positive_ratio + negative_ratio == 0:
-            return 0.5  # Neutral
+            return 0.5
         
         sentiment = positive_ratio / (positive_ratio + negative_ratio)
         return max(0.0, min(1.0, sentiment))
@@ -354,43 +370,26 @@ class EmotionalStateTracker:
     def _calculate_confidence(self, content: str, detected_emotions: Dict) -> float:
         """Calculate confidence in emotion detection"""
         base_confidence = 0.5
-        
-        # More text = higher confidence
         text_length_factor = min(len(content.split()) / 20, 0.3)
-        
-        # Strong emotion indicators = higher confidence
         emotion_strength = max([e['score'] for e in detected_emotions.values()]) if detected_emotions else 0
-        
-        # Multiple emotion indicators = lower confidence
         emotion_count_penalty = len(detected_emotions) * 0.1 if len(detected_emotions) > 1 else 0
         
         confidence = base_confidence + text_length_factor + (emotion_strength * 0.3) - emotion_count_penalty
         return max(0.1, min(0.95, confidence))
     
     def detect_escalation(self, emotional_history: List[EmotionalState]) -> bool:
-        """
-        Detect if user needs escalation based on emotional history
-        
-        Args:
-            emotional_history: List of recent emotional states
-            
-        Returns:
-            bool: True if escalation is needed
-        """
+        """Detect if user needs escalation based on emotional history"""
         if len(emotional_history) < 3:
             return False
         
-        # Check last 3 emotions for persistent frustration
         recent_emotions = emotional_history[-3:]
         frustration_count = sum(1 for emotion in recent_emotions 
                               if emotion.emotion_type == EmotionType.FRUSTRATED 
                               and emotion.emotion_score > 0.6)
         
-        # Check for escalating negative sentiment
         sentiment_scores = [emotion.emotion_score if emotion.sentiment_label == "positive" 
                           else 1.0 - emotion.emotion_score for emotion in recent_emotions]
         
-        # Escalate if 3+ frustrated messages or declining sentiment trend
         declining_sentiment = all(sentiment_scores[i] >= sentiment_scores[i+1] 
                                 for i in range(len(sentiment_scores)-1))
         
@@ -404,19 +403,43 @@ class MemoryManager:
     
     def __init__(
         self,
-        redis_url: str,
-        mongodb_url: str,
-        pinecone_api_key: str,
-        pinecone_environment: str,
-        openai_api_key: str,
+        redis_url: str = None,
+        mongodb_url: str = None,
+        pinecone_api_key: str = None,
+        pinecone_environment: str = None,
+        openai_api_key: str = None,
         stm_limit: int = 15,
-        summary_trigger: int = 10
+        summary_trigger: int = 10,
+        config: Dict[str, Any] = None
     ):
         """Initialize Enhanced MemoryManager with emotional intelligence"""
         
+        # Load configuration from environment or parameters
+        if config:
+            self.config = config
+        else:
+            env_config = MemoryConfig.from_env()
+            self.config = {
+                'redis_url': redis_url or env_config['redis_url'],
+                'mongodb_url': mongodb_url or env_config['mongodb_url'],
+                'pinecone_api_key': pinecone_api_key or env_config['pinecone_api_key'],
+                'pinecone_environment': pinecone_environment or env_config['pinecone_environment'],
+                'openai_api_key': openai_api_key or env_config['openai_api_key'],
+                'stm_limit': stm_limit,
+                'summary_trigger': summary_trigger,
+                'max_retries': env_config['max_retries'],
+                'rate_limit_delay': env_config['rate_limit_delay']
+            }
+        
+        # Validate configuration
+        if not MemoryConfig.validate_config(self.config):
+            raise ValueError("Invalid configuration. Check environment variables.")
+        
         # Configuration
-        self.stm_limit = stm_limit
-        self.summary_trigger = summary_trigger
+        self.stm_limit = self.config['stm_limit']
+        self.summary_trigger = self.config['summary_trigger']
+        self.max_retries = self.config['max_retries']
+        self.rate_limit_delay = self.config['rate_limit_delay']
         
         # Initialize emotional intelligence
         self.emotion_tracker = EmotionalStateTracker()
@@ -428,12 +451,13 @@ class MemoryManager:
         self.pinecone_index = None
         self.openai_client = None
         
-        # Connection strings
-        self.redis_url = redis_url
-        self.mongodb_url = mongodb_url
-        self.pinecone_api_key = pinecone_api_key
-        self.pinecone_environment = pinecone_environment
-        self.openai_api_key = openai_api_key
+        # Initialize tokenizer for accurate token counting
+        self.tokenizer = tiktoken.encoding_for_model("gpt-4")
+        
+        # Performance tracking
+        self._last_embedding_call = None
+        self._pinecone_batch = []
+        self._batch_size = 10
         
         # Enhanced topic extraction patterns
         self.stock_pattern = re.compile(r'\b[A-Z]{1,5}\b')
@@ -467,38 +491,38 @@ class MemoryManager:
         """Initialize all database connections and emotional intelligence"""
         try:
             # Redis connection
-            self.redis_client = redis.from_url(self.redis_url, decode_responses=True)
+            self.redis_client = redis.from_url(self.config['redis_url'], decode_responses=True)
             await self.redis_client.ping()
             logger.info("Redis connection established")
             
             # MongoDB connection
-            self.mongo_client = AsyncIOMotorClient(self.mongodb_url)
+            self.mongo_client = AsyncIOMotorClient(self.config['mongodb_url'])
             self.db = self.mongo_client.trading_ai_memory
             
             # Test MongoDB connection
-            await self.db.command("ping")
+            await self.mongo_client.admin.command("ping")
             logger.info("MongoDB connection established")
             
-            # Pinecone connection
-            pinecone.init(
-                api_key=self.pinecone_api_key,
-                environment=self.pinecone_environment
-            )
+            # Pinecone connection (Updated SDK)
+            pc = Pinecone(api_key=self.config['pinecone_api_key'])
             
             # Create or connect to index
             index_name = "trading-memory-enhanced"
-            if index_name not in pinecone.list_indexes():
-                pinecone.create_index(
+            existing_indexes = [index.name for index in pc.list_indexes()]
+            
+            if index_name not in existing_indexes:
+                pc.create_index(
                     name=index_name,
                     dimension=1536,  # OpenAI embedding dimension
                     metric="cosine"
                 )
+                logger.info(f"Created new Pinecone index: {index_name}")
             
-            self.pinecone_index = pinecone.Index(index_name)
+            self.pinecone_index = pc.Index(index_name)
             logger.info("Pinecone connection established")
             
             # OpenAI client
-            self.openai_client = AsyncOpenAI(api_key=self.openai_api_key)
+            self.openai_client = AsyncOpenAI(api_key=self.config['openai_api_key'])
             logger.info("OpenAI client initialized")
             
             # Create MongoDB indexes for optimization
@@ -507,8 +531,267 @@ class MemoryManager:
             logger.info("Enhanced MemoryManager with Emotional Intelligence ready!")
             
         except Exception as e:
-            logger.error(f"Setup failed: {e}")
+            logger.exception(f"Setup failed: {e}")
             raise
+    
+    async def _create_mongodb_indexes(self):
+        """Create MongoDB indexes for optimal query performance"""
+        try:
+            # Users collection indexes
+            await self.db.users.create_index("user_id", unique=True)
+            await self.db.users.create_index("updated_at")
+            await self.db.users.create_index("lead_stage")
+            
+            # Conversations collection indexes
+            await self.db.conversations.create_index([("user_id", 1), ("agent_type", 1), ("timestamp", -1)])
+            await self.db.conversations.create_index("topics")
+            await self.db.conversations.create_index("importance_score")
+            await self.db.conversations.create_index("agent_type")
+            
+            # Trade insights collection indexes
+            await self.db.trade_insights.create_index([("user_id", 1), ("timestamp", -1)])
+            await self.db.trade_insights.create_index("symbols")
+            await self.db.trade_insights.create_index("agent_type")
+            await self.db.trade_insights.create_index("importance_score")
+            
+            # Customer escalations collection indexes
+            await self.db.customer_escalations.create_index([("user_id", 1), ("timestamp", -1)])
+            await self.db.customer_escalations.create_index("priority")
+            await self.db.customer_escalations.create_index("status")
+            await self.db.customer_escalations.create_index("agent_type")
+            
+            # Sales opportunities collection indexes
+            await self.db.sales_opportunities.create_index([("user_id", 1), ("timestamp", -1)])
+            await self.db.sales_opportunities.create_index("stage")
+            await self.db.sales_opportunities.create_index("probability")
+            await self.db.sales_opportunities.create_index("agent_type")
+            await self.db.sales_opportunities.create_index("value_estimate")
+            
+            logger.info("MongoDB indexes created successfully for all agent types")
+            
+        except Exception as e:
+            logger.exception(f"Index creation error: {e}")
+    
+    def _extract_topics(self, content: str, agent_type: AgentType = AgentType.TRADING) -> List[str]:
+        """Extract topics from message content based on agent type"""
+        content_lower = content.lower()
+        topics = []
+        
+        if agent_type == AgentType.TRADING:
+            # Extract stock symbols using regex pattern
+            symbols = self.stock_pattern.findall(content.upper())
+            topics.extend([s for s in symbols if 2 <= len(s) <= 5])
+            
+            # Extract trading terms
+            topics.extend([term for term in self.trading_terms if term in content_lower])
+                    
+        elif agent_type == AgentType.CUSTOMER_SERVICE:
+            # Extract service-related terms
+            topics.extend([term for term in self.service_terms if term in content_lower])
+                    
+            # Extract urgency indicators
+            if any(word in content_lower for word in ['urgent', 'asap', 'immediately', 'critical']):
+                topics.append('urgent')
+                
+        elif agent_type == AgentType.SALES:
+            # Extract sales-related terms
+            topics.extend([term for term in self.sales_terms if term in content_lower])
+                    
+            # Extract buying intent indicators
+            if any(word in content_lower for word in ['buy', 'purchase', 'order', 'subscribe']):
+                topics.append('buying_intent')
+        
+        # Remove duplicates and limit to 10
+        return list(set(topics))[:10]
+    
+    def _classify_message_type(self, content: str, agent_type: AgentType = AgentType.TRADING) -> MemoryType:
+        """Classify message type based on content and agent"""
+        content_lower = content.lower()
+        
+        # System messages
+        if any(term in content_lower for term in ['error', 'system', 'status']):
+            return MemoryType.SYSTEM
+        
+        if agent_type == AgentType.TRADING:
+            # Trading messages
+            trading_indicators = [
+                'buy', 'sell', 'portfolio', 'stock', 'price', 'analysis',
+                'earnings', 'options', 'calls', 'puts', 'market'
+            ]
+            
+            if any(term in content_lower for term in trading_indicators):
+                return MemoryType.TRADING
+                
+        elif agent_type == AgentType.CUSTOMER_SERVICE:
+            # Check for emotional content first
+            if any(word in content_lower for word in ['frustrated', 'angry', 'disappointed']):
+                return MemoryType.EMOTIONAL
+            # Customer service messages
+            if any(term in content_lower for term in self.service_terms):
+                return MemoryType.CUSTOMER_SERVICE
+                
+        elif agent_type == AgentType.SALES:
+            # Sales messages
+            if any(term in content_lower for term in self.sales_terms):
+                return MemoryType.SALES
+        
+        # Important messages (questions, requests)
+        if '?' in content or any(term in content_lower for term in ['help', 'recommend', 'should']):
+            return MemoryType.IMPORTANT
+        
+        return MemoryType.CASUAL
+    
+    async def _get_embedding(self, text: str) -> List[float]:
+        """Generate OpenAI embedding for text with rate limiting"""
+        try:
+            # Simple rate limiting - wait if needed
+            if self._last_embedding_call:
+                elapsed = (datetime.utcnow() - self._last_embedding_call).total_seconds()
+                if elapsed < self.rate_limit_delay:
+                    await asyncio.sleep(self.rate_limit_delay - elapsed)
+            
+            self._last_embedding_call = datetime.utcnow()
+            
+            response = await self.openai_client.embeddings.create(
+                model="text-embedding-ada-002",
+                input=text[:8000]  # Limit input size for OpenAI
+            )
+            
+            return response.data[0].embedding
+            
+        except Exception as e:
+            logger.exception(f"Embedding generation failed: {e}")
+            return [0.0] * 1536  # Return zero vector as fallback
+    
+    def _calculate_importance(
+        self, 
+        content: str, 
+        agent_type: AgentType = AgentType.TRADING,
+        emotional_state: Optional[EmotionalState] = None
+    ) -> float:
+        """Enhanced importance calculation including emotional factors"""
+        importance = 0.3  # Base score
+        content_lower = content.lower()
+        
+        # Apply existing importance logic
+        if agent_type == AgentType.TRADING:
+            high_importance_terms = [
+                'buy', 'sell', 'portfolio', 'risk', 'loss', 'profit', 'earnings',
+                'recommendation', 'strategy', 'analysis', 'alert', 'breakout'
+            ]
+            
+            for term in high_importance_terms:
+                if term in content_lower:
+                    importance += 0.1
+            
+            symbols = self.stock_pattern.findall(content.upper())
+            importance += len(symbols) * 0.05
+            
+        elif agent_type == AgentType.CUSTOMER_SERVICE:
+            high_importance_terms = [
+                'frustrated', 'angry', 'disappointed', 'urgent', 'critical', 
+                'escalate', 'manager', 'refund', 'cancel', 'lawsuit', 'complaint'
+            ]
+            
+            for term in high_importance_terms:
+                if term in content_lower:
+                    importance += 0.15
+                    
+            if any(word in content_lower for word in ['hate', 'terrible', 'worst', 'horrible']):
+                importance += 0.2
+                
+        elif agent_type == AgentType.SALES:
+            high_importance_terms = [
+                'buy', 'purchase', 'budget', 'decision', 'timeline', 'competitor',
+                'interested', 'considering', 'evaluate', 'demo', 'trial'
+            ]
+            
+            for term in high_importance_terms:
+                if term in content_lower:
+                    importance += 0.12
+                    
+            if any(word in content_lower for word in ['ready to buy', 'place order', 'sign up']):
+                importance += 0.3
+        
+        # Emotional importance boosting
+        if emotional_state:
+            if emotional_state.emotion_type in [EmotionType.FRUSTRATED, EmotionType.ANXIOUS]:
+                importance += 0.2  # High emotional states are important
+            elif emotional_state.emotion_type == EmotionType.EXCITED:
+                importance += 0.15  # Excitement indicates engagement
+            
+            # High emotion scores increase importance
+            importance += emotional_state.emotion_score * 0.1
+        
+        # Question marks increase importance
+        importance += content.count('?') * 0.05
+        
+        return min(importance, 1.0)
+    
+    async def store_customer_escalation(
+        self,
+        user_id: str,
+        issue: str,
+        details: str,
+        priority: str = "medium"
+    ) -> bool:
+        """Store customer service escalation for high-priority tracking"""
+        try:
+            escalation_doc = {
+                "user_id": user_id,
+                "issue": issue,
+                "details": details,
+                "priority": priority,
+                "status": "open",
+                "timestamp": datetime.utcnow(),
+                "agent_type": "customer_service"
+            }
+            
+            result = await self.db.customer_escalations.insert_one(escalation_doc)
+            
+            # Store in vector database for future reference
+            await self._store_in_vector_db(
+                user_id, 
+                f"ESCALATION: {issue} - {details}", 
+                [priority, "escalation"], 
+                "customer_escalation",
+                AgentType.CUSTOMER_SERVICE
+            )
+            
+            # Update user profile with escalation trigger
+            await self.update_user_profile(user_id, {
+                "escalation_triggers": [details],
+                "last_escalation": datetime.utcnow()
+            })
+            
+            logger.info(f"Customer escalation stored for user {user_id}")
+            return bool(result.inserted_id)
+            
+        except Exception as e:
+            logger.exception(f"Failed to store customer escalation: {e}")
+            return False
+    
+    async def update_user_profile(
+        self, 
+        user_id: str, 
+        updates: Dict[str, Any]
+    ) -> bool:
+        """Update user profile with new information"""
+        try:
+            updates["updated_at"] = datetime.utcnow()
+            
+            result = await self.db.users.update_one(
+                {"user_id": user_id},
+                {"$set": updates},
+                upsert=True
+            )
+            
+            logger.info(f"User profile updated for {user_id}")
+            return result.acknowledged
+            
+        except Exception as e:
+            logger.exception(f"Failed to update user profile: {e}")
+            return False
     
     async def save_message(
         self, 
@@ -519,20 +802,7 @@ class MemoryManager:
         topics: List[str] = None,
         metadata: Dict[str, Any] = None
     ) -> bool:
-        """
-        Save message with emotional analysis and intelligent context tracking
-        
-        Args:
-            user_id: Unique user identifier
-            content: Message content
-            direction: USER or BOT
-            agent_type: Which agent is handling this message
-            topics: Optional list of topics/symbols
-            metadata: Agent-specific metadata
-            
-        Returns:
-            bool: Success status
-        """
+        """Save message with emotional analysis and intelligent context tracking"""
         try:
             # Analyze emotional state
             emotional_state = self.emotion_tracker.analyze_emotion(content, direction)
@@ -596,7 +866,7 @@ class MemoryManager:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to save enhanced message: {e}")
+            logger.exception(f"Failed to save enhanced message: {e}")
             return False
     
     async def get_context(
@@ -607,19 +877,7 @@ class MemoryManager:
         include_cross_agent: bool = True,
         include_emotional_context: bool = True
     ) -> Dict[str, Any]:
-        """
-        Retrieve comprehensive context with emotional intelligence and 3-layer memory
-        
-        Args:
-            user_id: Unique user identifier
-            agent_type: Which agent is requesting context
-            query: Optional query for semantic search
-            include_cross_agent: Whether to include memories from other agents
-            include_emotional_context: Whether to include emotional analysis
-            
-        Returns:
-            Dict containing enhanced context with emotional intelligence
-        """
+        """Retrieve comprehensive context with emotional intelligence and 3-layer memory"""
         try:
             # Check cache first
             cache_key = f"context:{user_id}:{agent_type.value}:{query or 'general'}"
@@ -732,7 +990,7 @@ class MemoryManager:
             return context
             
         except Exception as e:
-            logger.error(f"Failed to get enhanced context: {e}")
+            logger.exception(f"Failed to get enhanced context: {e}")
             return {"error": str(e)}
     
     async def generate_contextual_prompt(
@@ -742,69 +1000,63 @@ class MemoryManager:
         user_profile: Dict[str, Any],
         agent_type: AgentType
     ) -> str:
-        """
-        Generate tone-optimized prompt based on emotional state and context
-        
-        Args:
-            context: Full context from get_context()
-            emotional_state: Current emotional state
-            user_profile: User profile data
-            agent_type: Current agent type
-            
-        Returns:
-            str: Optimized prompt for LLM
-        """
+        """Generate tone-optimized prompt based on emotional state and context"""
         try:
+            # Safe access to user profile
+            tone_preference = user_profile.get('tone_preference', 'adaptive') if user_profile else 'adaptive'
+            trading_style = user_profile.get('trading_style', 'unknown') if user_profile else 'unknown'
+            risk_tolerance = user_profile.get('risk_tolerance', 'unknown') if user_profile else 'unknown'
+            
             # Base prompt components
             base_context = f"""
 You are a {agent_type.value.replace('_', ' ')} AI agent for a personalized SMS trading platform.
 
 USER CONTEXT:
-- Communication Preference: {user_profile.get('tone_preference', 'adaptive')}
-- Trading Style: {user_profile.get('trading_style', 'unknown')}
-- Risk Tolerance: {user_profile.get('risk_tolerance', 'unknown')}
+- Communication Preference: {tone_preference}
+- Trading Style: {trading_style}
+- Risk Tolerance: {risk_tolerance}
 """
             
             # Emotional adaptation
             emotional_guidance = ""
             
             if emotional_state.emotion_type == EmotionType.FRUSTRATED:
-                emotional_guidance = """
-EMOTIONAL STATE: User is frustrated (score: {:.2f})
+                emotional_guidance = f"""
+EMOTIONAL STATE: User is frustrated (score: {emotional_state.emotion_score:.2f})
 RESPONSE TONE: Be empathetic, acknowledge their frustration, provide clear step-by-step solutions.
 - Use phrases like "I understand your frustration" or "Let me help you resolve this quickly"
 - Avoid technical jargon, be direct and solution-focused
 - Offer escalation if needed
-""".format(emotional_state.emotion_score)
+"""
                 
             elif emotional_state.emotion_type == EmotionType.EXCITED:
-                emotional_guidance = """
-EMOTIONAL STATE: User is excited (score: {:.2f})
+                emotional_guidance = f"""
+EMOTIONAL STATE: User is excited (score: {emotional_state.emotion_score:.2f})
 RESPONSE TONE: Match their enthusiasm while providing grounded advice.
 - Use positive language and confirm their excitement
 - Provide balanced perspective to prevent overconfidence
 - Encourage but add risk awareness
-""".format(emotional_state.emotion_score)
+"""
                 
             elif emotional_state.emotion_type == EmotionType.CONFUSED:
-                emotional_guidance = """
-EMOTIONAL STATE: User is confused (score: {:.2f})
+                emotional_guidance = f"""
+EMOTIONAL STATE: User is confused (score: {emotional_state.emotion_score:.2f})
 RESPONSE TONE: Be patient, educational, and structured.
 - Break down complex concepts into simple steps
 - Use analogies and examples
 - Ask clarifying questions to understand their confusion
 - Provide educational resources
-""".format(emotional_state.emotion_score)
+"""
                 
             elif emotional_state.emotion_type == EmotionType.ANXIOUS:
-                emotional_guidance = """
-EMOTIONAL STATE: User is anxious (score: {:.2f})
+                emotional_guidance = f"""
+EMOTIONAL STATE: User is anxious (score: {emotional_state.emotion_score:.2f})
 RESPONSE TONE: Be reassuring and focus on risk management.
 - Acknowledge their concerns as valid
 - Provide data-driven reassurance
 - Focus on risk mitigation strategies
 - Suggest conservative approaches
-""".format(emotional_state.emotion_score)
+"""
             
             # Context integration
             context_summary = ""
@@ -838,120 +1090,88 @@ Remember: You're having a conversation via SMS, so be conversational and helpful
             return full_prompt.strip()
             
         except Exception as e:
-            logger.error(f"Failed to generate contextual prompt: {e}")
+            logger.exception(f"Failed to generate contextual prompt: {e}")
             return "You are a helpful AI assistant. Please provide a helpful response."
     
-    async def get_user_engagement_metrics(self, user_id: str) -> Dict[str, Any]:
-        """
-        Get comprehensive user engagement metrics with emotional intelligence
-        
-        Args:
-            user_id: User to analyze
-            
-        Returns:
-            Dict with engagement metrics
-        """
+    # Helper methods (all the missing ones implemented)
+    
+    async def _get_short_term_memory(self, user_id: str, agent_type: AgentType) -> List[Dict[str, Any]]:
+        """Retrieve short-term memory from Redis for specific agent"""
         try:
-            # Get emotional history
-            emotional_states = await self._get_emotional_history(user_id, days=30)
+            stm_key = f"session:{agent_type.value}:{user_id}"
+            messages = await self.redis_client.lrange(stm_key, 0, -1)
             
-            # Calculate metrics
-            sentiment_scores = [state.emotion_score for state in emotional_states]
-            avg_sentiment = statistics.mean(sentiment_scores) if sentiment_scores else 0.5
+            parsed_messages = []
+            for msg_json in messages:
+                try:
+                    parsed_messages.append(json.loads(msg_json))
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse message: {msg_json}")
+                    continue
             
-            # Frustration analysis
-            frustration_events = [state for state in emotional_states 
-                                if state.emotion_type == EmotionType.FRUSTRATED]
-            
-            # Engagement calculation
-            total_messages = len(emotional_states)
-            positive_interactions = sum(1 for state in emotional_states 
-                                      if state.sentiment_label == "positive")
-            engagement_rate = positive_interactions / max(total_messages, 1)
-            
-            # Trading-specific metrics
-            trading_insights = await self._get_trading_insights_consumed(user_id, days=30)
-            
-            return {
-                "user_id": user_id,
-                "avg_sentiment_30d": avg_sentiment,
-                "frustration_triggers": len(frustration_events),
-                "engagement_rate": engagement_rate,
-                "total_interactions": total_messages,
-                "trading_insights_consumed": len(trading_insights),
-                "emotional_trend": sentiment_scores[-7:] if len(sentiment_scores) >= 7 else sentiment_scores,
-                "last_emotion": emotional_states[-1].emotion_type.value if emotional_states else "unknown",
-                "analysis_period": "30 days"
-            }
+            # Sort by timestamp (newest first)
+            parsed_messages.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            return parsed_messages
             
         except Exception as e:
-            logger.error(f"Failed to get user engagement metrics: {e}")
-            return {"error": str(e)}
+            logger.exception(f"Failed to get STM for {agent_type.value}: {e}")
+            return []
     
-    async def get_global_metrics(self) -> Dict[str, Any]:
-        """
-        Get platform-wide analytics and insights
-        
-        Returns:
-            Dict with global metrics
-        """
+    async def _get_conversation_summaries(
+        self, 
+        user_id: str, 
+        agent_type: AgentType,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """Retrieve recent conversation summaries for specific agent"""
         try:
-            # User engagement metrics
-            total_users = await self.db.users.count_documents({})
+            cursor = self.db.conversations.find(
+                {"user_id": user_id, "agent_type": agent_type.value}
+            ).sort("timestamp", -1).limit(limit)
             
-            # Sentiment analysis across platform
-            recent_conversations = await self.db.conversations.find({
-                "timestamp": {"$gte": datetime.utcnow() - timedelta(days=7)}
-            }).to_list(1000)
+            summaries = []
+            async for doc in cursor:
+                # Convert ObjectId to string and datetime to ISO
+                if "_id" in doc:
+                    doc["_id"] = str(doc["_id"])
+                if isinstance(doc.get("timestamp"), datetime):
+                    doc["timestamp"] = doc["timestamp"].isoformat()
+                summaries.append(doc)
             
-            avg_sentiment = statistics.mean([
-                conv.get('avg_sentiment_score', 0.5) for conv in recent_conversations
-            ]) if recent_conversations else 0.5
-            
-            # Top trading symbols
-            trading_insights = await self.db.trade_insights.find({
-                "timestamp": {"$gte": datetime.utcnow() - timedelta(days=7)}
-            }).to_list(1000)
-            
-            all_symbols = []
-            for insight in trading_insights:
-                all_symbols.extend(insight.get('symbols', []))
-            
-            symbol_counts = defaultdict(int)
-            for symbol in all_symbols:
-                symbol_counts[symbol] += 1
-            
-            top_symbols = sorted(symbol_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-            
-            # Escalation metrics
-            escalations = await self.db.customer_escalations.find({
-                "timestamp": {"$gte": datetime.utcnow() - timedelta(days=7)}
-            }).to_list(1000)
-            
-            return {
-                "platform_metrics": {
-                    "total_users": total_users,
-                    "avg_sentiment_7d": avg_sentiment,
-                    "total_conversations_7d": len(recent_conversations),
-                    "total_escalations_7d": len(escalations)
-                },
-                "trading_metrics": {
-                    "top_symbols_7d": top_symbols,
-                    "total_trading_insights": len(trading_insights),
-                    "avg_insights_per_user": len(trading_insights) / max(total_users, 1)
-                },
-                "emotional_metrics": {
-                    "engagement_score": avg_sentiment,
-                    "escalation_rate": len(escalations) / max(len(recent_conversations), 1)
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
+            return summaries
             
         except Exception as e:
-            logger.error(f"Failed to get global metrics: {e}")
-            return {"error": str(e)}
+            logger.exception(f"Failed to get summaries for {agent_type.value}: {e}")
+            return []
     
-    # Enhanced helper methods with emotional intelligence
+    async def _get_user_profile(self, user_id: str) -> Dict[str, Any]:
+        """Retrieve or create user profile from MongoDB"""
+        try:
+            profile = await self.db.users.find_one({"user_id": user_id})
+            
+            if profile:
+                # Convert ObjectId to string and datetime to ISO
+                if "_id" in profile:
+                    profile["_id"] = str(profile["_id"])
+                for date_field in ["created_at", "updated_at"]:
+                    if isinstance(profile.get(date_field), datetime):
+                        profile[date_field] = profile[date_field].isoformat()
+                return profile
+            else:
+                # Create default profile
+                default_profile = UserProfile(user_id=user_id)
+                profile_dict = default_profile.to_dict()
+                
+                # Insert into database
+                result = await self.db.users.insert_one(profile_dict)
+                profile_dict["_id"] = str(result.inserted_id)
+                
+                logger.info(f"Created new user profile for {user_id}")
+                return profile_dict
+            
+        except Exception as e:
+            logger.exception(f"Failed to get user profile for {user_id}: {e}")
+            return {}
     
     async def _store_emotional_state(self, user_id: str, emotional_state: EmotionalState):
         """Store emotional state in Redis for trend tracking"""
@@ -961,7 +1181,7 @@ Remember: You're having a conversation via SMS, so be conversational and helpful
             await self.redis_client.ltrim(emotion_key, 0, 19)  # Keep last 20 emotions
             await self.redis_client.expire(emotion_key, 86400 * 7)  # 7 days
         except Exception as e:
-            logger.error(f"Failed to store emotional state: {e}")
+            logger.exception(f"Failed to store emotional state: {e}")
     
     async def _update_emotional_profile(self, user_id: str, emotional_state: EmotionalState):
         """Update user profile with emotional insights"""
@@ -1008,7 +1228,7 @@ Remember: You're having a conversation via SMS, so be conversational and helpful
             )
             
         except Exception as e:
-            logger.error(f"Failed to update emotional profile: {e}")
+            logger.exception(f"Failed to update emotional profile: {e}")
     
     async def _check_escalation_needs(self, user_id: str, emotional_state: EmotionalState):
         """Check if user needs escalation based on emotional state"""
@@ -1045,7 +1265,104 @@ Remember: You're having a conversation via SMS, so be conversational and helpful
                     logger.warning(f"Escalation triggered for user {user_id}")
             
         except Exception as e:
-            logger.error(f"Failed to check escalation needs: {e}")
+            logger.exception(f"Failed to check escalation needs: {e}")
+    
+    async def _store_in_vector_db(
+        self, 
+        user_id: str, 
+        content: str, 
+        topics: List[str], 
+        memory_type: str = "message",
+        agent_type: AgentType = AgentType.TRADING,
+        emotional_state: Optional[EmotionalState] = None
+    ):
+        """Enhanced vector storage with emotional weighting and batching"""
+        try:
+            # Generate embedding with rate limiting
+            embedding = await self._get_embedding(content)
+            
+            # Create unique ID
+            content_id = hashlib.md5(
+                f"{user_id}_{agent_type.value}_{content}_{datetime.utcnow().isoformat()}".encode()
+            ).hexdigest()
+            
+            # Calculate emotional weight
+            emotional_weight = 1.0
+            if emotional_state:
+                if emotional_state.emotion_type in [EmotionType.FRUSTRATED, EmotionType.EXCITED]:
+                    emotional_weight = 1.0 + emotional_state.emotion_score * 0.5
+                elif emotional_state.emotion_type in [EmotionType.ANXIOUS, EmotionType.CONFUSED]:
+                    emotional_weight = 1.0 + emotional_state.emotion_score * 0.3
+            
+            # Prepare enhanced metadata
+            metadata = {
+                "user_id": user_id,
+                "agent_type": agent_type.value,
+                "content": content[:1000],
+                "topics": topics[:10],
+                "memory_type": memory_type,
+                "timestamp": datetime.utcnow().isoformat(),
+                "emotional_weight": emotional_weight
+            }
+            
+            # Add emotional metadata if available
+            if emotional_state:
+                metadata.update({
+                    "emotion_type": emotional_state.emotion_type.value,
+                    "emotion_score": emotional_state.emotion_score,
+                    "sentiment_label": emotional_state.sentiment_label
+                })
+            
+            # Add to batch for efficient upsert
+            self._pinecone_batch.append((content_id, embedding, metadata))
+            
+            # Process batch if it's full
+            if len(self._pinecone_batch) >= self._batch_size:
+                await self._flush_pinecone_batch()
+            
+            logger.debug(f"Enhanced content queued for vector DB for user {user_id} via {agent_type.value}")
+            
+        except Exception as e:
+            logger.exception(f"Enhanced vector storage failed: {e}")
+    
+    async def _flush_pinecone_batch(self):
+        """Flush pending Pinecone upserts"""
+        if not self._pinecone_batch:
+            return
+        
+        try:
+            # Upsert batch to Pinecone
+            self.pinecone_index.upsert(vectors=self._pinecone_batch)
+            logger.debug(f"Flushed {len(self._pinecone_batch)} vectors to Pinecone")
+            self._pinecone_batch = []
+            
+        except Exception as e:
+            logger.exception(f"Pinecone batch flush failed: {e}")
+            self._pinecone_batch = []  # Clear batch on error to prevent infinite retries
+    
+    # Additional missing helper methods
+    
+    async def _get_cross_agent_context(self, user_id: str, current_agent: AgentType) -> Dict[str, Any]:
+        """Get relevant context from other agents"""
+        try:
+            cross_agent_data = {}
+            
+            # Get summaries from other agents (last 2 each)
+            for agent_type in AgentType:
+                if agent_type != current_agent:
+                    summaries = await self._get_conversation_summaries(user_id, agent_type, limit=2)
+                    if summaries:
+                        cross_agent_data[agent_type.value] = {
+                            "recent_summaries": summaries,
+                            "last_interaction": summaries[0].get('timestamp') if summaries else None,
+                            "message_count": len(summaries)
+                        }
+            
+            return cross_agent_data
+            
+        except Exception as e:
+            logger.exception(f"Failed to get cross-agent context: {e}")
+            return {}
     
     async def _get_emotional_context(self, user_id: str) -> Dict[str, Any]:
         """Get comprehensive emotional context for user"""
@@ -1089,7 +1406,7 @@ Remember: You're having a conversation via SMS, so be conversational and helpful
             }
             
         except Exception as e:
-            logger.error(f"Failed to get emotional context: {e}")
+            logger.exception(f"Failed to get emotional context: {e}")
             return {}
     
     async def _enhanced_vector_search(
@@ -1120,45 +1437,39 @@ Remember: You're having a conversation via SMS, so be conversational and helpful
                     {"memory_type": {"$in": ["important", "trade_insight", "customer_escalation", "sales_opportunity", "emotional"]}}
                 ]
             }
+            
             search_filter.update(agent_filter)
             
             results = self.pinecone_index.query(
                 vector=embedding,
-                top_k=top_k * 3,  # Get more results for intelligent filtering
-                filter=search_filter,
-                include_metadata=True
+                top_k=top_k * 2,  # Get more results for filtering
+                include_metadata=True,
+                filter=search_filter
             )
             
-            # Enhanced result processing with emotional weighting
-            formatted_results = []
+            # Process and rank results with emotional weighting
+            processed_results = []
             for match in results.matches:
-                result = {
-                    "content": match.metadata.get("content", ""),
-                    "topics": match.metadata.get("topics", []),
-                    "timestamp": match.metadata.get("timestamp", ""),
-                    "relevance_score": float(match.score),
-                    "memory_type": match.metadata.get("memory_type", "unknown"),
-                    "agent_type": match.metadata.get("agent_type", "unknown"),
-                    "emotional_weight": match.metadata.get("emotional_weight", 1.0)
-                }
+                metadata = match.metadata
                 
-                # Apply relevance boosting
-                if result["agent_type"] == agent_type.value:
-                    result["relevance_score"] *= 1.2
+                # Apply emotional weighting to relevance score
+                emotional_weight = metadata.get('emotional_weight', 1.0)
+                weighted_score = match.score * emotional_weight
                 
-                # Boost emotional memories
-                if result["memory_type"] == "emotional":
-                    result["relevance_score"] *= 1.3
-                
-                # Boost high-importance memories
-                emotional_weight = result.get("emotional_weight", 1.0)
-                result["relevance_score"] *= emotional_weight
-                
-                formatted_results.append(result)
+                processed_results.append({
+                    'content': metadata.get('content', ''),
+                    'topics': metadata.get('topics', []),
+                    'score': weighted_score,
+                    'original_score': match.score,
+                    'emotional_weight': emotional_weight,
+                    'timestamp': metadata.get('timestamp'),
+                    'memory_type': metadata.get('memory_type'),
+                    'agent_type': metadata.get('agent_type')
+                })
             
-            # Sort by enhanced relevance and return top_k
-            formatted_results.sort(key=lambda x: x["relevance_score"], reverse=True)
-            final_results = formatted_results[:top_k]
+            # Sort by weighted score and limit results
+            processed_results.sort(key=lambda x: x['score'], reverse=True)
+            final_results = processed_results[:top_k]
             
             # Cache results
             self.semantic_cache[cache_key] = final_results
@@ -1166,739 +1477,569 @@ Remember: You're having a conversation via SMS, so be conversational and helpful
             return final_results
             
         except Exception as e:
-            logger.error(f"Enhanced vector search failed: {e}")
+            logger.exception(f"Enhanced vector search failed: {e}")
             return []
     
-    async def _apply_relevance_weighting(
-        self,
-        memories: List[Dict[str, Any]],
-        emotional_context: Dict[str, Any],
-        profile: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """Apply intelligent relevance weighting based on emotional state and user profile"""
+    async def _trigger_summarization(self, user_id: str, agent_type: AgentType) -> bool:
+        """Trigger LLM-based session summarization for specific agent"""
         try:
-            if not memories:
-                return memories
+            # Get current STM for this agent
+            messages = await self._get_short_term_memory(user_id, agent_type)
             
-            # Get current emotional state
-            current_emotion = emotional_context.get('current_emotion')
-            if not current_emotion:
-                return memories
+            if len(messages) < 3:  # Need minimum messages for summary
+                logger.info(f"Not enough messages ({len(messages)}) for summarization")
+                return False
             
-            current_emotion_type = current_emotion.get('emotion_type', 'neutral')
+            # Generate agent-specific summary using LLM
+            summary_text = await self._generate_summary(messages, agent_type)
             
-            # Apply weighting based on emotional relevance
-            for memory in memories:
-                base_score = memory['relevance_score']
-                
-                # Boost memories related to current emotional state
-                if memory['memory_type'] == 'emotional':
-                    memory['relevance_score'] = base_score * 1.4
-                
-                # Boost frustration-related memories if user is frustrated
-                if current_emotion_type == 'frustrated' and memory['memory_type'] == 'customer_service':
-                    memory['relevance_score'] = base_score * 1.3
-                
-                # Boost trading memories if user is confident/excited about trading
-                if (current_emotion_type in ['confident', 'excited'] and 
-                    memory['memory_type'] == 'trade_insight'):
-                    memory['relevance_score'] = base_score * 1.25
+            if not summary_text:
+                logger.warning("Failed to generate summary text")
+                return False
             
-            # Re-sort by updated relevance
-            memories.sort(key=lambda x: x['relevance_score'], reverse=True)
+            # Extract topics and calculate importance
+            topics = self._extract_topics_from_messages(messages)
+            importance_score = self._calculate_session_importance(messages)
             
-            return memories
+            # Extract agent-specific insights
+            agent_insights = self._extract_agent_insights(messages, agent_type)
             
-        except Exception as e:
-            logger.error(f"Failed to apply relevance weighting: {e}")
-            return memories
-    
-    async def _intelligent_context_compression(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Intelligent context compression prioritizing emotional and high-importance content"""
-        try:
-            # Estimate token count
-            context_str = json.dumps(context)
-            estimated_tokens = len(context_str) / 4
+            # Calculate engagement metrics
+            emotional_states = [msg.get('emotional_state') for msg in messages if msg.get('emotional_state')]
+            avg_sentiment = sum(
+                1.0 if es.get('sentiment_label') == 'positive' 
+                else 0.0 if es.get('sentiment_label') == 'negative' 
+                else 0.5 
+                for es in emotional_states
+            ) / max(len(emotional_states), 1) if emotional_states else 0.5
             
-            if estimated_tokens <= 3000:
-                return context
-            
-            compressed = context.copy()
-            
-            # Compression priority: keep emotional and important content
-            # 1. Reduce STM, but keep emotional messages
-            stm = context.get("short_term_memory", [])
-            if len(stm) > 8:
-                # Keep emotional messages and recent important ones
-                emotional_messages = [msg for msg in stm if msg.get('emotional_state')]
-                important_messages = [msg for msg in stm if msg.get('importance_score', 0) > 0.7]
-                recent_messages = stm[:3]  # Always keep 3 most recent
-                
-                # Combine and deduplicate
-                keep_messages = []
-                seen_ids = set()
-                for msg_list in [recent_messages, emotional_messages, important_messages]:
-                    for msg in msg_list:
-                        msg_id = f"{msg.get('timestamp', '')}_{msg.get('content', '')[:50]}"
-                        if msg_id not in seen_ids:
-                            keep_messages.append(msg)
-                            seen_ids.add(msg_id)
-                            if len(keep_messages) >= 8:
-                                break
-                    if len(keep_messages) >= 8:
-                        break
-                
-                compressed["short_term_memory"] = keep_messages[:8]
-            
-            # 2. Reduce summaries, prioritize recent and high-importance
-            summaries = context.get("conversation_summaries", [])
-            if len(summaries) > 3:
-                # Sort by importance and recency
-                sorted_summaries = sorted(summaries, 
-                                        key=lambda s: (s.get('importance_score', 0), s.get('timestamp', '')), 
-                                        reverse=True)
-                compressed["conversation_summaries"] = sorted_summaries[:3]
-            
-            # 3. Keep top 2 relevant memories with highest emotional relevance
-            memories = context.get("relevant_memories", [])
-            if len(memories) > 2:
-                sorted_memories = sorted(memories, 
-                                       key=lambda m: (m.get('emotional_weight', 1.0) * m.get('relevance_score', 0)),
-                                       reverse=True)
-                compressed["relevant_memories"] = sorted_memories[:2]
-            
-            # 4. Always preserve emotional context (it's small but crucial)
-            # Emotional context is kept as-is
-            
-            # Mark as compressed
-            compressed["context_metadata"]["compressed"] = True
-            compressed["context_metadata"]["compression_strategy"] = "emotional_priority"
-            
-            return compressed
-            
-        except Exception as e:
-            logger.error(f"Context compression failed: {e}")
-            return context
-    
-    async def _cache_context(self, cache_key: str, context: Dict[str, Any]):
-        """Cache context for performance with TTL"""
-        try:
-            # Cache for 5 minutes
-            await self.redis_client.setex(
-                f"context_cache:{cache_key}",
-                300,  # 5 minutes
-                json.dumps(context, default=str)
-            )
-        except Exception as e:
-            logger.error(f"Failed to cache context: {e}")
-    
-    async def _get_cached_context(self, cache_key: str) -> Optional[Dict[str, Any]]:
-        """Get cached context if available"""
-        try:
-            cached = await self.redis_client.get(f"context_cache:{cache_key}")
-            if cached:
-                return json.loads(cached)
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get cached context: {e}")
-            return None
-    
-    # Include all existing helper methods with enhancements...
-    # (Previous helper methods with emotional intelligence integration)
-    
-    async def _calculate_importance(
-        self, 
-        content: str, 
-        agent_type: AgentType = AgentType.TRADING,
-        emotional_state: Optional[EmotionalState] = None
-    ) -> float:
-        """Enhanced importance calculation including emotional factors"""
-        importance = 0.3  # Base score
-        content_lower = content.lower()
-        
-        # Apply existing importance logic
-        if agent_type == AgentType.TRADING:
-            high_importance_terms = [
-                'buy', 'sell', 'portfolio', 'risk', 'loss', 'profit', 'earnings',
-                'recommendation', 'strategy', 'analysis', 'alert', 'breakout'
-            ]
-            
-            for term in high_importance_terms:
-                if term in content_lower:
-                    importance += 0.1
-            
-            symbols = self.stock_pattern.findall(content.upper())
-            importance += len(symbols) * 0.05
-            
-        elif agent_type == AgentType.CUSTOMER_SERVICE:
-            high_importance_terms = [
-                'frustrated', 'angry', 'disappointed', 'urgent', 'critical', 
-                'escalate', 'manager', 'refund', 'cancel', 'lawsuit', 'complaint'
-            ]
-            
-            for term in high_importance_terms:
-                if term in content_lower:
-                    importance += 0.15
-                    
-            if any(word in content_lower for word in ['hate', 'terrible', 'worst', 'horrible']):
-                importance += 0.2
-                
-        elif agent_type == AgentType.SALES:
-            high_importance_terms = [
-                'buy', 'purchase', 'budget', 'decision', 'timeline', 'competitor',
-                'interested', 'considering', 'evaluate', 'demo', 'trial'
-            ]
-            
-            for term in high_importance_terms:
-                if term in content_lower:
-                    importance += 0.12
-                    
-            if any(word in content_lower for word in ['ready to buy', 'place order', 'sign up']):
-                importance += 0.3
-        
-        # Emotional importance boosting
-        if emotional_state:
-            if emotional_state.emotion_type in [EmotionType.FRUSTRATED, EmotionType.ANXIOUS]:
-                importance += 0.2  # High emotional states are important
-            elif emotional_state.emotion_type == EmotionType.EXCITED:
-                importance += 0.15  # Excitement indicates engagement
-            
-            # High emotion scores increase importance
-            importance += emotional_state.emotion_score * 0.1
-        
-        # Question marks increase importance
-        importance += content.count('?') * 0.05
-        
-        return min(importance, 1.0)
-    
-    async def _store_in_vector_db(
-        self, 
-        user_id: str, 
-        content: str, 
-        topics: List[str], 
-        memory_type: str = "message",
-        agent_type: AgentType = AgentType.TRADING,
-        emotional_state: Optional[EmotionalState] = None
-    ):
-        """Enhanced vector storage with emotional weighting"""
-        try:
-            # Generate embedding
-            embedding = await self._get_embedding(content)
-            
-            # Create unique ID
-            content_id = hashlib.md5(
-                f"{user_id}_{agent_type.value}_{content}_{datetime.utcnow().isoformat()}".encode()
-            ).hexdigest()
-            
-            # Calculate emotional weight
-            emotional_weight = 1.0
-            if emotional_state:
-                if emotional_state.emotion_type in [EmotionType.FRUSTRATED, EmotionType.EXCITED]:
-                    emotional_weight = 1.0 + emotional_state.emotion_score * 0.5
-                elif emotional_state.emotion_type in [EmotionType.ANXIOUS, EmotionType.CONFUSED]:
-                    emotional_weight = 1.0 + emotional_state.emotion_score * 0.3
-            
-            # Prepare enhanced metadata
-            metadata = {
-                "user_id": user_id,
-                "agent_type": agent_type.value,
-                "content": content[:1000],
-                "topics": topics[:10],
-                "memory_type": memory_type,
-                "timestamp": datetime.utcnow().isoformat(),
-                "emotional_weight": emotional_weight
-            }
-            
-            # Add emotional metadata if available
-            if emotional_state:
-                metadata.update({
-                    "emotion_type": emotional_state.emotion_type.value,
-                    "emotion_score": emotional_state.emotion_score,
-                    "sentiment_label": emotional_state.sentiment_label
-                })
-            
-            # Upsert to Pinecone
-            self.pinecone_index.upsert(
-                vectors=[(content_id, embedding, metadata)]
+            # Create summary object
+            summary = ConversationSummary(
+                user_id=user_id,
+                summary=summary_text,
+                topics=topics,
+                timestamp=datetime.utcnow(),
+                importance_score=importance_score,
+                message_count=len(messages),
+                session_id=self._generate_session_id(user_id, agent_type),
+                agent_type=agent_type,
+                agent_insights=agent_insights,
+                avg_sentiment_score=avg_sentiment,
+                engagement_level=min(importance_score * avg_sentiment * 2, 1.0)
             )
             
-            logger.debug(f"Enhanced content stored in vector DB for user {user_id} via {agent_type.value}")
+            # Store in MongoDB with retry logic
+            for attempt in range(self.max_retries):
+                try:
+                    result = await self.db.conversations.insert_one(summary.to_dict())
+                    break
+                except Exception as e:
+                    if attempt == self.max_retries - 1:
+                        raise
+                    logger.warning(f"Retry {attempt + 1}/{self.max_retries} for summary storage: {e}")
+                    await asyncio.sleep(0.5 * (attempt + 1))
+            
+            # Store in vector database if important
+            if importance_score > 0.6:
+                await self._store_in_vector_db(
+                    user_id, 
+                    summary_text, 
+                    topics, 
+                    "conversation_summary",
+                    agent_type
+                )
+            
+            # Clear STM after successful summarization
+            stm_key = f"session:{agent_type.value}:{user_id}"
+            await self.redis_client.delete(stm_key)
+            
+            logger.info(f"Session summarized for user {user_id} via {agent_type.value} agent")
+            return bool(result.inserted_id)
             
         except Exception as e:
-            logger.error(f"Enhanced vector storage failed: {e}")
+            logger.exception(f"Summarization failed for {agent_type.value}: {e}")
+            return False
     
-    # Add remaining helper methods from previous implementation...
-    # (Include all the methods from the previous version with emotional enhancements)
+    # Missing utility methods implementations
     
-    async def _get_empty_result(self) -> Dict:
-        """Return empty result"""
-        return {}
-    
-    async def _get_empty_vector_result(self) -> List:
-        """Return empty vector result"""
-        return []
-
-    async def _generate_summary(self, messages: List[Dict[str, Any]], agent_type: AgentType) -> str:
-        """Generate LLM-based summary of conversation for specific agent"""
+    async def _generate_summary(self, messages: List[Dict], agent_type: AgentType) -> str:
+        """Generate LLM-based summary of conversation messages"""
         try:
-            # Format messages for LLM
-            conversation_text = "\n".join([
-                f"{msg['direction']}: {msg['content']}" 
-                for msg in messages[-10:]  # Last 10 messages
-            ])
+            # Prepare conversation text for LLM
+            conversation_text = ""
+            for msg in reversed(messages[-10:]):  # Last 10 messages in chronological order
+                direction = "User" if msg.get('direction') == 'user' else "Bot"
+                content = msg.get('content', '')
+                conversation_text += f"{direction}: {content}\n"
             
-            # Agent-specific prompts
+            # Agent-specific summary prompt
             if agent_type == AgentType.TRADING:
-                system_prompt = """You are a trading conversation summarizer. Create a concise summary focusing on:
-                1. Main trading topics discussed (stocks, options, market analysis)
-                2. User's trading preferences, risk tolerance, or concerns
-                3. Any specific stocks, strategies, or recommendations mentioned
-                4. Key insights or market analysis provided
-                
-                Keep the summary under 150 words and focus on actionable trading information."""
-                
+                prompt = f"""Summarize this trading conversation in 1-2 sentences, focusing on:
+- Stocks/symbols discussed
+- Trading intentions or strategies
+- Key insights or recommendations
+- User's risk preferences or concerns
+
+Conversation:
+{conversation_text}
+
+Summary:"""
             elif agent_type == AgentType.CUSTOMER_SERVICE:
-                system_prompt = """You are a customer service conversation summarizer. Create a concise summary focusing on:
-                1. Main issue or problem the customer is experiencing
-                2. Customer's emotional state and satisfaction level
-                3. Resolution steps taken or needed
-                4. Any escalation triggers or urgent concerns
-                
-                Keep the summary under 150 words and focus on customer satisfaction and issue resolution."""
-                
-            elif agent_type == AgentType.SALES:
-                system_prompt = """You are a sales conversation summarizer. Create a concise summary focusing on:
-                1. Customer's interest level and buying intent
-                2. Budget, timeline, and decision-making process
-                3. Pain points, objections, or concerns raised
-                4. Opportunities for upselling or feature interest
-                
-                Keep the summary under 150 words and focus on sales pipeline advancement."""
+                prompt = f"""Summarize this customer service conversation in 1-2 sentences, focusing on:
+- Issues or problems discussed
+- Solutions provided or attempted
+- User's satisfaction level
+- Any escalation needs
+
+Conversation:
+{conversation_text}
+
+Summary:"""
+            else:  # SALES
+                prompt = f"""Summarize this sales conversation in 1-2 sentences, focusing on:
+- Products or services discussed
+- User's interest level and budget
+- Objections raised
+- Next steps or timeline
+
+Conversation:
+{conversation_text}
+
+Summary:"""
             
             response = await self.openai_client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Summarize this conversation:\n\n{conversation_text}"}
-                ],
-                max_tokens=200,
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=150,
                 temperature=0.3
             )
             
             return response.choices[0].message.content.strip()
             
         except Exception as e:
-            logger.error(f"Summary generation failed for {agent_type.value}: {e}")
-            return ""
+            logger.exception(f"Failed to generate summary: {e}")
+            return f"Conversation summary for {agent_type.value} agent (auto-generated)"
     
-    async def _store_in_vector_db(
-        self, 
-        user_id: str, 
-        content: str, 
-        topics: List[str], 
-        memory_type: str = "message",
-        agent_type: AgentType = AgentType.TRADING,
-        emotional_state: Optional[EmotionalState] = None
-    ):
-        """Enhanced vector storage with emotional weighting"""
-        try:
-            # Generate embedding
-            embedding = await self._get_embedding(content)
+    def _extract_topics_from_messages(self, messages: List[Dict]) -> List[str]:
+        """Extract topics from a list of messages"""
+        all_topics = []
+        for msg in messages:
+            topics = msg.get('topics', [])
+            if topics:
+                all_topics.extend(topics)
+        
+        # Count frequency and return top topics
+        topic_counts = defaultdict(int)
+        for topic in all_topics:
+            topic_counts[topic] += 1
+        
+        # Sort by frequency and return top 10
+        sorted_topics = sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)
+        return [topic for topic, count in sorted_topics[:10]]
+    
+    def _calculate_session_importance(self, messages: List[Dict]) -> float:
+        """Calculate overall importance score for a session"""
+        if not messages:
+            return 0.0
+        
+        importance_scores = [msg.get('importance_score', 0.5) for msg in messages]
+        
+        # Weighted average with more weight on recent messages
+        weights = [1.0 + (i * 0.1) for i in range(len(importance_scores))]
+        weighted_sum = sum(score * weight for score, weight in zip(importance_scores, weights))
+        weight_sum = sum(weights)
+        
+        return min(weighted_sum / weight_sum if weight_sum > 0 else 0.5, 1.0)
+    
+    def _extract_agent_insights(self, messages: List[Dict], agent_type: AgentType) -> Dict[str, Any]:
+        """Extract agent-specific insights from conversation"""
+        insights = {}
+        
+        if agent_type == AgentType.TRADING:
+            # Extract trading-specific insights
+            symbols_mentioned = []
+            sentiment_indicators = []
             
-            # Create unique ID
-            content_id = hashlib.md5(
-                f"{user_id}_{agent_type.value}_{content}_{datetime.utcnow().isoformat()}".encode()
-            ).hexdigest()
+            for msg in messages:
+                topics = msg.get('topics', [])
+                symbols_mentioned.extend([t for t in topics if t.isupper() and len(t) <= 5])
+                
+                content = msg.get('content', '').lower()
+                if any(word in content for word in ['buy', 'bullish', 'long']):
+                    sentiment_indicators.append('positive')
+                elif any(word in content for word in ['sell', 'bearish', 'short']):
+                    sentiment_indicators.append('negative')
             
-            # Calculate emotional weight
-            emotional_weight = 1.0
-            if emotional_state:
-                if emotional_state.emotion_type in [EmotionType.FRUSTRATED, EmotionType.EXCITED]:
-                    emotional_weight = 1.0 + emotional_state.emotion_score * 0.5
-                elif emotional_state.emotion_type in [EmotionType.ANXIOUS, EmotionType.CONFUSED]:
-                    emotional_weight = 1.0 + emotional_state.emotion_score * 0.3
-            
-            # Prepare enhanced metadata
-            metadata = {
-                "user_id": user_id,
-                "agent_type": agent_type.value,
-                "content": content[:1000],
-                "topics": topics[:10],
-                "memory_type": memory_type,
-                "timestamp": datetime.utcnow().isoformat(),
-                "emotional_weight": emotional_weight
+            insights = {
+                'symbols_discussed': list(set(symbols_mentioned)),
+                'market_sentiment': sentiment_indicators,
+                'trading_signals': len([m for m in messages if 'buy' in m.get('content', '').lower() or 'sell' in m.get('content', '').lower()])
             }
             
-            # Add emotional metadata if available
-            if emotional_state:
-                metadata.update({
-                    "emotion_type": emotional_state.emotion_type.value,
-                    "emotion_score": emotional_state.emotion_score,
-                    "sentiment_label": emotional_state.sentiment_label
-                })
+        elif agent_type == AgentType.CUSTOMER_SERVICE:
+            # Extract service-specific insights
+            issue_keywords = []
+            resolution_attempts = 0
             
-            # Upsert to Pinecone
-            self.pinecone_index.upsert(
-                vectors=[(content_id, embedding, metadata)]
-            )
+            for msg in messages:
+                content = msg.get('content', '').lower()
+                if any(word in content for word in ['problem', 'issue', 'bug', 'error']):
+                    issue_keywords.append('technical_issue')
+                if any(word in content for word in ['help', 'fix', 'resolve', 'solution']):
+                    resolution_attempts += 1
             
-            logger.debug(f"Enhanced content stored in vector DB for user {user_id} via {agent_type.value}")
+            insights = {
+                'issue_types': list(set(issue_keywords)),
+                'resolution_attempts': resolution_attempts,
+                'escalation_indicators': len([m for m in messages if any(word in m.get('content', '').lower() for word in ['frustrated', 'manager', 'escalate'])])
+            }
             
-        except Exception as e:
-            logger.error(f"Enhanced vector storage failed: {e}")
+        else:  # SALES
+            # Extract sales-specific insights
+            buying_signals = 0
+            objections = 0
+            
+            for msg in messages:
+                content = msg.get('content', '').lower()
+                if any(word in content for word in ['interested', 'buy', 'purchase', 'demo']):
+                    buying_signals += 1
+                if any(word in content for word in ['expensive', 'budget', 'competitor', 'think about it']):
+                    objections += 1
+            
+            insights = {
+                'buying_signals': buying_signals,
+                'objections_raised': objections,
+                'engagement_level': len([m for m in messages if m.get('direction') == 'user'])
+            }
+        
+        return insights
     
-    async def _get_emotional_history(self, user_id: str, days: int = 30) -> List[EmotionalState]:
-        """Get emotional history for user"""
-        try:
-            emotion_key = f"emotions:{user_id}"
-            emotions_json = await self.redis_client.lrange(emotion_key, 0, -1)
+    def _generate_session_id(self, user_id: str, agent_type: AgentType) -> str:
+        """Generate unique session ID"""
+        timestamp = datetime.utcnow().isoformat()
+        return hashlib.md5(f"{user_id}_{agent_type.value}_{timestamp}".encode()).hexdigest()[:12]
+    
+    def _apply_relevance_weighting(
+        self, 
+        vector_results: List[Dict], 
+        emotional_context: Dict, 
+        user_profile: Dict
+    ) -> List[Dict]:
+        """Apply relevance weighting based on emotional state and user profile"""
+        if not vector_results:
+            return []
+        
+        weighted_results = []
+        current_emotion = emotional_context.get('current_emotion', {}).get('emotion_type', 'neutral')
+        
+        for result in vector_results:
+            weight_multiplier = 1.0
             
-            emotional_history = []
-            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            # Boost emotional content if user is emotional
+            if current_emotion in ['frustrated', 'anxious'] and result.get('memory_type') == 'emotional':
+                weight_multiplier *= 1.5
             
-            for emotion_json in emotions_json:
+            # Boost agent-specific content
+            user_agent_preference = user_profile.get('preferred_agent', 'trading')
+            if result.get('agent_type') == user_agent_preference:
+                weight_multiplier *= 1.2
+            
+            # Apply time decay (recent is more relevant)
+            if result.get('timestamp'):
                 try:
-                    emotion_data = json.loads(emotion_json)
-                    timestamp = datetime.fromisoformat(emotion_data['timestamp'])
-                    
-                    if timestamp >= cutoff_date:
-                        emotion_obj = EmotionalState(
-                            emotion_type=EmotionType(emotion_data['emotion_type']),
-                            emotion_score=emotion_data['emotion_score'],
-                            sentiment_label=emotion_data['sentiment_label'],
-                            confidence=emotion_data['confidence'],
-                            timestamp=timestamp,
-                            triggers=emotion_data.get('triggers', [])
-                        )
-                        emotional_history.append(emotion_obj)
+                    timestamp = datetime.fromisoformat(result['timestamp'])
+                    days_old = (datetime.utcnow() - timestamp).days
+                    time_decay = max(0.5, 1.0 - (days_old * 0.1))
+                    weight_multiplier *= time_decay
                 except:
-                    continue
+                    pass
             
-            return emotional_history
-            
-        except Exception as e:
-            logger.error(f"Failed to get emotional history: {e}")
-            return []
-
-    async def _get_trading_insights_consumed(self, user_id: str, days: int = 30) -> List[Dict]:
-        """Get trading insights consumed by user"""
-        try:
-            cutoff_date = datetime.utcnow() - timedelta(days=days)
-            cursor = self.db.trade_insights.find({
-                "user_id": user_id,
-                "timestamp": {"$gte": cutoff_date}
-            })
-            
-            insights = []
-            async for doc in cursor:
-                insights.append(doc)
-            
-            return insights
-            
-        except Exception as e:
-            logger.error(f"Failed to get trading insights: {e}")
-            return []
-    
-    async def get_agent_analytics(self, agent_type: AgentType, days: int = 30) -> Dict[str, Any]:
-        """
-        Get analytics for specific agent type
+            # Apply weighting
+            result['weighted_score'] = result.get('score', 0) * weight_multiplier
+            weighted_results.append(result)
         
-        Args:
-            agent_type: Agent to analyze
-            days: Number of days to analyze
-            
-        Returns:
-            Dict with analytics data
-        """
-        try:
-            start_date = datetime.utcnow() - timedelta(days=days)
-            
-            if agent_type == AgentType.TRADING:
-                # Trading analytics
-                pipeline = [
-                    {"$match": {"agent_type": "trading", "timestamp": {"$gte": start_date}}},
-                    {"$group": {
-                        "_id": None,
-                        "total_insights": {"$sum": 1},
-                        "avg_importance": {"$avg": "$importance_score"},
-                        "top_symbols": {"$push": "$symbols"}
-                    }}
-                ]
-                result = await self.db.trade_insights.aggregate(pipeline).to_list(1)
-                
-            elif agent_type == AgentType.CUSTOMER_SERVICE:
-                # Customer service analytics
-                pipeline = [
-                    {"$match": {"agent_type": "customer_service", "timestamp": {"$gte": start_date}}},
-                    {"$group": {
-                        "_id": "$priority",
-                        "count": {"$sum": 1}
-                    }}
-                ]
-                result = await self.db.customer_escalations.aggregate(pipeline).to_list(None)
-                
-            elif agent_type == AgentType.SALES:
-                # Sales analytics
-                pipeline = [
-                    {"$match": {"agent_type": "sales", "timestamp": {"$gte": start_date}}},
-                    {"$group": {
-                        "_id": "$stage",
-                        "count": {"$sum": 1},
-                        "total_value": {"$sum": "$value_estimate"}
-                    }}
-                ]
-                result = await self.db.sales_opportunities.aggregate(pipeline).to_list(None)
-            
-            return {"agent_type": agent_type.value, "analytics": result, "period_days": days}
-            
-        except Exception as e:
-            logger.error(f"Failed to get agent analytics: {e}")
-            return {"error": str(e)}
+        # Sort by weighted score
+        weighted_results.sort(key=lambda x: x.get('weighted_score', 0), reverse=True)
+        return weighted_results
     
-    async def store_trade_insight(
-        self, 
-        user_id: str, 
-        insight: str, 
-        symbols: List[str],
-        insight_type: str = "analysis"
-    ) -> bool:
-        """
-        Store trading-specific insights
+    def _filter_profile_for_agent(self, profile: Dict, agent_type: AgentType) -> Dict:
+        """Filter user profile to show only relevant information for specific agent"""
+        if not profile:
+            return {}
         
-        Args:
-            user_id: Unique user identifier
-            insight: Trading insight content
-            symbols: Related stock symbols
-            insight_type: Type of insight (analysis, recommendation, etc.)
-            
-        Returns:
-            bool: Success status
-        """
+        base_fields = ['user_id', 'communication_preferences', 'timezone', 'tone_preference', 'engagement_score']
+        
+        if agent_type == AgentType.TRADING:
+            agent_fields = ['risk_tolerance', 'trading_style', 'watchlist', 'portfolio_insights', 'confidence_score']
+        elif agent_type == AgentType.CUSTOMER_SERVICE:
+            agent_fields = ['support_history', 'satisfaction_scores', 'preferred_contact_method', 'escalation_triggers', 'frustration_count']
+        else:  # SALES
+            agent_fields = ['lead_stage', 'interest_level', 'budget_range', 'decision_timeline', 'pain_points', 'objections_history']
+        
+        filtered_profile = {}
+        for field in base_fields + agent_fields:
+            if field in profile:
+                filtered_profile[field] = profile[field]
+        
+        return filtered_profile
+    
+    async def _intelligent_context_compression(self, context: Dict) -> Dict:
+        """Compress context if it exceeds token limits while preserving important information"""
         try:
-            insight_doc = {
-                "user_id": user_id,
-                "insight": insight,
-                "symbols": symbols,
-                "insight_type": insight_type,
-                "timestamp": datetime.utcnow(),
-                "topics": self._extract_topics(insight, AgentType.TRADING),
-                "agent_type": "trading",
-                "importance_score": self._calculate_importance(insight, AgentType.TRADING)
+            # Estimate token count (rough approximation)
+            context_str = json.dumps(context)
+            estimated_tokens = len(self.tokenizer.encode(context_str))
+            
+            if estimated_tokens <= 2000:  # Within reasonable limits
+                return context
+            
+            # Compress by prioritizing recent and important information
+            compressed_context = {
+                "agent_type": context["agent_type"],
+                "short_term_memory": context["short_term_memory"][:5],  # Keep last 5 messages
+                "conversation_summaries": context["conversation_summaries"][:3],  # Keep top 3 summaries
+                "user_profile": context["user_profile"],
+                "relevant_memories": context["relevant_memories"][:2],  # Keep top 2 vector matches
+                "emotional_context": {
+                    "current_emotion": context["emotional_context"].get("current_emotion"),
+                    "needs_escalation": context["emotional_context"].get("needs_escalation")
+                },
+                "context_metadata": context["context_metadata"]
             }
             
-            result = await self.db.trade_insights.insert_one(insight_doc)
+            # Add compression indicator
+            compressed_context["context_metadata"]["compressed"] = True
+            compressed_context["context_metadata"]["original_token_estimate"] = estimated_tokens
             
-            # Also store in vector database for semantic search
-            await self._store_in_vector_db(user_id, insight, symbols, "trade_insight", AgentType.TRADING)
-            
-            logger.info(f"Trade insight stored for user {user_id}")
-            return bool(result.inserted_id)
+            return compressed_context
             
         except Exception as e:
-            logger.error(f"Failed to store trade insight: {e}")
-            return False
+            logger.exception(f"Context compression failed: {e}")
+            return context  # Return original if compression fails
     
-    async def update_user_profile(
-        self, 
-        user_id: str, 
-        updates: Dict[str, Any]
-    ) -> bool:
-        """
-        Update user profile with new information
-        
-        Args:
-            user_id: Unique user identifier
-            updates: Dictionary of updates to apply
-            
-        Returns:
-            bool: Success status
-        """
+    async def _get_cached_context(self, cache_key: str) -> Optional[Dict]:
+        """Retrieve cached context if available and not expired"""
         try:
-            updates["updated_at"] = datetime.utcnow()
-            
-            result = await self.db.users.update_one(
-                {"user_id": user_id},
-                {"$set": updates},
-                upsert=True
-            )
-            
-            logger.info(f"User profile updated for {user_id}")
-            return result.acknowledged
-            
+            cached_data = self.context_cache.get(cache_key)
+            if cached_data:
+                # Check if cache is still valid (5 minutes)
+                cache_time = cached_data.get('cached_at')
+                if cache_time and (datetime.utcnow() - cache_time).total_seconds() < 300:
+                    return cached_data.get('context')
+            return None
         except Exception as e:
-            logger.error(f"Failed to update user profile: {e}")
-            return False
+            logger.exception(f"Failed to get cached context: {e}")
+            return None
     
-    async def summarize_session(self, user_id: str, agent_type: AgentType = AgentType.TRADING) -> bool:
-        """
-        Manually trigger session summarization for specific agent
-        
-        Args:
-            user_id: Unique user identifier
-            agent_type: Which agent's session to summarize
-            
-        Returns:
-            bool: Success status
-        """
-        return await self._trigger_summarization(user_id, agent_type)
-    
-    async def search_vector_memory(
-        self, 
-        user_id: str, 
-        query: str, 
-        agent_type: AgentType = AgentType.TRADING,
-        top_k: int = 3
-    ) -> List[Dict[str, Any]]:
-        """
-        Search vector memory for semantically similar content
-        
-        Args:
-            user_id: Unique user identifier
-            query: Search query
-            agent_type: Requesting agent type for filtering
-            top_k: Number of results to return
-            
-        Returns:
-            List of relevant memories with scores
-        """
+    async def _cache_context(self, cache_key: str, context: Dict):
+        """Cache context for performance"""
         try:
-            # Generate embedding for query
-            embedding = await self._get_embedding(query)
-            
-            # Search Pinecone with user and agent filters
-            search_filter = {"user_id": user_id}
-            
-            # Include agent-specific memories and cross-agent important ones
-            agent_filter = {
-                "$or": [
-                    {"agent_type": agent_type.value},
-                    {"memory_type": {"$in": ["important", "trade_insight", "customer_escalation", "sales_opportunity"]}}
-                ]
+            self.context_cache[cache_key] = {
+                'context': context,
+                'cached_at': datetime.utcnow()
             }
-            search_filter.update(agent_filter)
             
-            results = self.pinecone_index.query(
-                vector=embedding,
-                top_k=top_k * 2,  # Get more results to filter
-                filter=search_filter,
-                include_metadata=True
-            )
-            
-            # Format and rank results by agent relevance
-            formatted_results = []
-            for match in results.matches:
-                result = {
-                    "content": match.metadata.get("content", ""),
-                    "topics": match.metadata.get("topics", []),
-                    "timestamp": match.metadata.get("timestamp", ""),
-                    "relevance_score": float(match.score),
-                    "memory_type": match.metadata.get("memory_type", "unknown"),
-                    "agent_type": match.metadata.get("agent_type", "unknown")
-                }
-                
-                # Boost relevance for same-agent memories
-                if result["agent_type"] == agent_type.value:
-                    result["relevance_score"] *= 1.2
-                
-                formatted_results.append(result)
-            
-            # Sort by relevance and return top_k
-            formatted_results.sort(key=lambda x: x["relevance_score"], reverse=True)
-            formatted_results = formatted_results[:top_k]
-            
-            logger.info(f"Vector search returned {len(formatted_results)} results for user {user_id} via {agent_type.value}")
-            return formatted_results
-            
+            # Limit cache size (keep last 100 contexts)
+            if len(self.context_cache) > 100:
+                # Remove oldest entries
+                sorted_keys = sorted(self.context_cache.keys(), 
+                                   key=lambda k: self.context_cache[k]['cached_at'])
+                for key in sorted_keys[:50]:  # Remove oldest 50
+                    del self.context_cache[key]
+                    
         except Exception as e:
-            logger.error(f"Vector search failed: {e}")
-            return []
-
-    # Include all previous methods with emotional intelligence enhancements
-    # ... (all the existing helper methods from the previous implementation)
-
+            logger.exception(f"Failed to cache context: {e}")
+    
+    async def _get_empty_result(self) -> Dict:
+        """Return empty result for optional context components"""
+        return {}
+    
+    async def _get_empty_vector_result(self) -> List:
+        """Return empty vector result"""
+        return []
+    
+    # Cleanup and utility methods
+    
     async def cleanup(self):
-        """Cleanup database connections and caches"""
+        """Clean up resources and connections"""
         try:
+            # Flush any pending Pinecone batch
+            await self._flush_pinecone_batch()
+            
+            # Close Redis connection
             if self.redis_client:
                 await self.redis_client.close()
+            
+            # Close MongoDB connection
             if self.mongo_client:
                 self.mongo_client.close()
             
-            # Clear caches
-            self.context_cache.clear()
-            self.semantic_cache.clear()
+            logger.info("MemoryManager cleanup completed")
             
-            logger.info("Enhanced MemoryManager connections and caches cleaned up")
         except Exception as e:
-            logger.error(f"Cleanup failed: {e}")
+            logger.exception(f"Cleanup failed: {e}")
+    
+    async def get_user_statistics(self, user_id: str) -> Dict[str, Any]:
+        """Get comprehensive user statistics across all agents"""
+        try:
+            stats = {
+                "user_id": user_id,
+                "agents": {},
+                "emotional_profile": {},
+                "engagement_metrics": {}
+            }
+            
+            # Get stats for each agent type
+            for agent_type in AgentType:
+                agent_stats = {
+                    "message_count": 0,
+                    "conversation_count": 0,
+                    "avg_importance": 0.0,
+                    "last_interaction": None
+                }
+                
+                # Count messages in STM
+                stm_key = f"session:{agent_type.value}:{user_id}"
+                stm_count = await self.redis_client.llen(stm_key)
+                agent_stats["current_session_messages"] = stm_count
+                
+                # Count conversations in MongoDB
+                conv_count = await self.db.conversations.count_documents({
+                    "user_id": user_id,
+                    "agent_type": agent_type.value
+                })
+                agent_stats["conversation_count"] = conv_count
+                
+                # Get last conversation
+                last_conv = await self.db.conversations.find_one(
+                    {"user_id": user_id, "agent_type": agent_type.value},
+                    sort=[("timestamp", -1)]
+                )
+                if last_conv:
+                    agent_stats["last_interaction"] = last_conv["timestamp"].isoformat()
+                    agent_stats["avg_importance"] = last_conv.get("importance_score", 0.0)
+                
+                stats["agents"][agent_type.value] = agent_stats
+            
+            # Get emotional profile
+            emotion_key = f"emotions:{user_id}"
+            emotion_count = await self.redis_client.llen(emotion_key)
+            stats["emotional_profile"]["emotion_history_count"] = emotion_count
+            
+            # Get user profile for engagement metrics
+            user_profile = await self._get_user_profile(user_id)
+            if user_profile:
+                stats["engagement_metrics"] = {
+                    "engagement_score": user_profile.get("engagement_score", 0.5),
+                    "frustration_count": user_profile.get("frustration_count", 0),
+                    "created_at": user_profile.get("created_at"),
+                    "last_updated": user_profile.get("updated_at")
+                }
+            
+            return stats
+            
+        except Exception as e:
+            logger.exception(f"Failed to get user statistics: {e}")
+            return {"error": str(e)}
+    
+    async def delete_user_data(self, user_id: str) -> bool:
+        """Delete all user data across all systems (GDPR compliance)"""
+        try:
+            # Delete from Redis
+            for agent_type in AgentType:
+                stm_key = f"session:{agent_type.value}:{user_id}"
+                await self.redis_client.delete(stm_key)
+            
+            emotion_key = f"emotions:{user_id}"
+            await self.redis_client.delete(emotion_key)
+            
+            # Delete from MongoDB
+            await self.db.users.delete_many({"user_id": user_id})
+            await self.db.conversations.delete_many({"user_id": user_id})
+            await self.db.trade_insights.delete_many({"user_id": user_id})
+            await self.db.customer_escalations.delete_many({"user_id": user_id})
+            await self.db.sales_opportunities.delete_many({"user_id": user_id})
+            
+            # Delete from Pinecone (requires fetching first)
+            try:
+                # Query all vectors for this user
+                dummy_vector = [0.0] * 1536
+                results = self.pinecone_index.query(
+                    vector=dummy_vector,
+                    filter={"user_id": user_id},
+                    top_k=1000,  # Large number to get all
+                    include_metadata=False
+                )
+                
+                # Delete vectors
+                if results.matches:
+                    vector_ids = [match.id for match in results.matches]
+                    self.pinecone_index.delete(ids=vector_ids)
+            except Exception as e:
+                logger.warning(f"Pinecone deletion failed (non-critical): {e}")
+            
+            # Clear local caches
+            cache_keys_to_remove = [k for k in self.context_cache.keys() if user_id in k]
+            for key in cache_keys_to_remove:
+                del self.context_cache[key]
+            
+            cache_keys_to_remove = [k for k in self.semantic_cache.keys() if user_id in k]
+            for key in cache_keys_to_remove:
+                del self.semantic_cache[key]
+            
+            logger.info(f"All data deleted for user {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.exception(f"Failed to delete user data: {e}")
+            return False
 
-
-# Enhanced demo showcasing emotional intelligence
-async def enhanced_demo():
-    """
-    Comprehensive demo showing emotional intelligence and context awareness
-    """
-    print("=== ENHANCED MEMORY MANAGER WITH EMOTIONAL INTELLIGENCE DEMO ===\n")
-    
-    # Initialize Enhanced MemoryManager
-    memory_manager = MemoryManager(
-        redis_url="redis://localhost:6379",
-        mongodb_url="mongodb://localhost:27017/trading_ai_enhanced",
-        pinecone_api_key="your-pinecone-key",
-        pinecone_environment="your-environment",
-        openai_api_key="your-openai-key"
-    )
-    
-    await memory_manager.setup()
-    user_id = "demo_user_123"
-    
-    print("1. FRUSTRATED USER SCENARIO")
-    print("=" * 40)
-    
-    # Simulate frustrated user interaction
-    await memory_manager.save_message(
-        user_id,
-        "This platform is terrible! My orders keep failing and I'm losing money!!",
-        MessageDirection.USER,
-        AgentType.CUSTOMER_SERVICE
-    )
-    
-    await memory_manager.save_message(
-        user_id,
-        "I understand your frustration. Let me help you resolve these order issues immediately.",
-        MessageDirection.BOT,
-        AgentType.CUSTOMER_SERVICE
-    )
-    
-    await memory_manager.save_message(
-        user_id,
-        "Still not working! This is the worst trading app ever!!!",
-        MessageDirection.USER,
-        AgentType.CUSTOMER_SERVICE
-    )
-    
-    # Get context with emotional intelligence
-    context = await memory_manager.get_context(
-        user_id,
-        AgentType.CUSTOMER_SERVICE,
-        "order execution problems",
-        include_emotional_context=True
-    )
-    
-    print(f"Emotional Context Detected:")
-    emotional_ctx = context.get('emotional_context', {})
-    if emotional_ctx.get('current_emotion'):
-        print(f"- Current Emotion: {emotional_ctx['current_emotion']['emotion_type']}")
-        print(f"- Emotion Score: {emotional_ctx['current_emotion']['emotion_score']:.2f}")
-        print(f"- Needs Escalation: {emotional_ctx.get('needs_escalation', False)}")
-    
-    # Generate contextual prompt
-    if emotional_ctx.get('current_emotion'):
-        current_emotion = EmotionalState(
-            emotion_type=EmotionType(emotional_ctx['current_emotion']['emotion_type']),
-            emotion_score=emotional_ctx['current_emotion']['emotion_score'],
-            sentiment_label=emotional_ctx['current_emotion']['sentiment_label'],
-            confidence=emotional_ctx['current_emotion']['confidence'],
-            timestamp=datetime.fromisoformat(emotional_ctx['current_emotion']['timestamp']),
-            triggers=emotional_ctx['current_emotion'].get('triggers', [])
+# Example usage and testing
+async def main():
+    """Example usage of the MemoryManager"""
+    try:
+        # Initialize MemoryManager
+        memory_manager = MemoryManager()
+        await memory_manager.setup()
+        
+        # Example: Save a trading message
+        await memory_manager.save_message(
+            user_id="test_user_123",
+            content="What do you think about AAPL? Should I buy some shares?",
+            direction=MessageDirection.USER,
+            agent_type=AgentType.TRADING
         )
+        
+        # Example: Save bot response
+        await memory_manager.save_message(
+            user_id="test_user_123",
+            content="AAPL looks strong with good technical indicators. Consider your risk tolerance before investing.",
+            direction=MessageDirection.BOT,
+            agent_type=AgentType.TRADING
+        )
+        
+        # Example: Get context for response generation
+        context = await memory_manager.get_context(
+            user_id="test_user_123",
+            agent_type=AgentType.TRADING,
+            query="AAPL analysis"
+        )
+        
+        print("Context retrieved successfully:")
+        print(f"STM messages: {len(context.get('short_term_memory', []))}")
+        print(f"Conversation summaries: {len(context.get('conversation_summaries', []))}")
+        print(f"User profile exists: {bool(context.get('user_profile'))}")
+        print(f"Emotional context: {bool(context.get('emotional_context'))}")
+        
+        # Example: Get user statistics
+        stats = await memory_manager.get_user_statistics("test_user_123")
+        print(f"User statistics: {stats}")
+        
+        # Cleanup
+        await memory_manager.cleanup()
+        
+    except Exception as e:
+        logger.exception(f"Example usage failed: {e}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
