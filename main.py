@@ -11,6 +11,11 @@ import time
 import asyncio
 from collections import defaultdict
 from typing import Dict, List, Any
+from services.stripe_service import StripeService
+from core.user_manager import UserManager, PlanType, SubscriptionStatus, AccountStatus
+import stripe
+import hmac
+import hashlib
 
 # Import configuration
 try:
@@ -161,6 +166,9 @@ except ImportError as e:
 logger.remove()
 logger.add(sys.stdout, level=settings.log_level)
 
+
+
+
 # ===== SIMPLIFIED PERSONALITY ENGINE =====
 
 class UserPersonalityEngine:
@@ -191,6 +199,8 @@ class UserPersonalityEngine:
 # Initialize personality engine
 personality_engine = UserPersonalityEngine()
 
+stripe_service = StripeService()
+
 # ===== GLOBAL SERVICES =====
 db_service = None
 openai_service = None
@@ -205,6 +215,7 @@ claude_agent = None
 hybrid_agent = None
 active_agent = None
 memory_manager = None
+
 
 # Background job services
 background_pipeline = None
@@ -1518,3 +1529,361 @@ if __name__ == "__main__":
         port=port,
         reload=settings.environment == "development"
     )
+
+@app.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    """Enhanced Stripe webhook handler with comprehensive event processing"""
+    try:
+        payload = await request.body()
+        sig_header = request.headers.get('stripe-signature')
+        
+        # Verify webhook signature
+        try:
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, settings.stripe_webhook_secret
+            )
+        except ValueError:
+            logger.error("❌ Invalid payload in Stripe webhook")
+            raise HTTPException(status_code=400, detail="Invalid payload")
+        except stripe.error.SignatureVerificationError:
+            logger.error("❌ Invalid signature in Stripe webhook")
+            raise HTTPException(status_code=400, detail="Invalid signature")
+        
+        event_type = event['type']
+        event_data = event['data']['object']
+        
+        logger.info(f"🔔 Processing Stripe webhook: {event_type}")
+        
+        # Process the webhook event
+        result = await process_stripe_webhook_event(event_type, event_data)
+        
+        return {
+            "status": "success",
+            "event_type": event_type,
+            "processed": result.get("processed", False),
+            "action_taken": result.get("action_taken", "none"),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Stripe webhook error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def process_stripe_webhook_event(event_type: str, event_data: Dict) -> Dict[str, Any]:
+    """Process different types of Stripe webhook events"""
+    
+    customer_id = event_data.get('customer')
+    subscription_id = event_data.get('id') if 'subscription' in event_type else event_data.get('subscription')
+    
+    # Get user from database using customer ID
+    user = None
+    if customer_id:
+        user = await user_manager.get_user_by_stripe_customer(customer_id)
+    
+    result = {"processed": False, "action_taken": "none", "user_found": bool(user)}
+    
+    try:
+        if event_type == 'customer.subscription.created':
+            result.update(await handle_subscription_created(event_data, user))
+            
+        elif event_type == 'customer.subscription.updated':
+            result.update(await handle_subscription_updated(event_data, user))
+            
+        elif event_type == 'customer.subscription.deleted':
+            result.update(await handle_subscription_deleted(event_data, user))
+            
+        elif event_type == 'customer.subscription.trial_will_end':
+            result.update(await handle_trial_will_end(event_data, user))
+            
+        elif event_type == 'invoice.payment_succeeded':
+            result.update(await handle_payment_succeeded(event_data, user))
+            
+        elif event_type == 'invoice.payment_failed':
+            result.update(await handle_payment_failed(event_data, user))
+            
+        elif event_type == 'customer.created':
+            result.update(await handle_customer_created(event_data))
+            
+        elif event_type == 'customer.updated':
+            result.update(await handle_customer_updated(event_data, user))
+            
+        else:
+            logger.info(f"ℹ️ Unhandled Stripe event: {event_type}")
+            result["action_taken"] = "ignored"
+            
+    except Exception as e:
+        logger.error(f"❌ Error processing {event_type}: {e}")
+        result["error"] = str(e)
+    
+    return result
+
+async def handle_subscription_created(event_data: Dict, user: Optional[Dict]) -> Dict:
+    """Handle subscription.created webhook"""
+    if not user:
+        logger.warning(f"⚠️ Subscription created but no user found for customer {event_data.get('customer')}")
+        return {"processed": False, "action_taken": "user_not_found"}
+    
+    # Determine plan type from price ID
+    price_id = event_data['items']['data'][0]['price']['id']
+    plan_type = PlanType.BASIC.value if price_id == stripe_service.basic_price_id else PlanType.PRO.value
+    
+    # Update user subscription
+    success = await user_manager.update_subscription(
+        user["phone_number"],
+        plan_type,
+        event_data.get('customer'),
+        event_data.get('id'),
+        SubscriptionStatus.ACTIVE.value if event_data['status'] == 'active' else event_data['status']
+    )
+    
+    if success:
+        # Send welcome message
+        await send_subscription_welcome_message(user["phone_number"], plan_type)
+        
+        logger.info(f"✅ Subscription created: {user['phone_number']} -> {plan_type}")
+        return {
+            "processed": True,
+            "action_taken": "subscription_activated",
+            "plan_type": plan_type,
+            "status": event_data['status']
+        }
+    
+    return {"processed": False, "action_taken": "update_failed"}
+
+async def handle_subscription_updated(event_data: Dict, user: Optional[Dict]) -> Dict:
+    """Handle subscription.updated webhook"""
+    if not user:
+        return {"processed": False, "action_taken": "user_not_found"}
+    
+    subscription_status = event_data.get('status')
+    cancel_at_period_end = event_data.get('cancel_at_period_end', False)
+    
+    # Handle different subscription states
+    if cancel_at_period_end:
+        # User cancelled but subscription continues until period end
+        await user_manager.handle_subscription_cancellation(
+            user["phone_number"],
+            reason="user_cancelled_end_of_period",
+            immediate=False
+        )
+        
+        # Send cancellation confirmation
+        await send_cancellation_confirmation_message(user["phone_number"], event_data.get('current_period_end'))
+        
+        return {
+            "processed": True,
+            "action_taken": "subscription_cancelled_end_of_period",
+            "period_end": event_data.get('current_period_end')
+        }
+    
+    elif subscription_status == 'paused':
+        # Subscription paused
+        await user_manager.update_subscription(
+            user["phone_number"],
+            user["plan_type"],  # Keep same plan
+            subscription_status=SubscriptionStatus.PAUSED.value
+        )
+        
+        return {
+            "processed": True,
+            "action_taken": "subscription_paused"
+        }
+    
+    elif subscription_status == 'active' and user.get('subscription_status') == 'paused':
+        # Subscription resumed
+        await user_manager.update_subscription(
+            user["phone_number"],
+            user["plan_type"],
+            subscription_status=SubscriptionStatus.ACTIVE.value
+        )
+        
+        return {
+            "processed": True,
+            "action_taken": "subscription_resumed"
+        }
+    
+    return {"processed": True, "action_taken": "subscription_updated"}
+
+async def handle_subscription_deleted(event_data: Dict, user: Optional[Dict]) -> Dict:
+    """Handle subscription.deleted webhook"""
+    if not user:
+        return {"processed": False, "action_taken": "user_not_found"}
+    
+    # Downgrade user to free plan
+    success = await user_manager.update_subscription(
+        user["phone_number"],
+        PlanType.FREE.value,
+        subscription_status=SubscriptionStatus.EXPIRED.value
+    )
+    
+    if success:
+        # Send downgrade notification
+        await send_downgrade_notification_message(user["phone_number"])
+        
+        logger.info(f"✅ Subscription deleted: {user['phone_number']} downgraded to free")
+        return {
+            "processed": True,
+            "action_taken": "downgraded_to_free"
+        }
+    
+    return {"processed": False, "action_taken": "downgrade_failed"}
+
+async def handle_trial_will_end(event_data: Dict, user: Optional[Dict]) -> Dict:
+    """Handle subscription.trial_will_end webhook"""
+    if not user:
+        return {"processed": False, "action_taken": "user_not_found"}
+    
+    trial_end_timestamp = event_data.get('trial_end')
+    trial_end_date = datetime.fromtimestamp(trial_end_timestamp, timezone.utc) if trial_end_timestamp else None
+    
+    # Send trial ending reminder
+    await send_trial_ending_message(user["phone_number"], trial_end_date)
+    
+    return {
+        "processed": True,
+        "action_taken": "trial_ending_notification_sent",
+        "trial_end": trial_end_date.isoformat() if trial_end_date else None
+    }
+
+async def handle_payment_succeeded(event_data: Dict, user: Optional[Dict]) -> Dict:
+    """Handle invoice.payment_succeeded webhook"""
+    if not user:
+        return {"processed": False, "action_taken": "user_not_found"}
+    
+    # Reset payment failure count
+    await user_manager.db.db.users.update_one(
+        {"phone_number": user["phone_number"]},
+        {
+            "$set": {
+                "payment_failures": 0,
+                "last_payment_success": datetime.now(timezone.utc),
+                "billing_status": "current",
+                "updated_at": datetime.now(timezone.utc)
+            }
+        }
+    )
+    
+    # Send payment confirmation (optional)
+    amount = event_data.get('amount_paid', 0) / 100  # Convert from cents
+    await send_payment_success_message(user["phone_number"], amount)
+    
+    return {
+        "processed": True,
+        "action_taken": "payment_success_recorded",
+        "amount": amount
+    }
+
+async def handle_payment_failed(event_data: Dict, user: Optional[Dict]) -> Dict:
+    """Handle invoice.payment_failed webhook"""
+    if not user:
+        return {"processed": False, "action_taken": "user_not_found"}
+    
+    # Track payment failure
+    await user_manager.handle_payment_failure(user["phone_number"])
+    
+    # Get updated user data
+    updated_user = await user_manager.get_user_by_phone(user["phone_number"])
+    payment_failures = updated_user.get("payment_failures", 1)
+    
+    # Send appropriate message based on failure count
+    if payment_failures == 1:
+        await send_payment_retry_message(user["phone_number"], "first")
+    elif payment_failures == 2:
+        await send_payment_retry_message(user["phone_number"], "second")
+    elif payment_failures >= 3:
+        await send_account_suspended_message(user["phone_number"])
+    
+    return {
+        "processed": True,
+        "action_taken": "payment_failure_handled",
+        "failure_count": payment_failures,
+        "suspended": payment_failures >= 3
+    }
+
+async def handle_customer_created(event_data: Dict) -> Dict:
+    """Handle customer.created webhook"""
+    phone_number = event_data.get('phone')
+    customer_id = event_data.get('id')
+    
+    if phone_number:
+        # Update user with Stripe customer ID
+        user = await user_manager.get_user_by_phone(phone_number)
+        if user:
+            await user_manager.db.db.users.update_one(
+                {"phone_number": phone_number},
+                {
+                    "$set": {
+                        "stripe_customer_id": customer_id,
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
+            )
+            
+            return {
+                "processed": True,
+                "action_taken": "customer_linked_to_user"
+            }
+    
+    return {"processed": True, "action_taken": "customer_created_no_user"}
+
+async def handle_customer_updated(event_data: Dict, user: Optional[Dict]) -> Dict:
+    """Handle customer.updated webhook"""
+    if not user:
+        return {"processed": False, "action_taken": "user_not_found"}
+    
+    # Update user email if changed
+    email = event_data.get('email')
+    if email and email != user.get('email'):
+        await user_manager.db.db.users.update_one(
+            {"phone_number": user["phone_number"]},
+            {
+                "$set": {
+                    "email": email,
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
+        
+        return {
+            "processed": True,
+            "action_taken": "user_email_updated",
+            "email": email
+        }
+    
+    return {"processed": True, "action_taken": "no_changes_needed"}
+
+# SMS Notification Functions
+async def send_subscription_welcome_message(phone_number: str, plan_type: str):
+    """Send welcome message for new subscription"""
+    plan_config = PlanLimits.get_plan_config(plan_type)
+    
+    message = f"""🎉 Welcome to {plan_type.upper()}!
+
+Your subscription is now active:
+💰 ${plan_config['price']}/month
+📱 {plan_config.get('weekly_limit', 'Unlimited')} messages/week
+✨ All {plan_type} features unlocked
+
+Try asking: "How is AAPL?" or "Find me tech stocks"
+
+Questions? Just reply HELP"""
+    
+    # Send via Twilio (implement your SMS sending logic)
+    await send_sms_message(phone_number, message)
+
+async def send_cancellation_confirmation_message(phone_number: str, period_end_timestamp: int):
+    """Send cancellation confirmation message"""
+    period_end = datetime.fromtimestamp(period_end_timestamp, timezone.utc)
+    
+    message = f"""📋 Subscription Cancelled
+
+Your plan will remain active until {period_end.strftime('%B %d, %Y')}
+
+After that, you'll be on our FREE plan:
+• 10 messages per week
+• Basic stock analysis
+• Daily insights
+
+Change your mind? Reply REACTIVATE"""
+    
+    await send_sms
