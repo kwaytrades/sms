@@ -285,7 +285,15 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"⚠️ MemoryManager initialization failed: {e}")
                 memory_manager = None
         else:
-            logger.info("⚠️ MemoryManager disabled - missing Pinecone or OpenAI API keys")
+            if not MemoryManager:
+                logger.info("⚠️ MemoryManager disabled - module not available")
+            elif not settings.pinecone_api_key:
+                logger.info("⚠️ MemoryManager disabled - missing Pinecone API key")
+            elif not settings.openai_api_key:
+                logger.info("⚠️ MemoryManager disabled - missing OpenAI API key")
+            else:
+                logger.info("⚠️ MemoryManager disabled - missing required configuration")
+            memory_manager = None
         
         TechnicalAnalysisService = TAEngine  # Backward compatibility
         FundamentalAnalysisTool = FAEngine   # Backward compatibility
