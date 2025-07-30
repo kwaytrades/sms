@@ -151,7 +151,7 @@ except Exception as e:
 try:
     from services.memory_manager import MemoryManager, MessageDirection, AgentType
     logger.info("✅ MemoryManager imported")
-except Exception as e:
+except ImportError as e:
     MemoryManager = None
     MessageDirection = None
     AgentType = None
