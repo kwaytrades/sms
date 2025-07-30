@@ -1,4 +1,4 @@
-# decision_engine.py
+# ta_engine.py
 """
 Decision Engine - Advanced Trading Analysis System
 Combines CheatCode 4/4 signals with contextual market factors for intelligent trading decisions
