@@ -1438,6 +1438,115 @@ Remember: You're having a conversation via SMS, so be conversational and helpful
         """Return empty vector result"""
         return []
 
+    async def _generate_summary(self, messages: List[Dict[str, Any]], agent_type: AgentType) -> str:
+        """Generate LLM-based summary of conversation for specific agent"""
+        try:
+            # Format messages for LLM
+            conversation_text = "\n".join([
+                f"{msg['direction']}: {msg['content']}" 
+                for msg in messages[-10:]  # Last 10 messages
+            ])
+            
+            # Agent-specific prompts
+            if agent_type == AgentType.TRADING:
+                system_prompt = """You are a trading conversation summarizer. Create a concise summary focusing on:
+                1. Main trading topics discussed (stocks, options, market analysis)
+                2. User's trading preferences, risk tolerance, or concerns
+                3. Any specific stocks, strategies, or recommendations mentioned
+                4. Key insights or market analysis provided
+                
+                Keep the summary under 150 words and focus on actionable trading information."""
+                
+            elif agent_type == AgentType.CUSTOMER_SERVICE:
+                system_prompt = """You are a customer service conversation summarizer. Create a concise summary focusing on:
+                1. Main issue or problem the customer is experiencing
+                2. Customer's emotional state and satisfaction level
+                3. Resolution steps taken or needed
+                4. Any escalation triggers or urgent concerns
+                
+                Keep the summary under 150 words and focus on customer satisfaction and issue resolution."""
+                
+            elif agent_type == AgentType.SALES:
+                system_prompt = """You are a sales conversation summarizer. Create a concise summary focusing on:
+                1. Customer's interest level and buying intent
+                2. Budget, timeline, and decision-making process
+                3. Pain points, objections, or concerns raised
+                4. Opportunities for upselling or feature interest
+                
+                Keep the summary under 150 words and focus on sales pipeline advancement."""
+            
+            response = await self.openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Summarize this conversation:\n\n{conversation_text}"}
+                ],
+                max_tokens=200,
+                temperature=0.3
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            logger.error(f"Summary generation failed for {agent_type.value}: {e}")
+            return ""
+    
+    async def _store_in_vector_db(
+        self, 
+        user_id: str, 
+        content: str, 
+        topics: List[str], 
+        memory_type: str = "message",
+        agent_type: AgentType = AgentType.TRADING,
+        emotional_state: Optional[EmotionalState] = None
+    ):
+        """Enhanced vector storage with emotional weighting"""
+        try:
+            # Generate embedding
+            embedding = await self._get_embedding(content)
+            
+            # Create unique ID
+            content_id = hashlib.md5(
+                f"{user_id}_{agent_type.value}_{content}_{datetime.utcnow().isoformat()}".encode()
+            ).hexdigest()
+            
+            # Calculate emotional weight
+            emotional_weight = 1.0
+            if emotional_state:
+                if emotional_state.emotion_type in [EmotionType.FRUSTRATED, EmotionType.EXCITED]:
+                    emotional_weight = 1.0 + emotional_state.emotion_score * 0.5
+                elif emotional_state.emotion_type in [EmotionType.ANXIOUS, EmotionType.CONFUSED]:
+                    emotional_weight = 1.0 + emotional_state.emotion_score * 0.3
+            
+            # Prepare enhanced metadata
+            metadata = {
+                "user_id": user_id,
+                "agent_type": agent_type.value,
+                "content": content[:1000],
+                "topics": topics[:10],
+                "memory_type": memory_type,
+                "timestamp": datetime.utcnow().isoformat(),
+                "emotional_weight": emotional_weight
+            }
+            
+            # Add emotional metadata if available
+            if emotional_state:
+                metadata.update({
+                    "emotion_type": emotional_state.emotion_type.value,
+                    "emotion_score": emotional_state.emotion_score,
+                    "sentiment_label": emotional_state.sentiment_label
+                })
+            
+            # Upsert to Pinecone
+            self.pinecone_index.upsert(
+                vectors=[(content_id, embedding, metadata)]
+            )
+            
+            logger.debug(f"Enhanced content stored in vector DB for user {user_id} via {agent_type.value}")
+            
+        except Exception as e:
+            logger.error(f"Enhanced vector storage failed: {e}")
+    
     async def _get_emotional_history(self, user_id: str, days: int = 30) -> List[EmotionalState]:
         """Get emotional history for user"""
         try:
@@ -1488,6 +1597,220 @@ Remember: You're having a conversation via SMS, so be conversational and helpful
             
         except Exception as e:
             logger.error(f"Failed to get trading insights: {e}")
+            return []
+    
+    async def get_agent_analytics(self, agent_type: AgentType, days: int = 30) -> Dict[str, Any]:
+        """
+        Get analytics for specific agent type
+        
+        Args:
+            agent_type: Agent to analyze
+            days: Number of days to analyze
+            
+        Returns:
+            Dict with analytics data
+        """
+        try:
+            start_date = datetime.utcnow() - timedelta(days=days)
+            
+            if agent_type == AgentType.TRADING:
+                # Trading analytics
+                pipeline = [
+                    {"$match": {"agent_type": "trading", "timestamp": {"$gte": start_date}}},
+                    {"$group": {
+                        "_id": None,
+                        "total_insights": {"$sum": 1},
+                        "avg_importance": {"$avg": "$importance_score"},
+                        "top_symbols": {"$push": "$symbols"}
+                    }}
+                ]
+                result = await self.db.trade_insights.aggregate(pipeline).to_list(1)
+                
+            elif agent_type == AgentType.CUSTOMER_SERVICE:
+                # Customer service analytics
+                pipeline = [
+                    {"$match": {"agent_type": "customer_service", "timestamp": {"$gte": start_date}}},
+                    {"$group": {
+                        "_id": "$priority",
+                        "count": {"$sum": 1}
+                    }}
+                ]
+                result = await self.db.customer_escalations.aggregate(pipeline).to_list(None)
+                
+            elif agent_type == AgentType.SALES:
+                # Sales analytics
+                pipeline = [
+                    {"$match": {"agent_type": "sales", "timestamp": {"$gte": start_date}}},
+                    {"$group": {
+                        "_id": "$stage",
+                        "count": {"$sum": 1},
+                        "total_value": {"$sum": "$value_estimate"}
+                    }}
+                ]
+                result = await self.db.sales_opportunities.aggregate(pipeline).to_list(None)
+            
+            return {"agent_type": agent_type.value, "analytics": result, "period_days": days}
+            
+        except Exception as e:
+            logger.error(f"Failed to get agent analytics: {e}")
+            return {"error": str(e)}
+    
+    async def store_trade_insight(
+        self, 
+        user_id: str, 
+        insight: str, 
+        symbols: List[str],
+        insight_type: str = "analysis"
+    ) -> bool:
+        """
+        Store trading-specific insights
+        
+        Args:
+            user_id: Unique user identifier
+            insight: Trading insight content
+            symbols: Related stock symbols
+            insight_type: Type of insight (analysis, recommendation, etc.)
+            
+        Returns:
+            bool: Success status
+        """
+        try:
+            insight_doc = {
+                "user_id": user_id,
+                "insight": insight,
+                "symbols": symbols,
+                "insight_type": insight_type,
+                "timestamp": datetime.utcnow(),
+                "topics": self._extract_topics(insight, AgentType.TRADING),
+                "agent_type": "trading",
+                "importance_score": self._calculate_importance(insight, AgentType.TRADING)
+            }
+            
+            result = await self.db.trade_insights.insert_one(insight_doc)
+            
+            # Also store in vector database for semantic search
+            await self._store_in_vector_db(user_id, insight, symbols, "trade_insight", AgentType.TRADING)
+            
+            logger.info(f"Trade insight stored for user {user_id}")
+            return bool(result.inserted_id)
+            
+        except Exception as e:
+            logger.error(f"Failed to store trade insight: {e}")
+            return False
+    
+    async def update_user_profile(
+        self, 
+        user_id: str, 
+        updates: Dict[str, Any]
+    ) -> bool:
+        """
+        Update user profile with new information
+        
+        Args:
+            user_id: Unique user identifier
+            updates: Dictionary of updates to apply
+            
+        Returns:
+            bool: Success status
+        """
+        try:
+            updates["updated_at"] = datetime.utcnow()
+            
+            result = await self.db.users.update_one(
+                {"user_id": user_id},
+                {"$set": updates},
+                upsert=True
+            )
+            
+            logger.info(f"User profile updated for {user_id}")
+            return result.acknowledged
+            
+        except Exception as e:
+            logger.error(f"Failed to update user profile: {e}")
+            return False
+    
+    async def summarize_session(self, user_id: str, agent_type: AgentType = AgentType.TRADING) -> bool:
+        """
+        Manually trigger session summarization for specific agent
+        
+        Args:
+            user_id: Unique user identifier
+            agent_type: Which agent's session to summarize
+            
+        Returns:
+            bool: Success status
+        """
+        return await self._trigger_summarization(user_id, agent_type)
+    
+    async def search_vector_memory(
+        self, 
+        user_id: str, 
+        query: str, 
+        agent_type: AgentType = AgentType.TRADING,
+        top_k: int = 3
+    ) -> List[Dict[str, Any]]:
+        """
+        Search vector memory for semantically similar content
+        
+        Args:
+            user_id: Unique user identifier
+            query: Search query
+            agent_type: Requesting agent type for filtering
+            top_k: Number of results to return
+            
+        Returns:
+            List of relevant memories with scores
+        """
+        try:
+            # Generate embedding for query
+            embedding = await self._get_embedding(query)
+            
+            # Search Pinecone with user and agent filters
+            search_filter = {"user_id": user_id}
+            
+            # Include agent-specific memories and cross-agent important ones
+            agent_filter = {
+                "$or": [
+                    {"agent_type": agent_type.value},
+                    {"memory_type": {"$in": ["important", "trade_insight", "customer_escalation", "sales_opportunity"]}}
+                ]
+            }
+            search_filter.update(agent_filter)
+            
+            results = self.pinecone_index.query(
+                vector=embedding,
+                top_k=top_k * 2,  # Get more results to filter
+                filter=search_filter,
+                include_metadata=True
+            )
+            
+            # Format and rank results by agent relevance
+            formatted_results = []
+            for match in results.matches:
+                result = {
+                    "content": match.metadata.get("content", ""),
+                    "topics": match.metadata.get("topics", []),
+                    "timestamp": match.metadata.get("timestamp", ""),
+                    "relevance_score": float(match.score),
+                    "memory_type": match.metadata.get("memory_type", "unknown"),
+                    "agent_type": match.metadata.get("agent_type", "unknown")
+                }
+                
+                # Boost relevance for same-agent memories
+                if result["agent_type"] == agent_type.value:
+                    result["relevance_score"] *= 1.2
+                
+                formatted_results.append(result)
+            
+            # Sort by relevance and return top_k
+            formatted_results.sort(key=lambda x: x["relevance_score"], reverse=True)
+            formatted_results = formatted_results[:top_k]
+            
+            logger.info(f"Vector search returned {len(formatted_results)} results for user {user_id} via {agent_type.value}")
+            return formatted_results
+            
+        except Exception as e:
+            logger.error(f"Vector search failed: {e}")
             return []
 
     # Include all previous methods with emotional intelligence enhancements
