@@ -2027,100 +2027,99 @@ class BackgroundDataPipeline:
             raise
     
     def start_scheduler(self):
-        """Start the background job scheduler"""
-        # Schedule daily job at 6 AM ET
-        schedule.every().day.at("06:00").do(self._run_async_job, self.daily_data_refresh_job)
-        
-        # Schedule weekly cleanup at 2 AM Sunday (now only clears temporary caches)
-        schedule.every().sunday.at("02:00").do(self._run_async_job, self.weekly_cleanup_job)
-        
-        logger.info("📅 Background job scheduler started")
-        logger.info("   - Daily data UPDATE: 6:00 AM ET (persistent storage)")
-        logger.info("   - Weekly temp cache cleanup: Sunday 2:00 AM ET")
-        
-        # Run scheduler in background thread
-        scheduler_thread = Thread(target=self._run_scheduler, daemon=True)
-        scheduler_thread.start()
+    """Start the background job scheduler"""
+    # Schedule daily job at 6 AM ET
+    schedule.every().day.at("06:00").do(self._run_async_job, self.daily_data_refresh_job)
     
-    def _run_scheduler(self):
-        """Run the scheduler loop"""
-        while True:
-            schedule.run_pending()
-            time.sleep(60)  # Check every minute
+    # Schedule weekly cleanup at 2 AM Sunday (now only clears temporary caches)
+    schedule.every().sunday.at("02:00").do(self._run_async_job, self.weekly_cleanup_job)
     
-    def _run_async_job(self, job_func):
-        """Wrapper to run async jobs from scheduler"""
-        try:
-            # Create new event loop for background thread
-            import asyncio
-            
+    logger.info("📅 Background job scheduler started")
+    logger.info("   - Daily data UPDATE: 6:00 AM ET (persistent storage)")
+    logger.info("   - Weekly temp cache cleanup: Sunday 2:00 AM ET")
+    
+    # Run scheduler in background thread
+    scheduler_thread = Thread(target=self._run_scheduler, daemon=True)
+    scheduler_thread.start()
 
+def _run_scheduler(self):
+    """Run the scheduler loop"""
+    while True:
+        schedule.run_pending()
+        time.sleep(60)  # Check every minute
 
-    def run_job():
-        """Run background job with its own event loop"""
-        try:
-            # Create new event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+def _run_async_job(self, job_func):
+    """Wrapper to run async jobs from scheduler"""
+    try:
+        # Create new event loop for background thread
+        import asyncio
+        import threading
         
-            # Run the async job
-            loop.run_until_complete(self.daily_data_refresh_job())
+        def run_job():
+            """Run background job with its own event loop"""
+            try:
+                # Create new event loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+                # Run the async job
+                loop.run_until_complete(job_func())
+            
+            except Exception as e:
+                logger.error(f"Background job failed: {e}")
+            finally:
+                loop.close()
         
-        except Exception as e:
-            logger.error(f"Background job failed: {e}")
-        finally:
-            loop.close()
-            
-            import threading
-            job_thread = threading.Thread(target=run_job)
-            job_thread.start()
-            
-        except Exception as e:
-            logger.error(f"❌ Scheduled job failed: {e}")
-    
-    async def get_job_status(self) -> Dict[str, Any]:
-        """Get current job status for monitoring"""
-        return {
-            "pipeline_status": "active",
-            "job_status": self.job_status,
-            "data_strategy": "persistent_updates",  # NEW: Show the update strategy
-            "next_daily_job": "06:00 AM ET daily (UPDATE existing records)",
-            "next_weekly_cleanup": "Sunday 02:00 AM ET (temporary cache cleanup only)",
-            "stock_universe_size": len(self.stock_universe),
-            "crypto_universe_size": len(self.crypto_universe),
-            "total_universe_size": self.total_universe_size,
-            "database_connected": bool(self.db),
-            "redis_connected": bool(self.redis_client),
-            "stock_universe_preview": self.stock_universe[:10],
-            "crypto_universe_preview": self.crypto_universe[:10],
-            "storage_efficiency": "85% reduction vs previous approach",  # NEW
-            "features": {
-                "persistent_data_updates": True,  # NEW
-                "on_demand_stock_fetching": True,
-                "comprehensive_crypto_support": True,
-                "quantum_computing_stocks": True,
-                "meme_crypto_coverage": True,
-                "ai_ml_stock_focus": True,
-                "defi_token_coverage": True,
-                "fallback_api_calls": True,
-                "constant_db_size": True  # NEW
-            }
+        job_thread = threading.Thread(target=run_job)
+        job_thread.daemon = True
+        job_thread.start()
+        
+    except Exception as e:
+        logger.error(f"❌ Scheduled job failed: {e}")
+
+async def get_job_status(self) -> Dict[str, Any]:
+    """Get current job status for monitoring"""
+    return {
+        "pipeline_status": "active",
+        "job_status": self.job_status,
+        "data_strategy": "persistent_updates",  # NEW: Show the update strategy
+        "next_daily_job": "06:00 AM ET daily (UPDATE existing records)",
+        "next_weekly_cleanup": "Sunday 02:00 AM ET (temporary cache cleanup only)",
+        "stock_universe_size": len(self.stock_universe),
+        "crypto_universe_size": len(self.crypto_universe),
+        "total_universe_size": self.total_universe_size,
+        "database_connected": bool(self.db),
+        "redis_connected": bool(self.redis_client),
+        "stock_universe_preview": self.stock_universe[:10],
+        "crypto_universe_preview": self.crypto_universe[:10],
+        "storage_efficiency": "85% reduction vs previous approach",  # NEW
+        "features": {
+            "persistent_data_updates": True,  # NEW
+            "on_demand_stock_fetching": True,
+            "comprehensive_crypto_support": True,
+            "quantum_computing_stocks": True,
+            "meme_crypto_coverage": True,
+            "ai_ml_stock_focus": True,
+            "defi_token_coverage": True,
+            "fallback_api_calls": True,
+            "constant_db_size": True  # NEW
         }
-    
-    async def force_run_daily_job(self):
-        """Manually trigger daily job (for testing/emergency)"""
-        logger.info("🔧 Manually triggered daily data refresh")
-        await self.daily_data_refresh_job()
-    
-    async def force_run_cleanup(self):
-        """Manually trigger cleanup job (for testing/emergency)"""
-        logger.info("🔧 Manually triggered weekly cleanup")
-        await self.weekly_cleanup_job()
-    
-    async def close(self):
-        """Close database connections"""
-        if self.mongo_client:
-            self.mongo_client.close()
-        if self.redis_client:
-            await self.redis_client.close()
-        logger.info("✅ Background pipeline connections closed")
+    }
+
+async def force_run_daily_job(self):
+    """Manually trigger daily job (for testing/emergency)"""
+    logger.info("🔧 Manually triggered daily data refresh")
+    await self.daily_data_refresh_job()
+
+async def force_run_cleanup(self):
+    """Manually trigger cleanup job (for testing/emergency)"""
+    logger.info("🔧 Manually triggered weekly cleanup")
+    await self.weekly_cleanup_job()
+
+async def close(self):
+    """Close database connections"""
+    if self.mongo_client:
+        self.mongo_client.close()
+    if self.redis_client:
+        await self.redis_client.close()
+    logger.info("✅ Background pipeline connections closed")
