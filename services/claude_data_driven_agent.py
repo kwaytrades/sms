@@ -18,13 +18,14 @@ class ClaudeDataDrivenAgent:
     3. Claude handles everything - analysis, tone, conversation style
     """
     
-    def __init__(self, anthropic_client, ta_service, news_service, fundamental_tool, cache_service, personality_engine):
+    def __init__(self, anthropic_client, ta_service, news_service, fundamental_tool, cache_service, personality_engine, memory_manager=None):
         self.anthropic_client = anthropic_client
         self.ta_service = ta_service
         self.news_service = news_service
         self.fundamental_tool = fundamental_tool
         self.cache_service = cache_service
         self.personality_engine = personality_engine
+        self.memory_manager = memory_manager
     
     async def process_message(self, message: str, user_phone: str) -> str:
         """
@@ -35,8 +36,32 @@ class ClaudeDataDrivenAgent:
         try:
             logger.info(f"🎯 Claude processing: '{message}' from {user_phone}")
             
-            # Step 1: Get conversation context and user profile
-            context = await self._get_conversation_context(user_phone)
+            # Save incoming message to memory
+            if self.memory_manager:
+                try:
+                    from services.memory_manager import MessageDirection, AgentType
+                    await self.memory_manager.save_message(
+                        user_id=user_phone,
+                        content=message,
+                        direction=MessageDirection.USER,
+                        agent_type=AgentType.TRADING
+                    )
+                except Exception as e:
+                    logger.warning(f"Memory save failed: {e}")
+            
+            # Step 1: Get enhanced conversation context (memory + cache)
+            if self.memory_manager:
+                # Use memory manager for enhanced context
+                memory_context = await self.memory_manager.get_context(
+                    user_id=user_phone,
+                    agent_type=AgentType.TRADING,
+                    query=message
+                )
+                context = self._merge_memory_with_cache_context(memory_context, user_phone)
+            else:
+                # Fallback to existing cache context
+                context = await self._get_conversation_context(user_phone)
+            
             user_profile = await self._get_user_profile(user_phone)
             
             # Step 2: Claude analyzes query and calls tools directly
@@ -47,7 +72,18 @@ class ClaudeDataDrivenAgent:
                 message, context, tool_results, user_profile
             )
             
-            # Step 4: Cache and learn
+            # Step 4: Save bot response to memory and cache
+            if self.memory_manager:
+                try:
+                    await self.memory_manager.save_message(
+                        user_id=user_phone,
+                        content=response,
+                        direction=MessageDirection.BOT,
+                        agent_type=AgentType.TRADING
+                    )
+                except Exception as e:
+                    logger.warning(f"Memory save failed: {e}")
+            
             await self._cache_conversation(user_phone, message, response, context)
             
             logger.info(f"✅ Claude response generated: {len(response)} chars")
@@ -56,6 +92,59 @@ class ClaudeDataDrivenAgent:
         except Exception as e:
             logger.error(f"💥 Claude processing failed: {e}")
             return "Market analysis processing. Please try again shortly."
+    
+    def _merge_memory_with_cache_context(self, memory_context: Dict, user_phone: str) -> Dict:
+        """Merge memory manager context with existing cache context format"""
+        
+        # Extract from memory context
+        stm = memory_context.get('short_term_memory', [])
+        summaries = memory_context.get('conversation_summaries', [])
+        profile = memory_context.get('user_profile', {})
+        emotional_context = memory_context.get('emotional_context', {})
+        
+        # Extract recent symbols from STM and summaries
+        recent_symbols = []
+        for msg in stm[:5]:  # Last 5 messages
+            topics = msg.get('topics', [])
+            recent_symbols.extend([t for t in topics if t.isupper() and len(t) <= 5])
+        
+        for summary in summaries[:2]:  # Recent summaries
+            topics = summary.get('topics', [])
+            recent_symbols.extend([t for t in topics if t.isupper() and len(t) <= 5])
+        
+        # Remove duplicates, keep order
+        unique_symbols = []
+        for symbol in recent_symbols:
+            if symbol not in unique_symbols:
+                unique_symbols.append(symbol)
+        
+        # Determine conversation flow
+        conversation_flow = "continuing" if len(stm) > 0 else "new"
+        
+        # Get last topic from recent messages
+        last_topic = None
+        if stm:
+            last_msg = stm[0]
+            if 'technical' in last_msg.get('content', '').lower():
+                last_topic = "technical_analysis"
+            elif 'fundamental' in last_msg.get('content', '').lower():
+                last_topic = "fundamental_analysis"
+            elif 'news' in last_msg.get('content', '').lower():
+                last_topic = "news_analysis"
+            else:
+                last_topic = "general_analysis"
+        
+        # Return in your existing format
+        return {
+            "recent_symbols": unique_symbols[:3],
+            "conversation_flow": conversation_flow,
+            "last_topic": last_topic,
+            "memory_enhanced": True,
+            "emotional_state": emotional_context.get('current_emotion'),
+            "user_profile": profile,
+            "message_count": len(stm),
+            "conversation_summaries": summaries[:2]
+        }
     
     async def _claude_driven_tool_calling(self, message: str, context: Dict) -> Dict[str, Any]:
         """
@@ -189,6 +278,19 @@ Extract any stock symbols and call the appropriate tools now."""
         context_summary = self._format_context_summary(context)
         personality_info = self._format_user_personality(user_profile)
         
+        # Enhanced prompt with memory context
+        memory_info = ""
+        if context.get("memory_enhanced"):
+            emotional_state = context.get("emotional_state")
+            message_count = context.get("message_count", 0)
+            
+            if emotional_state:
+                emotion_type = emotional_state.get("emotion_type", "neutral")
+                memory_info = f"\nEMOTIONAL CONTEXT: User seems {emotion_type} based on recent messages. Adapt your tone accordingly."
+            
+            if message_count > 3:
+                memory_info += f"\nCONVERSATION DEPTH: This is message #{message_count} in your conversation - user expects continuity and personalized responses."
+        
         # Single comprehensive prompt - let Claude handle everything
         comprehensive_prompt = f"""You are a hyper-personalized SMS trading assistant with exceptional financial reasoning abilities. The user just asked: "{message}"
 
@@ -200,6 +302,7 @@ USER PERSONALITY & COMMUNICATION STYLE:
 
 REAL MARKET DATA AVAILABLE:
 {tool_data}
+{memory_info}
 
 YOUR TASK:
 Respond to the user's question naturally and helpfully using your superior analytical reasoning. You have access to real market data above.
@@ -213,6 +316,7 @@ IMPORTANT GUIDELINES:
 6. Be helpful, actionable, and demonstrate deep market understanding
 7. Don't dump unnecessary technical data unless they specifically want it
 8. Use your superior reasoning to connect data points meaningfully
+9. Reference previous conversations naturally if relevant
 
 Key Claude strengths to leverage:
 - Superior at synthesizing multiple data sources
@@ -272,7 +376,13 @@ Generate your response now - be brilliant but concise:"""
             last_topic = context.get("last_topic", "")
             
             if recent_symbols:
-                return f"Previously discussed: {', '.join(recent_symbols[:3])}. Last topic: {last_topic}. User expects continuity."
+                context_text = f"Previously discussed: {', '.join(recent_symbols[:3])}. Last topic: {last_topic}. User expects continuity."
+                
+                # Add memory enhancement info
+                if context.get("memory_enhanced"):
+                    context_text += f" [Enhanced with {context.get('message_count', 0)} message conversation history]"
+                
+                return context_text
             else:
                 return "Continuing conversation with this user."
         else:
@@ -427,7 +537,7 @@ class ClaudeMessageProcessor:
     
     def __init__(self, anthropic_client, ta_service, personality_engine, 
                  cache_service=None, news_service=None, fundamental_tool=None, 
-                 portfolio_service=None, screener_service=None):
+                 portfolio_service=None, screener_service=None, memory_manager=None):
         
         self.claude_agent = ClaudeDataDrivenAgent(
             anthropic_client=anthropic_client,
@@ -435,7 +545,8 @@ class ClaudeMessageProcessor:
             news_service=news_service,
             fundamental_tool=fundamental_tool,
             cache_service=cache_service,
-            personality_engine=personality_engine
+            personality_engine=personality_engine,
+            memory_manager=memory_manager
         )
         
         self.personality_engine = personality_engine
