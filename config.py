@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     eodhd_api_key: Optional[str] = None
     ta_service_url: Optional[str] = "https://mock-ta-service.com"
     
+    # Memory Manager Settings (NEW)
+    pinecone_api_key: Optional[str] = None
+    pinecone_environment: str = "us-east1-gcp"
+    memory_stm_limit: int = 15
+    memory_summary_trigger: int = 10
+    
     # App settings
     environment: str = "development"
     log_level: str = "INFO"
@@ -49,6 +55,7 @@ class Settings(BaseSettings):
             "eodhd_available": bool(self.eodhd_api_key),
             "redis_configured": bool(self.redis_url),
             "mongodb_configured": bool(self.mongodb_url),
+            "memory_available": bool(self.pinecone_api_key and self.openai_api_key),  # NEW
             "testing_mode": self.testing_mode,
             "environment": self.environment,
             "prefer_claude": self.prefer_claude  # NEW
@@ -61,7 +68,20 @@ class Settings(BaseSettings):
             "claude_available": bool(self.anthropic_api_key),
             "prefer_claude": self.prefer_claude,
             "active_provider": "claude" if self.prefer_claude and self.anthropic_api_key else "openai" if self.openai_api_key else "none",
-            "fallback_available": bool(self.openai_api_key and self.anthropic_api_key)
+            "fallback_available": bool(self.openai_api_key and self.anthropic_api_key),
+            "memory_enhanced": bool(self.pinecone_api_key and self.openai_api_key)  # NEW
+        }
+    
+    def get_memory_config(self) -> Dict[str, Any]:
+        """Get memory manager configuration."""
+        return {
+            "pinecone_available": bool(self.pinecone_api_key),
+            "pinecone_environment": self.pinecone_environment,
+            "stm_limit": self.memory_stm_limit,
+            "summary_trigger": self.memory_summary_trigger,
+            "memory_enabled": bool(self.pinecone_api_key and self.openai_api_key),
+            "emotional_intelligence": bool(self.pinecone_api_key),
+            "conversation_continuity": bool(self.pinecone_api_key)
         }
     
     def validate_runtime_requirements(self) -> Dict[str, Any]:
@@ -94,6 +114,8 @@ class Settings(BaseSettings):
             warnings.append("Redis not configured - caching disabled")
         if not capabilities["eodhd_available"]:
             warnings.append("EODHD not configured - market data limited")
+        if not capabilities["memory_available"]:
+            warnings.append("Memory manager not configured - no conversation continuity")
         
         ready_for_production = len(issues) == 0 and not self.testing_mode
         
@@ -103,6 +125,7 @@ class Settings(BaseSettings):
             "warnings": warnings,
             "capabilities": capabilities,
             "ai_config": self.get_ai_config(),
+            "memory_config": self.get_memory_config(),  # NEW
             "testing_mode": self.testing_mode
         }
     
@@ -118,7 +141,8 @@ class Settings(BaseSettings):
                 "stripe": bool(self.stripe_secret_key),
                 "twilio": bool(self.twilio_auth_token),
                 "plaid": bool(self.plaid_secret),
-                "eodhd": bool(self.eodhd_api_key)
+                "eodhd": bool(self.eodhd_api_key),
+                "pinecone": bool(self.pinecone_api_key)  # NEW
             }
         }
     
