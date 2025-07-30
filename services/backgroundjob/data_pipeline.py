@@ -2054,13 +2054,22 @@ class BackgroundDataPipeline:
             # Create new event loop for background thread
             import asyncio
             
-            def run_job():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(job_func())
-                finally:
-                    loop.close()
+
+
+    def run_job():
+        """Run background job with its own event loop"""
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+            # Run the async job
+            loop.run_until_complete(self.daily_data_refresh_job())
+        
+        except Exception as e:
+            logger.error(f"Background job failed: {e}")
+        finally:
+            loop.close()
             
             import threading
             job_thread = threading.Thread(target=run_job)
