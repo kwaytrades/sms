@@ -57,6 +57,103 @@ class EnhancedPersonalityEngine:
             logger.info("🤖 Gemini semantic analysis enabled")
         else:
             logger.warning("⚠️ Gemini API key not provided - falling back to regex detection")
+
+                    # Add this method to your EnhancedPersonalityEngine class in core/personality_engine_v3_gemini.py
+# Insert this method anywhere within the EnhancedPersonalityEngine class
+
+def _create_default_profile(self) -> Dict[str, Any]:
+    """Create default user profile with enhanced v3.0 structure"""
+    from datetime import datetime, timezone
+    
+    return {
+        "profile_version": self.PROFILE_VERSION,
+        "created_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
+        "confidence_score": 0.1,  # Start with low confidence
+        
+        # Communication Style Analysis
+        "communication_style": {
+            "formality": 0.5,  # 0.0 = very casual, 1.0 = very formal
+            "energy": "moderate",  # low, moderate, high, very_high
+            "emoji_usage": 0.0,
+            "message_length": "medium",  # short, medium, long
+            "technical_depth": "basic",  # basic, intermediate, advanced
+            "question_frequency": 0.0,
+            "urgency_patterns": [],
+            "consistency_score": 1.0
+        },
+        
+        # Trading Personality Profile
+        "trading_personality": {
+            "risk_tolerance": "moderate",  # conservative, moderate, aggressive
+            "trading_style": "swing",  # day, swing, long_term, mixed
+            "experience_level": "intermediate",  # novice, intermediate, advanced, expert
+            "common_symbols": [],
+            "sector_preferences": [],
+            "strategy_preferences": [],
+            "decision_making_style": "analytical",  # impulsive, analytical, consensus_seeking
+            "loss_reaction": "neutral"  # emotional, neutral, analytical
+        },
+        
+        # Emotional Intelligence Profile
+        "emotional_intelligence": {
+            "dominant_emotion": "neutral",
+            "emotional_volatility": 0.0,
+            "emotional_consistency": 1.0,
+            "frustration_triggers": [],
+            "excitement_triggers": [],
+            "support_needs": "standard_guidance"
+        },
+        
+        # Context Memory System
+        "context_memory": {
+            "last_discussed_stocks": [],
+            "recent_topics": [],
+            "goals_mentioned": [],
+            "concerns_expressed": [],
+            "relationship_stage": "new",  # new, developing, established
+            "conversation_frequency": "occasional"  # rare, occasional, regular, frequent
+        },
+        
+        # Learning Data
+        "learning_data": {
+            "total_messages": 0,
+            "successful_predictions": 0,
+            "learning_rate": self.DEFAULT_LEARNING_RATE,
+            "last_learning_update": datetime.utcnow().isoformat(),
+            "successful_trades_mentioned": 0,
+            "loss_trades_mentioned": 0,
+            "pattern_recognition_score": 0.0
+        },
+        
+        # Response Adaptation Settings
+        "response_patterns": {
+            "preferred_response_length": "medium",
+            "technical_detail_level": "standard",
+            "humor_acceptance": 0.5,
+            "educational_content_preference": 0.5,
+            "news_update_frequency": "daily"
+        },
+        
+        # Gemini-Enhanced Insights (new in v3.0)
+        "gemini_insights": {
+            "semantic_profile_confidence": 0.0,
+            "last_gemini_analysis": None,
+            "communication_nuances": {},
+            "trading_sentiment_patterns": {},
+            "emotional_depth_analysis": {},
+            "cross_conversation_insights": {}
+        },
+        
+        # Advanced Personalization Metadata
+        "personalization_metadata": {
+            "timezone_detected": None,
+            "session_patterns": {},
+            "response_feedback_loop": [],
+            "a_b_testing_group": "control",
+            "personalization_effectiveness": 0.5
+        }
+    }
         
         # Load authoritative ticker lists for symbol validation
         self.authoritative_tickers = self._load_authoritative_tickers()
