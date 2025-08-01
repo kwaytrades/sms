@@ -1912,3 +1912,33 @@ async def get_all_keys():
         }
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/admin/debug/mongo")
+async def get_mongo_collections():
+    """Check what's in MongoDB"""
+    try:
+        # Get all collection names
+        collections = await db_service.db.list_collection_names()
+        
+        result = {"collections": {}}
+        
+        for collection_name in collections:
+            # Get count and sample documents
+            count = await db_service.db[collection_name].count_documents({})
+            
+            # Get a few sample documents (without sensitive data)
+            samples = []
+            async for doc in db_service.db[collection_name].find({}).limit(3):
+                # Remove _id and any sensitive fields for display
+                if '_id' in doc:
+                    doc['_id'] = str(doc['_id'])
+                samples.append(doc)
+            
+            result["collections"][collection_name] = {
+                "count": count,
+                "samples": samples
+            }
+        
+        return result
+    except Exception as e:
+        return {"error": str(e)}
