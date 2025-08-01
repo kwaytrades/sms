@@ -59,6 +59,120 @@ class Config(BaseSettings):
     database_name: str = "ai"
     prefer_claude: bool = True  # RESTORED: Claude preference setting
     
+    # SIMPLIFIED Plan Limits (Restored Original Approach)
+    free_weekly_limit: int = 10
+    paid_monthly_limit: int = 100
+    pro_daily_cooloff: int = 50
+    
+    # Enhanced Plan Pricing (RESTORED)
+    paid_price: int = 29
+    pro_price: int = 99
+    
+    # Enhanced Subscription Management (RESTORED)
+    retention_discount_percent: int = 50
+    retention_duration_months: int = 3
+    max_retention_offers: int = 2
+    payment_retry_attempts: int = 3
+    
+    # Feature flags (RESTORED + NEW)
+    enable_portfolio_tracking: bool = True
+    enable_real_time_alerts: bool = True
+    enable_advanced_analysis: bool = True
+    enable_options_analysis: bool = True
+    enable_personal_trade_alerts: bool = True
+    enable_portfolio_optimizer: bool = True
+    enable_trading_coach: bool = True
+    
+    # ==========================================
+    # NEW GEMINI CONFIGURATION
+    # ==========================================
+    
+    # Gemini API Configuration
+    gemini_api_key: Optional[str] = None
+    gemini_model: str = "gemini-1.5-flash"
+    gemini_temperature: float = 0.1
+    gemini_max_output_tokens: int = 2048
+    
+    # Personality Analysis Configuration
+    personality_analysis_enabled: bool = True
+    personality_cache_ttl: int = 3600  # 1 hour
+    background_analysis_enabled: bool = True
+    background_analysis_interval: int = 25  # Every 25 conversations
+    
+    # Cost Management
+    gemini_cost_alert_threshold: float = 10.0  # $10 daily threshold
+    gemini_cost_limit: float = 50.0  # $50 daily limit
+    enable_aggressive_caching: bool = False
+    
+    # Performance Optimization
+    max_concurrent_gemini_requests: int = 5
+    personality_analysis_timeout: int = 3000  # 3 seconds
+    fallback_to_regex: bool = True
+    
+    # Response Time Targets
+    target_response_time_ms: int = 4000  # 4 seconds
+    target_analysis_time_ms: int = 800   # 800ms for personality analysis
+    
+    # ==========================================
+    # FEATURE FLAGS (ENHANCED)
+    # ==========================================
+    
+    # Core Features
+    enable_real_time_personality: bool = True
+    enable_background_deep_analysis: bool = True
+    enable_batch_alert_processing: bool = True
+    
+    # Advanced Features
+    enable_global_intelligence: bool = True
+    enable_personality_hooks: bool = True
+    enable_confidence_scoring: bool = True
+    
+    # Development & Testing
+    debug_personality_analysis: bool = False
+    save_analysis_logs: bool = False
+    mock_gemini_responses: bool = False
+    
+    class Config:
+        env_file = ".env"
+    
+    # ==========================================
+    # EXISTING CONFIGURATION (PRESERVED)
+    # ==========================================
+    
+    # Database Configuration
+    mongodb_url: str
+    redis_url: str = "redis://localhost:6379"
+    
+    # API Keys (Existing + Restored)
+    openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None  # RESTORED: Claude support
+    eodhd_api_key: Optional[str] = None
+    marketaux_api_key: Optional[str] = None
+    twilio_account_sid: Optional[str] = None
+    twilio_auth_token: Optional[str] = None
+    twilio_phone_number: Optional[str] = None
+    stripe_secret_key: Optional[str] = None
+    stripe_webhook_secret: Optional[str] = None
+    stripe_paid_price_id: Optional[str] = "price_mock_paid"
+    stripe_pro_price_id: Optional[str] = "price_mock_pro"
+    plaid_client_id: Optional[str] = None
+    plaid_secret: Optional[str] = None
+    plaid_env: str = "sandbox"
+    ta_service_url: Optional[str] = "https://mock-ta-service.com"
+    
+    # Memory Manager Settings (RESTORED)
+    pinecone_api_key: Optional[str] = None
+    pinecone_environment: str = "us-east1-gcp"
+    memory_stm_limit: int = 15
+    memory_summary_trigger: int = 10
+    
+    # App settings
+    environment: str = "development"
+    log_level: str = "INFO"
+    testing_mode: bool = True
+    database_name: str = "ai"
+    prefer_claude: bool = True  # RESTORED: Claude preference setting
+    
     # ==========================================
     # NEW GEMINI CONFIGURATION
     # ==========================================
@@ -592,24 +706,45 @@ class Config(BaseSettings):
 # Initialize settings instance using Pydantic
 settings = Config()
 
-# SIMPLIFIED Plan Limits (Restored Original Structure + Enhanced)
-PLAN_LIMITS = {
-    "free": {
-        "weekly_limit": settings.free_weekly_limit,
-        "price": 0,
-        "features": settings.get_plan_config("free")["features"]
-    },
-    "paid": {
-        "monthly_limit": settings.paid_monthly_limit,
-        "price": settings.paid_price,
-        "features": settings.get_plan_config("paid")["features"]
-    },
-    "pro": {
-        "daily_cooloff": settings.pro_daily_cooloff,
-        "price": settings.pro_price,
-        "features": settings.get_plan_config("pro")["features"]
-    }
-}
+# Initialize the settings after class definition
+try:
+    # Try to access a test attribute to validate the instance
+    test_mongodb = settings.mongodb_url
+    logger.info("✅ Configuration loaded successfully")
+except Exception as e:
+    logger.warning(f"⚠️ Configuration initialization warning: {e}")
+
+# SIMPLIFIED Plan Limits (with safe attribute access)
+def get_plan_limits():
+    """Get plan limits with safe attribute access"""
+    try:
+        return {
+            "free": {
+                "weekly_limit": getattr(settings, 'free_weekly_limit', 10),
+                "price": 0,
+                "features": settings.get_plan_config("free")["features"] if hasattr(settings, 'get_plan_config') else []
+            },
+            "paid": {
+                "monthly_limit": getattr(settings, 'paid_monthly_limit', 100),
+                "price": getattr(settings, 'paid_price', 29),
+                "features": settings.get_plan_config("paid")["features"] if hasattr(settings, 'get_plan_config') else []
+            },
+            "pro": {
+                "daily_cooloff": getattr(settings, 'pro_daily_cooloff', 50),
+                "price": getattr(settings, 'pro_price', 99),
+                "features": settings.get_plan_config("pro")["features"] if hasattr(settings, 'get_plan_config') else []
+            }
+        }
+    except Exception as e:
+        logger.warning(f"⚠️ Error creating plan limits: {e}")
+        return {
+            "free": {"weekly_limit": 10, "price": 0, "features": []},
+            "paid": {"monthly_limit": 100, "price": 29, "features": []},
+            "pro": {"daily_cooloff": 50, "price": 99, "features": []}
+        }
+
+# Create plan limits safely
+PLAN_LIMITS = get_plan_limits()
 
 # Popular tickers for caching (RESTORED)
 POPULAR_TICKERS = [
