@@ -1,4 +1,4 @@
-# ===== main.py - CLAUDE-POWERED WITH BACKGROUND JOBS =====
+# ===== main.py - CLAUDE-POWERED WITH BACKGROUND JOBS + GEMINI PERSONALITY ENGINE =====
 # Standard library imports
 import os
 import sys
@@ -35,6 +35,15 @@ try:
         settings.eodhd_api_key = os.getenv('EODHD_API_KEY')
     if not hasattr(settings, 'ta_service_url'):
         settings.ta_service_url = os.getenv('TA_SERVICE_URL', 'http://localhost:8001')
+    # Add Gemini API key support
+    if not hasattr(settings, 'gemini_api_key'):
+        settings.gemini_api_key = os.getenv('GEMINI_API_KEY')
+    if not hasattr(settings, 'personality_analysis_enabled'):
+        settings.personality_analysis_enabled = os.getenv('PERSONALITY_ANALYSIS_ENABLED', 'true').lower() == 'true'
+    if not hasattr(settings, 'background_analysis_enabled'):
+        settings.background_analysis_enabled = os.getenv('BACKGROUND_ANALYSIS_ENABLED', 'true').lower() == 'true'
+    if not hasattr(settings, 'enable_real_time_personality'):
+        settings.enable_real_time_personality = os.getenv('ENABLE_REAL_TIME_PERSONALITY', 'true').lower() == 'true'
     logger.info("✅ Configuration loaded from config.py")
 except ImportError:
     # Fallback configuration
@@ -53,6 +62,11 @@ except ImportError:
             self.eodhd_api_key = os.getenv('EODHD_API_KEY')
             self.ta_service_url = os.getenv('TA_SERVICE_URL', 'http://localhost:8001')
             self.prefer_claude = os.getenv('PREFER_CLAUDE', 'true').lower() == 'true'
+            # Gemini Personality Analysis settings
+            self.gemini_api_key = os.getenv('GEMINI_API_KEY')
+            self.personality_analysis_enabled = os.getenv('PERSONALITY_ANALYSIS_ENABLED', 'true').lower() == 'true'
+            self.background_analysis_enabled = os.getenv('BACKGROUND_ANALYSIS_ENABLED', 'true').lower() == 'true'
+            self.enable_real_time_personality = os.getenv('ENABLE_REAL_TIME_PERSONALITY', 'true').lower() == 'true'
             # Memory Manager settings
             self.pinecone_api_key = os.getenv('PINECONE_API_KEY')
             self.pinecone_environment = os.getenv('PINECONE_ENVIRONMENT', 'us-east1-gcp')
@@ -175,13 +189,29 @@ except Exception as e:
     KeyBuilder = None
     logger.error(f"❌ KeyBuilder failed: {e}")
 
-# Import PersonalityEngine from separate file
+# Import Enhanced Personality Engine with Gemini support
 try:
-    from core.personality_engine import UserPersonalityEngine
-    logger.info("✅ UserPersonalityEngine imported")
+    from core.personality_engine_v3_gemini import EnhancedPersonalityEngine
+    logger.info("✅ Enhanced PersonalityEngine with Gemini imported")
+    PERSONALITY_ENGINE_TYPE = "gemini_enhanced"
 except ImportError as e:
-    UserPersonalityEngine = None
-    logger.error(f"❌ UserPersonalityEngine failed: {e}")
+    logger.warning(f"⚠️ Enhanced PersonalityEngine with Gemini failed: {e}")
+    try:
+        from core.personality_engine import UserPersonalityEngine as EnhancedPersonalityEngine
+        logger.info("✅ Fallback PersonalityEngine imported")
+        PERSONALITY_ENGINE_TYPE = "regex_fallback"
+    except ImportError as e2:
+        EnhancedPersonalityEngine = None
+        PERSONALITY_ENGINE_TYPE = "none"
+        logger.error(f"❌ All PersonalityEngine imports failed: {e2}")
+
+# Import Gemini service
+try:
+    from services.gemini_service import GeminiPersonalityService
+    logger.info("✅ GeminiPersonalityService imported")
+except ImportError as e:
+    GeminiPersonalityService = None
+    logger.warning(f"⚠️ GeminiPersonalityService failed: {e}")
 
 # Configure logging
 logger.remove()
@@ -204,6 +234,7 @@ hybrid_agent = None
 active_agent = None
 memory_manager = None
 personality_engine = None
+gemini_service = None
 
 # Background job services
 background_pipeline = None
@@ -212,12 +243,12 @@ options_analyzer = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application startup and shutdown with Claude support and background jobs"""
+    """Application startup and shutdown with Claude support, background jobs, and Gemini personality engine"""
     global db_service, openai_service, anthropic_client, twilio_service, ta_service, news_service
     global fundamental_tool, cache_service, openai_agent, claude_agent, hybrid_agent, active_agent
-    global background_pipeline, cached_screener, options_analyzer, memory_manager, personality_engine
+    global background_pipeline, cached_screener, options_analyzer, memory_manager, personality_engine, gemini_service
     
-    logger.info("🚀 Starting SMS Trading Bot with Claude-Powered Agent and Background Jobs...")
+    logger.info("🚀 Starting SMS Trading Bot with Claude-Powered Agent, Background Jobs, and Gemini Personality Engine...")
     
     try:
         # Initialize core services
@@ -235,10 +266,37 @@ async def lifespan(app: FastAPI):
             db_service.key_builder = KeyBuilder(db_service.redis, db_service.db)
             logger.info("🔧 KeyBuilder initialized")
         
-        # Initialize PersonalityEngine with KeyBuilder support
-        if UserPersonalityEngine:
-            personality_engine = UserPersonalityEngine(db_service=db_service)
-            logger.info("✅ Personality Engine initialized with KeyBuilder support")
+        # Initialize Gemini service for personality analysis
+        if GeminiPersonalityService and settings.gemini_api_key and settings.personality_analysis_enabled:
+            try:
+                gemini_service = GeminiPersonalityService(api_key=settings.gemini_api_key)
+                logger.info("🤖 Gemini personality service initialized")
+            except Exception as e:
+                logger.warning(f"⚠️ Gemini service initialization failed: {e}")
+                gemini_service = None
+        else:
+            if not settings.gemini_api_key:
+                logger.info("⚠️ Gemini service disabled - missing GEMINI_API_KEY")
+            elif not settings.personality_analysis_enabled:
+                logger.info("⚠️ Gemini service disabled - PERSONALITY_ANALYSIS_ENABLED=false")
+            else:
+                logger.info("⚠️ Gemini service disabled - GeminiPersonalityService not available")
+        
+        # Initialize Enhanced PersonalityEngine with Gemini support
+        if EnhancedPersonalityEngine:
+            try:
+                if PERSONALITY_ENGINE_TYPE == "gemini_enhanced" and gemini_service:
+                    personality_engine = EnhancedPersonalityEngine(
+                        db_service=db_service,
+                        gemini_api_key=settings.gemini_api_key
+                    )
+                    logger.info("✅ Enhanced Personality Engine with Gemini initialized")
+                else:
+                    personality_engine = EnhancedPersonalityEngine(db_service=db_service)
+                    logger.info("✅ Enhanced Personality Engine with fallback initialized")
+            except Exception as e:
+                logger.error(f"❌ Enhanced Personality Engine initialization failed: {e}")
+                personality_engine = None
         
         if OpenAIService:
             openai_service = OpenAIService()
@@ -387,7 +445,7 @@ async def lifespan(app: FastAPI):
                     kwargs['db_service'] = db_service
                 
                 openai_agent = ComprehensiveMessageProcessor(**kwargs)
-                logger.info("✅ OpenAI Agent with KeyBuilder support initialized")
+                logger.info("✅ OpenAI Agent with Gemini-Enhanced Personality support initialized")
                     
             except Exception as e:
                 logger.error(f"❌ OpenAI Agent initialization failed: {e}")
@@ -405,28 +463,28 @@ async def lifespan(app: FastAPI):
                 memory_manager=memory_manager,
                 db_service=db_service
             )
-            logger.info("✅ Claude Agent with Memory initialized")
+            logger.info("✅ Claude Agent with Gemini-Enhanced Personality initialized")
         
         # Initialize hybrid agent if both are available
         if HybridProcessor and claude_agent and openai_agent:
             hybrid_agent = HybridProcessor(claude_agent, openai_agent)
-            logger.info("✅ Hybrid Agent initialized")
+            logger.info("✅ Hybrid Agent with Gemini-Enhanced Personality initialized")
         
         # Determine active agent based on preference and availability
         prefer_claude = getattr(settings, 'prefer_claude', True)  # Default to preferring Claude
         
         if prefer_claude and claude_agent:
             active_agent = claude_agent
-            agent_type = "Claude (Primary)"
+            agent_type = "Claude (Primary) + Gemini Personality"
         elif hybrid_agent:
             active_agent = hybrid_agent
-            agent_type = "Hybrid (Claude + OpenAI)"
+            agent_type = "Hybrid (Claude + OpenAI) + Gemini Personality"
         elif claude_agent:
             active_agent = claude_agent
-            agent_type = "Claude (Only Available)"
+            agent_type = "Claude (Only Available) + Gemini Personality"
         elif openai_agent:
             active_agent = openai_agent
-            agent_type = "OpenAI (Fallback)"
+            agent_type = "OpenAI (Fallback) + Gemini Personality"
         else:
             active_agent = None
             agent_type = "None Available"
@@ -436,8 +494,10 @@ async def lifespan(app: FastAPI):
         logger.info(f"🔧 Available Agents: Claude={claude_agent is not None}, OpenAI={openai_agent is not None}, Hybrid={hybrid_agent is not None}")
         logger.info(f"📊 Background Jobs: Pipeline={background_pipeline is not None}, Screener={cached_screener is not None}, Options={options_analyzer is not None}")
         logger.info(f"🧠 Memory Manager: {memory_manager is not None}")
-        logger.info(f"👤 Personality Engine: {personality_engine is not None} (KeyBuilder: {db_service is not None and hasattr(db_service, 'key_builder')})")
-        logger.info("✅ Startup completed")
+        logger.info(f"👤 Personality Engine: {personality_engine is not None} (Type: {PERSONALITY_ENGINE_TYPE})")
+        logger.info(f"🤖 Gemini Service: {gemini_service is not None}")
+        logger.info(f"🔧 KeyBuilder: {db_service is not None and hasattr(db_service, 'key_builder')}")
+        logger.info("✅ Startup completed with Gemini-Enhanced Personality Intelligence")
         
     except Exception as e:
         logger.error(f"❌ Startup failed: {e}")
@@ -464,8 +524,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SMS Trading Bot",
-    description="Claude-Powered SMS Trading Assistant with Background Data Pipeline",
-    version="4.1.0",
+    description="Claude-Powered SMS Trading Assistant with Background Data Pipeline and Gemini Personality Engine",
+    version="4.2.0",
     lifespan=lifespan
 )
 
@@ -476,9 +536,9 @@ async def root():
     return {
         "message": "SMS Trading Bot API",
         "status": "running",
-        "version": "4.1.0",
+        "version": "4.2.0",
         "agent_type": get_agent_type(),
-        "architecture": "claude_powered_with_background_jobs",
+        "architecture": "claude_powered_with_background_jobs_gemini_personality",
         "services": {
             "database": db_service is not None,
             "cache": cache_service is not None,
@@ -493,29 +553,31 @@ async def root():
             "cached_screener": cached_screener is not None,
             "options_analyzer": options_analyzer is not None,
             "memory_manager": memory_manager is not None,
-            "key_builder": db_service is not None and hasattr(db_service, 'key_builder')
+            "key_builder": db_service is not None and hasattr(db_service, 'key_builder'),
+            "gemini_personality": gemini_service is not None,
+            "personality_engine_type": PERSONALITY_ENGINE_TYPE
         }
     }
 
 def get_agent_type():
     """Get current active agent type"""
     if active_agent == claude_agent:
-        return "claude_primary"
+        return "claude_primary_gemini_personality"
     elif active_agent == hybrid_agent:
-        return "hybrid_claude_openai"
+        return "hybrid_claude_openai_gemini_personality"
     elif active_agent == openai_agent:
-        return "openai_fallback"
+        return "openai_fallback_gemini_personality"
     else:
         return "none_available"
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint with Claude status and background jobs"""
+    """Health check endpoint with Claude status, background jobs, and Gemini personality"""
     try:
         return {
             "status": "healthy",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "version": "4.1.0",
+            "version": "4.2.0",
             "agent_type": get_agent_type(),
             "services": {
                 "openai": "available" if openai_service else "unavailable",
@@ -529,12 +591,21 @@ async def health_check():
                 "claude_agent": "available" if claude_agent else "unavailable",
                 "hybrid_agent": "available" if hybrid_agent else "unavailable",
                 "memory_manager": "available" if memory_manager else "unavailable",
-                "key_builder": "available" if db_service and hasattr(db_service, 'key_builder') else "unavailable"
+                "key_builder": "available" if db_service and hasattr(db_service, 'key_builder') else "unavailable",
+                "gemini_service": "available" if gemini_service else "unavailable",
+                "personality_engine": "available" if personality_engine else "unavailable"
             },
             "background_jobs": {
                 "data_pipeline": "active" if background_pipeline else "inactive",
                 "cached_screener": "available" if cached_screener else "unavailable",
                 "options_analyzer": "available" if options_analyzer else "unavailable"
+            },
+            "personality_features": {
+                "engine_type": PERSONALITY_ENGINE_TYPE,
+                "gemini_enabled": gemini_service is not None,
+                "analysis_enabled": settings.personality_analysis_enabled,
+                "background_analysis": settings.background_analysis_enabled,
+                "real_time_personality": settings.enable_real_time_personality
             },
             "preferences": {
                 "prefer_claude": settings.prefer_claude,
@@ -546,11 +617,11 @@ async def health_check():
         logger.error(f"Health check error: {e}")
         return JSONResponse(status_code=503, content={"status": "error", "error": str(e)})
 
-# ===== SMS WEBHOOK (CLAUDE-POWERED) =====
+# ===== SMS WEBHOOK (CLAUDE-POWERED WITH GEMINI PERSONALITY) =====
 
 @app.post("/webhook/sms")
 async def sms_webhook(request: Request):
-    """Handle incoming SMS messages with Claude-powered processing"""
+    """Handle incoming SMS messages with Claude-powered processing and Gemini personality analysis"""
     try:
         form_data = await request.form()
         from_number = form_data.get('From')
@@ -559,7 +630,7 @@ async def sms_webhook(request: Request):
         if not from_number or not message_body:
             return PlainTextResponse("Missing required fields", status_code=400)
         
-        # Process with Claude-powered agent
+        # Process with Claude-powered agent and Gemini personality analysis
         response_text = await process_sms_message(message_body, from_number)
         
         # Return Twilio XML response
@@ -573,14 +644,14 @@ async def sms_webhook(request: Request):
         return PlainTextResponse("Internal error", status_code=500)
 
 async def process_sms_message(message_body: str, phone_number: str) -> str:
-    """SMS processing with Claude-powered agent"""
+    """SMS processing with Claude-powered agent and Gemini personality analysis"""
     
     start_time = time.time()
     
     try:
         logger.info(f"📱 Processing: '{message_body}' from {phone_number}")
         
-        # Use active agent (Claude preferred)
+        # Use active agent (Claude preferred with Gemini personality)
         if active_agent:
             response_text = await active_agent.process_message(message_body, phone_number)
             processing_time = time.time() - start_time
@@ -607,6 +678,105 @@ async def process_sms_message(message_body: str, phone_number: str) -> str:
             await twilio_service.send_message(phone_number, error_response)
         
         return error_response
+
+# ===== GEMINI PERSONALITY ADMIN ENDPOINTS =====
+
+@app.get("/admin/personality/gemini/stats")
+async def get_gemini_personality_stats():
+    """Get Gemini personality analysis statistics"""
+    if not personality_engine or PERSONALITY_ENGINE_TYPE != "gemini_enhanced":
+        return {"error": "Gemini personality engine not available"}
+    
+    try:
+        stats = personality_engine.get_gemini_usage_stats()
+        return {
+            "engine_type": PERSONALITY_ENGINE_TYPE,
+            "gemini_stats": stats,
+            "total_profiles": len(personality_engine.user_profiles) if hasattr(personality_engine, 'user_profiles') else 0,
+            "analysis_method": "gemini_semantic" if gemini_service else "regex_fallback"
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/admin/personality/gemini/optimize-costs")
+async def optimize_gemini_costs():
+    """Optimize Gemini personality analysis costs"""
+    if not personality_engine or PERSONALITY_ENGINE_TYPE != "gemini_enhanced":
+        return {"error": "Gemini personality engine not available"}
+    
+    try:
+        optimization_results = await personality_engine.optimize_analysis_costs()
+        return {
+            "optimization_completed": True,
+            "results": optimization_results,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/admin/personality/background-analysis/{user_id}")
+async def trigger_background_personality_analysis(user_id: str):
+    """Trigger background deep personality analysis for a user"""
+    if not personality_engine or PERSONALITY_ENGINE_TYPE != "gemini_enhanced":
+        return {"error": "Gemini personality engine not available"}
+    
+    if not settings.background_analysis_enabled:
+        return {"error": "Background analysis disabled"}
+    
+    try:
+        # Get conversation history (this would need to be implemented based on your data storage)
+        conversation_history = []  # You'd fetch this from your database
+        
+        result = await personality_engine.run_background_deep_analysis(
+            user_id, 
+            conversation_history
+        )
+        
+        return {
+            "analysis_triggered": True,
+            "result": result,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/admin/personality/test/{user_id}")
+async def test_personality_analysis(user_id: str, message: str = Query("What do you think about AAPL stock?")):
+    """Test personality analysis for a user"""
+    if not personality_engine:
+        return {"error": "Personality engine not available"}
+    
+    try:
+        if PERSONALITY_ENGINE_TYPE == "gemini_enhanced":
+            # Test Gemini analysis
+            analysis = await personality_engine.run_comprehensive_analysis(
+                message, 
+                {"user_id": user_id, "test": True}
+            )
+            
+            return {
+                "user_id": user_id,
+                "test_message": message,
+                "analysis_method": analysis.analysis_method,
+                "confidence_score": analysis.confidence_score,
+                "processing_time_ms": analysis.processing_time_ms,
+                "communication_insights": analysis.communication_insights,
+                "trading_insights": analysis.trading_insights,
+                "emotional_state": analysis.emotional_state,
+                "engine_type": PERSONALITY_ENGINE_TYPE
+            }
+        else:
+            # Test fallback analysis
+            analysis = await personality_engine.analyze_and_learn(user_id, message)
+            return {
+                "user_id": user_id,
+                "test_message": message,
+                "analysis": analysis,
+                "engine_type": PERSONALITY_ENGINE_TYPE
+            }
+            
+    except Exception as e:
+        return {"error": str(e)}
 
 # ===== MEMORY MANAGER ADMIN ENDPOINTS =====
 
@@ -1057,13 +1227,13 @@ async def test_options_analyzer(symbol: str):
 
 @app.get("/admin")
 async def admin_dashboard():
-    """Admin dashboard with Claude status and background jobs"""
+    """Admin dashboard with Claude status, background jobs, and Gemini personality"""
     try:
         return {
-            "title": "SMS Trading Bot Admin - Claude-Powered with Background Jobs + KeyBuilder",
+            "title": "SMS Trading Bot Admin - Claude-Powered with Background Jobs + KeyBuilder + Gemini Personality",
             "status": "operational",
-            "version": "4.1.0",
-            "architecture": "claude_powered_with_background_jobs_keybuilder",
+            "version": "4.2.0",
+            "architecture": "claude_powered_with_background_jobs_keybuilder_gemini_personality",
             "agent_type": get_agent_type(),
             "services": {
                 "database": "connected" if db_service else "disconnected",
@@ -1075,7 +1245,9 @@ async def admin_dashboard():
                 "claude_agent": "active" if claude_agent else "inactive",
                 "hybrid_agent": "active" if hybrid_agent else "inactive",
                 "memory_manager": "active" if memory_manager else "inactive",
-                "key_builder": "active" if db_service and hasattr(db_service, 'key_builder') else "inactive"
+                "key_builder": "active" if db_service and hasattr(db_service, 'key_builder') else "inactive",
+                "gemini_service": "active" if gemini_service else "inactive",
+                "personality_engine": "active" if personality_engine else "inactive"
             },
             "background_jobs": {
                 "data_pipeline": "active" if background_pipeline else "inactive",
@@ -1086,6 +1258,15 @@ async def admin_dashboard():
                     "weekly_cleanup": "Sunday 02:00 AM ET"
                 }
             },
+            "personality_intelligence": {
+                "engine_type": PERSONALITY_ENGINE_TYPE,
+                "gemini_enabled": gemini_service is not None,
+                "semantic_analysis": PERSONALITY_ENGINE_TYPE == "gemini_enhanced",
+                "analysis_enabled": settings.personality_analysis_enabled,
+                "background_analysis": settings.background_analysis_enabled,
+                "real_time_personality": settings.enable_real_time_personality,
+                "cost_optimization": "available"
+            },
             "ai_providers": {
                 "openai": {
                     "available": openai_service is not None,
@@ -1095,13 +1276,17 @@ async def admin_dashboard():
                     "available": anthropic_client is not None,
                     "agent_ready": claude_agent is not None
                 },
+                "gemini": {
+                    "available": gemini_service is not None,
+                    "personality_analysis": PERSONALITY_ENGINE_TYPE == "gemini_enhanced"
+                },
                 "hybrid": {
                     "available": hybrid_agent is not None,
                     "active": active_agent == hybrid_agent
                 }
             },
             "users": {
-                "total_profiles": len(personality_engine.user_profiles) if personality_engine else 0
+                "total_profiles": len(personality_engine.user_profiles) if personality_engine and hasattr(personality_engine, 'user_profiles') else 0
             },
             "features": {
                 "claude_reasoning": claude_agent is not None,
@@ -1116,7 +1301,10 @@ async def admin_dashboard():
                 "options_analysis": options_analyzer is not None,
                 "emotional_intelligence": memory_manager is not None,
                 "memory_enhanced": memory_manager is not None,
-                "unified_key_management": db_service is not None and hasattr(db_service, 'key_builder')
+                "unified_key_management": db_service is not None and hasattr(db_service, 'key_builder'),
+                "gemini_personality_analysis": PERSONALITY_ENGINE_TYPE == "gemini_enhanced",
+                "semantic_understanding": gemini_service is not None,
+                "10x_personality_accuracy": PERSONALITY_ENGINE_TYPE == "gemini_enhanced"
             },
             "preferences": {
                 "prefer_claude": settings.prefer_claude,
@@ -1131,7 +1319,7 @@ async def admin_dashboard():
 
 @app.post("/debug/test-message")
 async def test_message_processing(request: Request):
-    """Test Claude-powered message processing"""
+    """Test Claude-powered message processing with Gemini personality analysis"""
     try:
         data = await request.json()
         message = data.get('message', 'Would you advise buying PLTR right now?')
@@ -1141,13 +1329,13 @@ async def test_message_processing(request: Request):
         # Select agent based on force_agent parameter
         if force_agent == 'claude' and claude_agent:
             test_agent = claude_agent
-            agent_used = 'claude_forced'
+            agent_used = 'claude_forced_gemini_personality'
         elif force_agent == 'openai' and openai_agent:
             test_agent = openai_agent
-            agent_used = 'openai_forced'
+            agent_used = 'openai_forced_gemini_personality'
         elif force_agent == 'hybrid' and hybrid_agent:
             test_agent = hybrid_agent
-            agent_used = 'hybrid_forced'
+            agent_used = 'hybrid_forced_gemini_personality'
         else:
             test_agent = active_agent
             agent_used = get_agent_type()
@@ -1174,6 +1362,12 @@ async def test_message_processing(request: Request):
                 "cached_screener": cached_screener is not None,
                 "options_analyzer": options_analyzer is not None
             },
+            "personality_features": {
+                "engine_type": PERSONALITY_ENGINE_TYPE,
+                "gemini_enabled": gemini_service is not None,
+                "semantic_analysis": PERSONALITY_ENGINE_TYPE == "gemini_enhanced",
+                "analysis_enabled": settings.personality_analysis_enabled
+            },
             "features_active": {
                 "claude_reasoning": claude_agent is not None,
                 "conversation_awareness": active_agent is not None,
@@ -1183,7 +1377,9 @@ async def test_message_processing(request: Request):
                 "cached_screening": background_pipeline is not None,
                 "options_analysis": options_analyzer is not None,
                 "memory_enhanced": memory_manager is not None,
-                "key_builder": db_service is not None and hasattr(db_service, 'key_builder')
+                "key_builder": db_service is not None and hasattr(db_service, 'key_builder'),
+                "gemini_personality": PERSONALITY_ENGINE_TYPE == "gemini_enhanced",
+                "10x_personality_intelligence": gemini_service is not None
             }
         }
         
@@ -1193,25 +1389,30 @@ async def test_message_processing(request: Request):
 
 @app.get("/debug/diagnose")
 async def diagnose_services():
-    """Service diagnosis with Claude status and background jobs"""
+    """Service diagnosis with Claude status, background jobs, and Gemini personality"""
     diagnosis = {
         "timestamp": datetime.now().isoformat(),
         "environment_variables": {
             "OPENAI_API_KEY": "Set" if settings.openai_api_key else "Missing",
             "ANTHROPIC_API_KEY": "Set" if settings.anthropic_api_key else "Missing",
+            "GEMINI_API_KEY": "Set" if settings.gemini_api_key else "Missing",
             "EODHD_API_KEY": "Set" if settings.eodhd_api_key else "Missing",
             "MONGODB_URL": "Set" if settings.mongodb_url else "Missing",
             "REDIS_URL": "Set" if settings.redis_url else "Missing",
             "TWILIO_ACCOUNT_SID": "Set" if settings.twilio_account_sid else "Missing",
             "TA_SERVICE_URL": "Set" if settings.ta_service_url else "Missing",
             "PREFER_CLAUDE": settings.prefer_claude,
-            "PINECONE_API_KEY": "Set" if settings.pinecone_api_key else "Missing"
+            "PINECONE_API_KEY": "Set" if settings.pinecone_api_key else "Missing",
+            "PERSONALITY_ANALYSIS_ENABLED": settings.personality_analysis_enabled,
+            "BACKGROUND_ANALYSIS_ENABLED": settings.background_analysis_enabled,
+            "ENABLE_REAL_TIME_PERSONALITY": settings.enable_real_time_personality
         },
         "service_status": {
             "database": db_service is not None,
             "cache": cache_service is not None,
             "openai": openai_service is not None,
             "anthropic": anthropic_client is not None,
+            "gemini": gemini_service is not None,
             "twilio": twilio_service is not None,
             "technical_analysis": ta_service is not None,
             "news_sentiment": news_service is not None,
@@ -1223,9 +1424,16 @@ async def diagnose_services():
             "cached_screener": cached_screener is not None,
             "options_analyzer": options_analyzer is not None,
             "memory_manager": memory_manager is not None,
-            "key_builder": db_service is not None and hasattr(db_service, 'key_builder')
+            "key_builder": db_service is not None and hasattr(db_service, 'key_builder'),
+            "personality_engine": personality_engine is not None
         },
-        "architecture": "claude_powered_with_background_jobs_keybuilder",
+        "personality_intelligence": {
+            "engine_type": PERSONALITY_ENGINE_TYPE,
+            "gemini_available": gemini_service is not None,
+            "semantic_analysis": PERSONALITY_ENGINE_TYPE == "gemini_enhanced",
+            "fallback_ready": PERSONALITY_ENGINE_TYPE == "regex_fallback"
+        },
+        "architecture": "claude_powered_with_background_jobs_keybuilder_gemini_personality",
         "active_agent": get_agent_type(),
         "recommendations": []
     }
@@ -1235,6 +1443,8 @@ async def diagnose_services():
         diagnosis["recommendations"].append("❌ Set ANTHROPIC_API_KEY for Claude-powered responses")
     if not settings.openai_api_key:
         diagnosis["recommendations"].append("⚠️ Set OPENAI_API_KEY for OpenAI fallback")
+    if not settings.gemini_api_key:
+        diagnosis["recommendations"].append("⚠️ Set GEMINI_API_KEY for 10x personality intelligence upgrade")
     if not settings.eodhd_api_key:
         diagnosis["recommendations"].append("❌ Set EODHD_API_KEY for market data and background jobs")
     if not settings.mongodb_url:
@@ -1249,33 +1459,39 @@ async def diagnose_services():
         diagnosis["recommendations"].append("⚠️ Memory manager not available - check Pinecone and OpenAI API keys")
     if not (db_service and hasattr(db_service, 'key_builder')):
         diagnosis["recommendations"].append("⚠️ KeyBuilder not available - check DatabaseService initialization")
+    if not gemini_service and settings.gemini_api_key:
+        diagnosis["recommendations"].append("⚠️ Gemini service failed to initialize - check API key and library")
+    if PERSONALITY_ENGINE_TYPE == "regex_fallback":
+        diagnosis["recommendations"].append("⚠️ Using fallback personality engine - enable Gemini for 10x intelligence")
     
-    if claude_agent and openai_agent and background_pipeline and memory_manager and (db_service and hasattr(db_service, 'key_builder')):
-        diagnosis["recommendations"].append("✅ All systems operational - Claude + OpenAI + Background Jobs + Memory + KeyBuilder active!")
-    elif claude_agent and background_pipeline and memory_manager and (db_service and hasattr(db_service, 'key_builder')):
-        diagnosis["recommendations"].append("✅ Claude agent + Background jobs + Memory + KeyBuilder operational - excellent setup!")
-    elif claude_agent and memory_manager and (db_service and hasattr(db_service, 'key_builder')):
-        diagnosis["recommendations"].append("✅ Claude agent + Memory + KeyBuilder operational - enhanced conversations available!")
-    elif background_pipeline and (db_service and hasattr(db_service, 'key_builder')):
-        diagnosis["recommendations"].append("✅ Background jobs + KeyBuilder operational - cached data with unified management!")
-    elif (db_service and hasattr(db_service, 'key_builder')):
-        diagnosis["recommendations"].append("✅ KeyBuilder operational - unified data management available!")
+    if claude_agent and openai_agent and background_pipeline and memory_manager and (db_service and hasattr(db_service, 'key_builder')) and gemini_service:
+        diagnosis["recommendations"].append("✅ All systems operational - Claude + OpenAI + Background Jobs + Memory + KeyBuilder + Gemini Personality active!")
+    elif claude_agent and background_pipeline and memory_manager and (db_service and hasattr(db_service, 'key_builder')) and gemini_service:
+        diagnosis["recommendations"].append("✅ Claude agent + Background jobs + Memory + KeyBuilder + Gemini Personality operational - excellent setup!")
+    elif claude_agent and memory_manager and (db_service and hasattr(db_service, 'key_builder')) and gemini_service:
+        diagnosis["recommendations"].append("✅ Claude agent + Memory + KeyBuilder + Gemini Personality operational - enhanced conversations available!")
+    elif background_pipeline and (db_service and hasattr(db_service, 'key_builder')) and gemini_service:
+        diagnosis["recommendations"].append("✅ Background jobs + KeyBuilder + Gemini Personality operational - intelligent cached data!")
+    elif (db_service and hasattr(db_service, 'key_builder')) and gemini_service:
+        diagnosis["recommendations"].append("✅ KeyBuilder + Gemini Personality operational - unified data with 10x intelligence!")
+    elif gemini_service:
+        diagnosis["recommendations"].append("✅ Gemini Personality operational - 10x personality intelligence available!")
     
     if not diagnosis["recommendations"]:
         diagnosis["recommendations"].append("✅ All systems operational!")
     
     return diagnosis
 
-# ===== CLAUDE TEST INTERFACE =====
+# ===== GEMINI TEST INTERFACE =====
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_interface():
-    """Test interface with Claude vs OpenAI comparison and background job status"""
+    """Test interface with Claude vs OpenAI comparison, background job status, and Gemini personality features"""
     return """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SMS Trading Bot - Claude + Memory + Background Jobs + KeyBuilder Test Interface</title>
+    <title>SMS Trading Bot - Claude + Memory + Background Jobs + KeyBuilder + Gemini Personality Test Interface</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
         .form-group { margin-bottom: 15px; }
@@ -1286,6 +1502,7 @@ async def test_interface():
         button.background { background: #10B981; }
         button.memory { background: #EC4899; }
         button.keybuilder { background: #F59E0B; }
+        button.gemini { background: #4285F4; }
         button.compare { background: #EF4444; }
         .result { margin-top: 20px; padding: 15px; border-radius: 4px; background: #f8f9fa; }
         .comparison { display: flex; gap: 20px; }
@@ -1299,11 +1516,12 @@ async def test_interface():
         .badge.background { background: #6366F1; }
         .badge.memory { background: #EC4899; }
         .badge.keybuilder { background: #F59E0B; }
+        .badge.gemini { background: #4285F4; }
         .status-panel { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
     </style>
 </head>
 <body>
-    <h1>SMS Trading Bot - Claude + Memory + Background Jobs + KeyBuilder Test Interface</h1>
+    <h1>SMS Trading Bot - Claude + Memory + Background Jobs + KeyBuilder + Gemini Personality Test Interface</h1>
     <div>
         <span class="badge">Claude-Powered</span>
         <span class="badge openai">OpenAI Fallback</span>
@@ -1311,6 +1529,7 @@ async def test_interface():
         <span class="badge background">Background Pipeline</span>
         <span class="badge memory">Memory Enhanced</span>
         <span class="badge keybuilder">KeyBuilder Unified</span>
+        <span class="badge gemini">Gemini 10x Personality</span>
     </div>
     
     <div class="status-panel">
@@ -1348,6 +1567,13 @@ async def test_interface():
         <button class="keybuilder" onclick="testKeyBuilder('migrate')">Migrate Users</button>
     </div>
     
+    <div class="quick-tests">
+        <button class="gemini" onclick="testGeminiPersonality('stats')">Gemini Stats</button>
+        <button class="gemini" onclick="testGeminiPersonality('analyze')">Test Analysis</button>
+        <button class="gemini" onclick="testGeminiPersonality('optimize')">Optimize Costs</button>
+        <button class="gemini" onclick="testGeminiPersonality('background')">Background Analysis</button>
+    </div>
+    
     <form onsubmit="testSMS(event)">
         <div class="form-group">
             <label>Phone Number:</label>
@@ -1362,7 +1588,7 @@ async def test_interface():
         <div class="form-group">
             <label>Test Agent:</label>
             <select id="agent">
-                <option value="">Active Agent (Claude Preferred)</option>
+                <option value="">Active Agent (Claude + Gemini Preferred)</option>
                 <option value="claude">Force Claude</option>
                 <option value="openai">Force OpenAI</option>
                 <option value="hybrid">Force Hybrid</option>
@@ -1392,11 +1618,13 @@ async def test_interface():
                     <strong>Agent:</strong> ${data.agent_type} | 
                     <strong>Claude:</strong> ${data.services.claude_agent} | 
                     <strong>OpenAI:</strong> ${data.services.openai_agent} | 
+                    <strong>Gemini:</strong> ${data.services.gemini_service} | 
                     <strong>Memory:</strong> ${data.services.memory_manager} | 
                     <strong>KeyBuilder:</strong> ${data.services.key_builder} | 
                     <strong>Background Pipeline:</strong> ${data.background_jobs.data_pipeline} | 
                     <strong>Screener:</strong> ${data.background_jobs.cached_screener} | 
-                    <strong>Options:</strong> ${data.background_jobs.options_analyzer}
+                    <strong>Options:</strong> ${data.background_jobs.options_analyzer} |
+                    <strong>Personality:</strong> ${data.personality_features?.engine_type || 'unknown'}
                 `;
             } catch (error) {
                 document.getElementById('system-status').innerHTML = 'Error loading status';
@@ -1406,6 +1634,39 @@ async def test_interface():
         function quickTest(message) {
             document.getElementById('message').value = message;
             testSMS(new Event('submit'));
+        }
+        
+        async function testGeminiPersonality(testType) {
+            document.getElementById('result').innerHTML = `<div class="result">🔄 Testing Gemini Personality ${testType}...</div>`;
+            
+            try {
+                let url = '';
+                let method = 'GET';
+                
+                if (testType === 'stats') {
+                    url = '/admin/personality/gemini/stats';
+                } else if (testType === 'analyze') {
+                    url = '/admin/personality/test/+1555TEST?message=Hey, what do you think about AAPL? I\'m bullish!';
+                } else if (testType === 'optimize') {
+                    url = '/admin/personality/gemini/optimize-costs';
+                    method = 'POST';
+                } else if (testType === 'background') {
+                    url = '/admin/personality/background-analysis/+1555TEST';
+                    method = 'POST';
+                }
+                
+                const response = await fetch(url, { method });
+                const data = await response.json();
+                
+                document.getElementById('result').innerHTML = 
+                    `<div class="result">
+                        <h3>✅ Gemini Personality ${testType}</h3>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </div>`;
+            } catch (error) {
+                document.getElementById('result').innerHTML = 
+                    `<div class="result" style="background: #f8d7da;">❌ Error: ${error.message}</div>`;
+            }
         }
         
         async function testKeyBuilder(testType) {
@@ -1505,6 +1766,7 @@ async def test_interface():
                         <p><strong>Context-Aware Response:</strong> ${data2.bot_response}</p>
                         <p><strong>KeyBuilder Features:</strong> ${data2.features_active?.key_builder ? '✅' : '❌'} Unified Data</p>
                         <p><strong>Memory Features:</strong> ${data2.features_active?.memory_enhanced ? '✅' : '❌'} Enhanced</p>
+                        <p><strong>Gemini Personality:</strong> ${data2.features_active?.gemini_personality ? '✅' : '❌'} 10x Intelligence</p>
                     </div>`;
             } catch (error) {
                 document.getElementById('result').innerHTML = 
@@ -1600,11 +1862,14 @@ async def test_interface():
                             <p><strong>Response:</strong> ${data.bot_response}</p>
                             <p><strong>KeyBuilder:</strong> ${data.features_active?.key_builder ? '✅' : '❌'}</p>
                             <p><strong>Memory Enhanced:</strong> ${data.features_active?.memory_enhanced ? '✅' : '❌'}</p>
+                            <p><strong>Gemini Personality:</strong> ${data.features_active?.gemini_personality ? '✅' : '❌'}</p>
+                            <p><strong>10x Intelligence:</strong> ${data.features_active?.['10x_personality_intelligence'] ? '✅' : '❌'}</p>
                             <p><strong>Background Services:</strong> 
                                 Pipeline: ${data.background_services?.data_pipeline ? '✅' : '❌'}, 
                                 Screener: ${data.background_services?.cached_screener ? '✅' : '❌'}, 
                                 Options: ${data.background_services?.options_analyzer ? '✅' : '❌'}
                             </p>
+                            <p><strong>Personality Engine:</strong> ${data.personality_features?.engine_type || 'unknown'}</p>
                         </div>`;
                 } else {
                     throw new Error(`HTTP ${response.status}`);
@@ -1637,6 +1902,8 @@ async def test_interface():
                             <p><strong>Response:</strong> ${data.bot_response}</p>
                             <p><strong>KeyBuilder:</strong> ${data.features_active?.key_builder ? '✅' : '❌'}</p>
                             <p><strong>Memory Enhanced:</strong> ${data.features_active?.memory_enhanced ? '✅' : '❌'}</p>
+                            <p><strong>Gemini Personality:</strong> ${data.features_active?.gemini_personality ? '✅' : '❌'}</p>
+                            <p><strong>10x Intelligence:</strong> ${data.features_active?.['10x_personality_intelligence'] ? '✅' : '❌'}</p>
                         </div>`;
                 } else {
                     throw new Error(`HTTP ${response.status}`);
@@ -1651,7 +1918,7 @@ async def test_interface():
             const phone = document.getElementById('phone').value;
             const message = document.getElementById('message').value;
             
-            document.getElementById('result').innerHTML = '<div class="result">🔄 Comparing Claude vs OpenAI...</div>';
+            document.getElementById('result').innerHTML = '<div class="result">🔄 Comparing Claude vs OpenAI with Gemini Personality...</div>';
             
             try {
                 // Test Claude
@@ -1672,7 +1939,7 @@ async def test_interface():
                 
                 document.getElementById('result').innerHTML = 
                     `<div class="result">
-                        <h3>🔍 Agent Comparison</h3>
+                        <h3>🔍 Agent Comparison (Gemini-Enhanced)</h3>
                         <p><strong>Input:</strong> ${message}</p>
                         <div class="comparison">
                             <div class="agent-result claude-result">
@@ -1680,12 +1947,14 @@ async def test_interface():
                                 <p><strong>Status:</strong> ${claudeData.success ? 'Success' : 'Failed'}</p>
                                 <p><strong>Response:</strong> ${claudeData.bot_response || 'No response'}</p>
                                 <p><strong>KeyBuilder:</strong> ${claudeData.features_active?.key_builder ? '✅' : '❌'}</p>
+                                <p><strong>Gemini Personality:</strong> ${claudeData.features_active?.gemini_personality ? '✅' : '❌'}</p>
                             </div>
                             <div class="agent-result openai-result">
                                 <h4>🤖 OpenAI Response</h4>
                                 <p><strong>Status:</strong> ${openaiData.success ? 'Success' : 'Failed'}</p>
                                 <p><strong>Response:</strong> ${openaiData.bot_response || 'No response'}</p>
                                 <p><strong>KeyBuilder:</strong> ${openaiData.features_active?.key_builder ? '✅' : '❌'}</p>
+                                <p><strong>Gemini Personality:</strong> ${openaiData.features_active?.gemini_personality ? '✅' : '❌'}</p>
                             </div>
                         </div>
                     </div>`;
@@ -2078,13 +2347,15 @@ async def get_mongo_collections():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    logger.info(f"🚀 Starting Claude-Powered SMS Trading Bot with Background Jobs + KeyBuilder on port {port}")
+    logger.info(f"🚀 Starting Claude-Powered SMS Trading Bot with Background Jobs + KeyBuilder + Gemini Personality on port {port}")
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Claude Preference: {settings.prefer_claude}")
-    logger.info(f"Available APIs: Claude={anthropic is not None and settings.anthropic_api_key}, OpenAI={settings.openai_api_key is not None}, EODHD={settings.eodhd_api_key is not None}")
+    logger.info(f"Available APIs: Claude={anthropic is not None and settings.anthropic_api_key}, OpenAI={settings.openai_api_key is not None}, Gemini={settings.gemini_api_key is not None}, EODHD={settings.eodhd_api_key is not None}")
     logger.info(f"Background Jobs: Enabled={BackgroundDataPipeline is not None and settings.eodhd_api_key is not None}")
     logger.info(f"Memory Manager: Enabled={MemoryManager is not None and settings.pinecone_api_key is not None}")
     logger.info(f"KeyBuilder: Enabled={KeyBuilder is not None}")
+    logger.info(f"Gemini Personality: Enabled={settings.gemini_api_key is not None and settings.personality_analysis_enabled}")
+    logger.info(f"Personality Engine Type: {PERSONALITY_ENGINE_TYPE}")
     
     uvicorn.run(
         "main:app",
