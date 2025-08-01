@@ -261,8 +261,8 @@ async def lifespan(app: FastAPI):
             cache_service = CacheService(db_service.redis)
             logger.info("✅ Cache service initialized")
         
-        # Initialize KeyBuilder
-        if KeyBuilder and db_service and db_service.redis and db_service.db:
+       # Initialize KeyBuilder
+        if KeyBuilder and db_service is not None and db_service.redis is not None and db_service.db is not None:
             db_service.key_builder = KeyBuilder(db_service.redis, db_service.db)
             logger.info("🔧 KeyBuilder initialized")
         
@@ -975,10 +975,14 @@ async def get_background_job_status():
         pipeline_status = await background_pipeline.get_job_status()
         
         # Add database stats - fix the MongoDB comparison
-        if background_pipeline.db is not None:
-            stock_count = await background_pipeline.db.stocks.count_documents({})
-            latest_update = await background_pipeline.db.stocks.find_one(
-                sort=[("last_updated", -1)]
+    try:
+        stock_count = await background_pipeline.db.stocks.count_documents({})
+        latest_update = await background_pipeline.db.stocks.find_one(
+            sort=[("last_updated", -1)]
+            )
+    except (AttributeError, TypeError):
+        stock_count = 0
+        latest_update = None
             )
         else:
             stock_count = 0
@@ -1066,16 +1070,17 @@ async def get_sample_cached_data(symbol: str):
             mongo_data = None
         
         # Get from Redis - fix the comparison  
-        if background_pipeline.redis_client is not None:
-            redis_basic = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:basic")
-            redis_technical = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:technical")
-            redis_fundamental = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:fundamental")
-            redis_tags = await background_pipeline.redis_client.smembers(f"stock:{symbol}:tags")
-        else:
-            redis_basic = {}
-            redis_technical = {}
-            redis_fundamental = {}
-            redis_tags = []
+    try:
+        redis_basic = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:basic")
+        redis_technical = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:technical")
+        redis_fundamental = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:fundamental")
+        redis_tags = await background_pipeline.redis_client.smembers(f"stock:{symbol}:tags")
+
+    except (AttributeError, TypeError):
+        redis_basic = {}
+        redis_technical = {}
+        redis_fundamental = {}
+        redis_tags = []
         
         return {
             "symbol": symbol,
