@@ -86,6 +86,99 @@ class EnhancedPersonalityEngine:
         
         logger.info(f"🧠 Enhanced PersonalityEngine v{self.PROFILE_VERSION} initialized")
 
+def _load_authoritative_tickers(self) -> set:
+    """Load authoritative ticker list - focused on trending stocks across all hot sectors"""
+    popular_tickers = [
+        # 🔥 MAGNIFICENT 7 + AI GIANTS
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA',
+        
+        # 🤖 AI & MACHINE LEARNING - The Hottest Sector
+        'NVDA', 'AMD', 'SMCI', 'ARM', 'AVGO', 'MRVL', 'QCOM', 'MU',
+        'PLTR', 'C3AI', 'AI', 'BBAI', 'SOUN', 'STEM', 'PATH', 'UPST',
+        'SNOW', 'CRWD', 'ZS', 'DDOG', 'NET', 'NOW', 'VEEV', 'WDAY',
+        
+        # 🔬 QUANTUM COMPUTING - Next Big Thing
+        'IBM', 'GOOGL', 'IONQ', 'RGTI', 'QBTS', 'ARQQ', 'QTUM', 'DEFN',
+        'QUBT', 'QMCO', 'MMAT', 'ATOM', 'RCAT', 'IonQ',
+        
+        # 💻 SEMICONDUCTOR POWERHOUSES - AI Chips Everywhere
+        'NVDA', 'AMD', 'INTC', 'TSM', 'ASML', 'LRCX', 'KLAC', 'AMAT',
+        'MU', 'MCHP', 'ADI', 'NXPI', 'TXN', 'AVGO', 'QCOM', 'MRVL',
+        'ARM', 'SMCI', 'WDC', 'STX', 'SWKS', 'CRUS', 'SLAB', 'MPWR',
+        
+        # ⚛️ NUCLEAR ENERGY - Clean Power Renaissance  
+        'OKLO', 'NNE', 'SMR', 'LEU', 'UEC', 'UUUU', 'DNN', 'CCJ',
+        'LTBR', 'VST', 'CEG', 'ETR', 'EXC', 'NEE', 'SO', 'DUK',
+        'VALE', 'FCX', 'SCCO', 'STLD', 'NUE', 'X', 'CLF', 'MT',
+        
+        # 🚗 EV & AUTONOMOUS DRIVING
+        'TSLA', 'RIVN', 'LCID', 'NIO', 'XPEV', 'LI', 'BYD', 'GM',
+        'F', 'CHPT', 'BLNK', 'EVG0', 'QS', 'STEM', 'RUN', 'ENPH',
+        
+        # 🚀 SPACE & SATELLITES - Final Frontier
+        'SPCE', 'RKLB', 'ASTS', 'PL', 'MAXR', 'SATS', 'IRDM', 'GILT',
+        'BA', 'LMT', 'RTX', 'NOC', 'GD', 'HWM', 'KTOS', 'AVAV',
+        
+        # 🪙 CRYPTO & BLOCKCHAIN - Digital Gold Rush
+        'BTC', 'ETH', 'XRP', 'SOL', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK',
+        'DOGE', 'SHIB', 'PEPE', 'FLOKI', 'WIF', 'BONK', 'MEME',
+        'COIN', 'MSTR', 'RIOT', 'MARA', 'CLSK', 'HUT', 'BITF', 'BTBT',
+        'GLXY', 'ARBK', 'WULF', 'IREN', 'CORZ', 'CIFR', 'GRIID',
+        
+        # 🏦 FINTECH REVOLUTION
+        'SQ', 'PYPL', 'SOFI', 'AFRM', 'UPST', 'LC', 'NU', 'HOOD',
+        'V', 'MA', 'AXP', 'ALLY', 'COF', 'DFS', 'SYF', 'WFC',
+        
+        # 🧬 BIOTECH & GENE EDITING - Medical Revolution
+        'MRNA', 'BNTX', 'NVAX', 'GILD', 'BIIB', 'REGN', 'VRTX', 'ILMN',
+        'CRISPR', 'EDIT', 'NTLA', 'BEAM', 'PACB', 'TWST', 'CDNA', 'FATE',
+        'BLUE', 'SGMO', 'CRSP', 'DTIL', 'RXRX', 'SDGR', 'ADPT', 'VNDA',
+        
+        # ☁️ CLOUD & CYBERSECURITY - Digital Infrastructure
+        'SNOW', 'CRWD', 'ZS', 'OKTA', 'DDOG', 'NET', 'FSLY', 'TWLO',
+        'ZOOM', 'TEAM', 'WDAY', 'SPLK', 'ESTC', 'MDB', 'DOCN', 'GTLB',
+        'PANW', 'FTNT', 'CYBR', 'TENB', 'QLYS', 'VRNS', 'SAIL', 'S',
+        
+        # 🎮 GAMING & METAVERSE
+        'RBLX', 'U', 'EA', 'ATVI', 'TTWO', 'ZNGA', 'SKLZ', 'DKNG',
+        'NVDA', 'AMD', 'META', 'MSFT', 'GOOGL', 'SNAP', 'PINS', 'MTCH',
+        
+        # 🛒 E-COMMERCE & DIGITAL ECONOMY
+        'AMZN', 'SHOP', 'ETSY', 'CHWY', 'CVNA', 'W', 'OSTK', 'MELI',
+        'SE', 'BABA', 'JD', 'PDD', 'BILI', 'UBER', 'LYFT', 'DASH',
+        
+        # 🏗️ INFRASTRUCTURE & MATERIALS
+        'CAT', 'DE', 'VMC', 'MLM', 'CRH', 'STLD', 'NUE', 'X',
+        'FCX', 'SCCO', 'AA', 'CENX', 'CLF', 'MT', 'VALE', 'RIO',
+        
+        # 💊 MEME STOCKS - Retail Trading Favorites
+        'GME', 'AMC', 'BB', 'NOK', 'WISH', 'CLOV', 'EXPR', 'KOSS',
+        'NAKD', 'SNDL', 'TLRY', 'CGC', 'ACB', 'HEXO', 'OGI', 'CRON',
+        
+        # 📊 POPULAR ETFs - All Sectors Covered
+        'QQQ', 'TQQQ', 'SQQQ', 'XLK', 'VGT', 'FTEC', 'ARKK', 'ARKW',
+        'ARKG', 'ARKF', 'ARKQ', 'ICLN', 'PBW', 'WCLD', 'SKYY', 'ROBO',
+        'QTUM', 'HACK', 'CIBR', 'BUG', 'IHAK', 'FINX', 'THNQ', 'BOTZ',
+        'UFO', 'MOON', 'BLCN', 'LEGR', 'KOIN', 'BITS', 'BITO', 'GBTC',
+        
+        # 🏦 TRADITIONAL POWERHOUSES 
+        'JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'BRK.A', 'BRK.B',
+        'SPY', 'VOO', 'IVV', 'VTI', 'SPLG', 'SCHB', 'ITOT', 'SWTSX',
+        
+        # 🌿 CANNABIS & ALTERNATIVE INVESTMENTS
+        'TLRY', 'CGC', 'ACB', 'HEXO', 'OGI', 'CRON', 'SNDL', 'GRWG',
+        'SMG', 'IIPR', 'CURLF', 'GTBIF', 'TCNNF', 'CRLBF', 'MSOS', 'YOLO',
+        
+        # 🏠 REAL ESTATE & REITS
+        'REIT', 'VNQ', 'SCHH', 'RWR', 'IYR', 'XLRE', 'FREL', 'USRT',
+        'O', 'STAG', 'PLD', 'AMT', 'CCI', 'EQIX', 'DLR', 'CONE',
+        
+        # ⚡ ENERGY TRANSITION - Oil, Gas, Renewables
+        'XOM', 'CVX', 'COP', 'EOG', 'SLB', 'HAL', 'OXY', 'MPC',
+        'ENPH', 'SEDG', 'FSLR', 'JKS', 'CSIQ', 'RUN', 'NOVA', 'MAXN'
+    ]
+    return set(popular_tickers)
+
     def _create_default_profile(self) -> Dict[str, Any]:
         """Create default user profile with enhanced v3.0 structure"""
         from datetime import datetime, timezone
@@ -1043,28 +1136,6 @@ async def learn_from_analysis(self, user_id: str, profile: Dict, analysis: Messa
     # FALLBACK REGEX METHODS (PRESERVED)
     # ==========================================
     
-    def _load_authoritative_tickers(self) -> set:
-        """Load authoritative ticker list from project files"""
-        # [Previous implementation preserved for symbol validation]
-        popular_tickers = [
-            'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'META', 'TSLA', 'NVDA',
-            'NFLX', 'AMD', 'INTC', 'ORCL', 'CRM', 'ADBE', 'PYPL', 'UBER', 'LYFT',
-            'JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'V', 'MA', 'AXP',
-            'JNJ', 'PFE', 'UNH', 'MRNA', 'ABBV', 'TMO', 'ABT', 'LLY',
-            'WMT', 'TGT', 'HD', 'LOW', 'NKE', 'SBUX', 'MCD', 'DIS', 'AMGN',
-            'XOM', 'CVX', 'COP', 'BA', 'CAT', 'GE', 'MMM', 'HON',
-            'T', 'VZ', 'CMCSA', 'TMUS',
-            'SPY', 'QQQ', 'IWM', 'DIA', 'VTI', 'VOO', 'IVV', 'VEA', 'IEFA', 'EEM',
-            'GLD', 'SLV', 'TLT', 'HYG', 'LQD', 'XLF', 'XLK', 'XLE', 'XLV', 'XLI',
-            'COIN', 'MSTR', 'SQ', 'HOOD',
-            'NIO', 'XPEV', 'LI', 'RIVN', 'LCID', 'ENPH', 'PLUG',
-            'GME', 'AMC', 'BB', 'NOK', 'PLTR', 'WISH', 'CLOV',
-            'GILD', 'BIIB', 'REGN', 'VRTX', 'ILMN',
-            'F', 'SNAP', 'PINS', 'ZM', 'ROKU', 'PTON', 'SHOP',
-            'BTC', 'ETH', 'SOL', 'ADA', 'AVAX', 'DOT', 'MATIC',
-            'DOGE', 'SHIB', 'PEPE', 'FLOKI', 'WIF', 'BONK'
-        ]
-        return set(popular_tickers)
     
     def _validate_symbol_with_authority(self, symbol: str) -> bool:
         """Validate symbol against authoritative ticker list"""
