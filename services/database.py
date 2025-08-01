@@ -6,7 +6,7 @@ from bson import ObjectId
 import json
 from datetime import datetime, timedelta, timezone
 from loguru import logger
-
+from services.key_builder import KeyBuilder
 from models.user import UserProfile
 from models.conversation import ChatMessage, Conversation
 from models.trading import TradingData
@@ -17,6 +17,7 @@ class DatabaseService:
         self.mongo_client = None
         self.db = None
         self.redis = None
+        self.key_builder = None  # ADD THIS LINE
 
     async def initialize(self):
         """Initialize database connections"""
@@ -34,10 +35,14 @@ class DatabaseService:
             # ADDED: Clean up invalid users on startup
             await self.cleanup_invalid_users()
             
-            logger.info("✅ Database connections initialized")
-        except Exception as e:
-            logger.error(f"❌ Database initialization failed: {e}")
-            raise
+            if self.redis and self.db:
+            self.key_builder = KeyBuilder(self.redis, self.db)
+            logger.info("🔧 KeyBuilder initialized successfully")
+        
+        logger.info("✅ Database connections initialized")
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {e}")
+        raise
     
     async def _setup_indexes(self):
         """Setup database indexes for performance"""
