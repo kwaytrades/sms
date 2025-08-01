@@ -167,42 +167,25 @@ except ImportError as e:
     AgentType = None
     logger.error(f"❌ MemoryManager failed: {e}")
 
+# Import KeyBuilder
+try:
+    from services.key_builder import KeyBuilder
+    logger.info("✅ KeyBuilder imported")
+except Exception as e:
+    KeyBuilder = None
+    logger.error(f"❌ KeyBuilder failed: {e}")
+
+# Import PersonalityEngine from separate file
+try:
+    from core.personality_engine import UserPersonalityEngine
+    logger.info("✅ UserPersonalityEngine imported")
+except ImportError as e:
+    UserPersonalityEngine = None
+    logger.error(f"❌ UserPersonalityEngine failed: {e}")
+
 # Configure logging
 logger.remove()
 logger.add(sys.stdout, level=settings.log_level)
-
-
-
-
-# ===== SIMPLIFIED PERSONALITY ENGINE =====
-
-class UserPersonalityEngine:
-    """Simplified personality engine for conversation learning"""
-    
-    def __init__(self):
-        self.user_profiles = defaultdict(lambda: {
-            "communication_style": {"formality": "professional"},
-            "trading_personality": {"experience_level": "intermediate"},
-            "learning_data": {"total_messages": 0}
-        })
-    
-    def learn_from_message(self, phone_number: str, message: str, intent: dict):
-        """Simple learning from user interactions"""
-        profile = self.user_profiles[phone_number]
-        profile["learning_data"]["total_messages"] += 1
-        
-        # Simple formality detection
-        if any(word in message.lower() for word in ['yo', 'hey', 'gonna']):
-            profile["communication_style"]["formality"] = "casual"
-        elif any(word in message.lower() for word in ['please', 'analysis']):
-            profile["communication_style"]["formality"] = "professional"
-    
-    def get_user_profile(self, phone_number: str) -> dict:
-        """Get user profile"""
-        return self.user_profiles.get(phone_number, {})
-
-# Initialize personality engine
-personality_engine = UserPersonalityEngine()
 
 stripe_service = StripeService()
 
@@ -220,7 +203,7 @@ claude_agent = None
 hybrid_agent = None
 active_agent = None
 memory_manager = None
-
+personality_engine = None
 
 # Background job services
 background_pipeline = None
@@ -232,7 +215,7 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown with Claude support and background jobs"""
     global db_service, openai_service, anthropic_client, twilio_service, ta_service, news_service
     global fundamental_tool, cache_service, openai_agent, claude_agent, hybrid_agent, active_agent
-    global background_pipeline, cached_screener, options_analyzer, memory_manager
+    global background_pipeline, cached_screener, options_analyzer, memory_manager, personality_engine
     
     logger.info("🚀 Starting SMS Trading Bot with Claude-Powered Agent and Background Jobs...")
     
@@ -247,10 +230,15 @@ async def lifespan(app: FastAPI):
             cache_service = CacheService(db_service.redis)
             logger.info("✅ Cache service initialized")
         
-
-        if db_service.redis and db_service.db:
+        # Initialize KeyBuilder
+        if KeyBuilder and db_service and db_service.redis and db_service.db:
             db_service.key_builder = KeyBuilder(db_service.redis, db_service.db)
             logger.info("🔧 KeyBuilder initialized")
+        
+        # Initialize PersonalityEngine with KeyBuilder support
+        if UserPersonalityEngine:
+            personality_engine = UserPersonalityEngine(db_service=db_service)
+            logger.info("✅ Personality Engine initialized with KeyBuilder support")
         
         if OpenAIService:
             openai_service = OpenAIService()
@@ -371,7 +359,6 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"⚠️ Options analyzer initialization failed: {e}")
         
         # Initialize OpenAI agent
-       # Initialize OpenAI agent
         if ComprehensiveMessageProcessor and openai_service:
             try:
                 # Check if ComprehensiveMessageProcessor accepts memory_manager parameter
@@ -379,32 +366,28 @@ async def lifespan(app: FastAPI):
                 try:
                     init_signature = inspect.signature(ComprehensiveMessageProcessor.__init__)
                     accepts_memory_manager = 'memory_manager' in init_signature.parameters
+                    accepts_db_service = 'db_service' in init_signature.parameters
                 except:
                     accepts_memory_manager = False
+                    accepts_db_service = False
+                
+                kwargs = {
+                    'openai_client': openai_service.client,
+                    'ta_service': ta_service,
+                    'personality_engine': personality_engine,
+                    'cache_service': cache_service,
+                    'news_service': news_service,
+                    'fundamental_tool': fundamental_tool
+                }
                 
                 if accepts_memory_manager and memory_manager:
-                    # Pass memory_manager if supported
-                    openai_agent = ComprehensiveMessageProcessor(
-                        openai_client=openai_service.client,
-                        ta_service=ta_service,
-                        personality_engine=personality_engine,
-                        cache_service=cache_service,
-                        news_service=news_service,
-                        fundamental_tool=fundamental_tool,
-                        memory_manager=memory_manager
-                    )
-                    logger.info("✅ OpenAI Agent with Memory initialized")
-                else:
-                    # Don't pass memory_manager if not supported
-                    openai_agent = ComprehensiveMessageProcessor(
-                        openai_client=openai_service.client,
-                        ta_service=ta_service,
-                        personality_engine=personality_engine,
-                        cache_service=cache_service,
-                        news_service=news_service,
-                        fundamental_tool=fundamental_tool
-                    )
-                    logger.info("✅ OpenAI Agent initialized (without memory)")
+                    kwargs['memory_manager'] = memory_manager
+                
+                if accepts_db_service and db_service:
+                    kwargs['db_service'] = db_service
+                
+                openai_agent = ComprehensiveMessageProcessor(**kwargs)
+                logger.info("✅ OpenAI Agent with KeyBuilder support initialized")
                     
             except Exception as e:
                 logger.error(f"❌ OpenAI Agent initialization failed: {e}")
@@ -419,7 +402,8 @@ async def lifespan(app: FastAPI):
                 cache_service=cache_service,
                 news_service=news_service,
                 fundamental_tool=fundamental_tool,
-                memory_manager=memory_manager
+                memory_manager=memory_manager,
+                db_service=db_service
             )
             logger.info("✅ Claude Agent with Memory initialized")
         
@@ -452,6 +436,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"🔧 Available Agents: Claude={claude_agent is not None}, OpenAI={openai_agent is not None}, Hybrid={hybrid_agent is not None}")
         logger.info(f"📊 Background Jobs: Pipeline={background_pipeline is not None}, Screener={cached_screener is not None}, Options={options_analyzer is not None}")
         logger.info(f"🧠 Memory Manager: {memory_manager is not None}")
+        logger.info(f"👤 Personality Engine: {personality_engine is not None} (KeyBuilder: {db_service is not None and hasattr(db_service, 'key_builder')})")
         logger.info("✅ Startup completed")
         
     except Exception as e:
@@ -507,7 +492,8 @@ async def root():
             "background_pipeline": background_pipeline is not None,
             "cached_screener": cached_screener is not None,
             "options_analyzer": options_analyzer is not None,
-            "memory_manager": memory_manager is not None
+            "memory_manager": memory_manager is not None,
+            "key_builder": db_service is not None and hasattr(db_service, 'key_builder')
         }
     }
 
@@ -542,7 +528,8 @@ async def health_check():
                 "openai_agent": "available" if openai_agent else "unavailable",
                 "claude_agent": "available" if claude_agent else "unavailable",
                 "hybrid_agent": "available" if hybrid_agent else "unavailable",
-                "memory_manager": "available" if memory_manager else "unavailable"
+                "memory_manager": "available" if memory_manager else "unavailable",
+                "key_builder": "available" if db_service and hasattr(db_service, 'key_builder') else "unavailable"
             },
             "background_jobs": {
                 "data_pipeline": "active" if background_pipeline else "inactive",
@@ -665,6 +652,139 @@ async def memory_health_check():
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+# ===== KEYBUILDER ADMIN ENDPOINTS =====
+
+@app.get("/admin/keybuilder/migration/stats")
+async def get_keybuilder_migration_stats():
+    """Get KeyBuilder migration statistics"""
+    if not db_service or not hasattr(db_service, 'key_builder'):
+        return {"error": "KeyBuilder not available"}
+    
+    try:
+        stats = await db_service.key_builder.get_migration_stats()
+        return stats
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/admin/keybuilder/migrate/users")
+async def migrate_all_users(limit: int = Query(None, description="Limit number of users to migrate")):
+    """Trigger migration of all users to new KeyBuilder format"""
+    if not db_service or not hasattr(db_service, 'key_builder'):
+        return {"error": "KeyBuilder not available"}
+    
+    try:
+        result = await db_service.key_builder.migrate_all_users(limit=limit)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/admin/keybuilder/migrate/stocks")
+async def migrate_all_stocks():
+    """Trigger migration of all stock data to new KeyBuilder format"""
+    if not db_service or not hasattr(db_service, 'key_builder'):
+        return {"error": "KeyBuilder not available"}
+    
+    try:
+        result = await db_service.key_builder.migrate_all_stocks()
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/admin/keybuilder/cleanup")
+async def cleanup_old_keys(dry_run: bool = Query(True, description="Dry run mode - show what would be deleted")):
+    """Clean up old keys after migration"""
+    if not db_service or not hasattr(db_service, 'key_builder'):
+        return {"error": "KeyBuilder not available"}
+    
+    try:
+        result = await db_service.key_builder.cleanup_old_keys(dry_run=dry_run)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/admin/keybuilder/validate/{user_id}")
+async def validate_user_migration(user_id: str):
+    """Validate that migration worked correctly for a specific user"""
+    if not db_service or not hasattr(db_service, 'key_builder'):
+        return {"error": "KeyBuilder not available"}
+    
+    try:
+        result = await db_service.key_builder.validate_migration(user_id)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/admin/keybuilder/test/{user_id}")
+async def test_keybuilder_user_data(user_id: str):
+    """Test KeyBuilder data retrieval for a user"""
+    if not db_service or not hasattr(db_service, 'key_builder'):
+        return {"error": "KeyBuilder not available"}
+    
+    try:
+        kb = db_service.key_builder
+        
+        # Test all data types
+        profile = await kb.get_user_profile(user_id)
+        context = await kb.get_user_context(user_id)
+        conversations = await kb.get_user_conversations(user_id, limit=5)
+        sms_history = await kb.get_user_sms_history(user_id)
+        usage = await kb.get_user_usage(user_id)
+        personality = await kb.get_user_personality(user_id)
+        
+        return {
+            "user_id": user_id,
+            "data_available": {
+                "profile": profile is not None,
+                "context": context is not None,
+                "conversations": len(conversations) if conversations else 0,
+                "sms_history": len(sms_history) if sms_history else 0,
+                "usage": usage is not None,
+                "personality": personality is not None
+            },
+            "sample_data": {
+                "profile": profile if profile else "No profile data",
+                "context": context if context else "No context data",
+                "conversations_count": len(conversations) if conversations else 0,
+                "usage_data": usage if usage else "No usage data"
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/admin/keybuilder/test/stock/{symbol}")
+async def test_keybuilder_stock_data(symbol: str):
+    """Test KeyBuilder stock data retrieval"""
+    if not db_service or not hasattr(db_service, 'key_builder'):
+        return {"error": "KeyBuilder not available"}
+    
+    try:
+        kb = db_service.key_builder
+        symbol = symbol.upper()
+        
+        # Test stock data retrieval
+        technical = await kb.get_stock_technical(symbol)
+        fundamental = await kb.get_stock_fundamental(symbol)
+        ta_metadata = await kb.get_stock_metadata(symbol, "ta")
+        fa_metadata = await kb.get_stock_metadata(symbol, "fa")
+        
+        return {
+            "symbol": symbol,
+            "data_available": {
+                "technical": technical is not None,
+                "fundamental": fundamental is not None,
+                "ta_metadata": ta_metadata is not None,
+                "fa_metadata": fa_metadata is not None
+            },
+            "sample_data": {
+                "technical_keys": list(technical.keys()) if technical else [],
+                "fundamental_keys": list(fundamental.keys()) if fundamental else [],
+                "ta_metadata": ta_metadata,
+                "fa_metadata": fa_metadata
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 # ===== BACKGROUND JOB ADMIN ENDPOINTS =====
 
@@ -940,10 +1060,10 @@ async def admin_dashboard():
     """Admin dashboard with Claude status and background jobs"""
     try:
         return {
-            "title": "SMS Trading Bot Admin - Claude-Powered with Background Jobs",
+            "title": "SMS Trading Bot Admin - Claude-Powered with Background Jobs + KeyBuilder",
             "status": "operational",
             "version": "4.1.0",
-            "architecture": "claude_powered_with_background_jobs",
+            "architecture": "claude_powered_with_background_jobs_keybuilder",
             "agent_type": get_agent_type(),
             "services": {
                 "database": "connected" if db_service else "disconnected",
@@ -954,7 +1074,8 @@ async def admin_dashboard():
                 "openai_agent": "active" if openai_agent else "inactive",
                 "claude_agent": "active" if claude_agent else "inactive",
                 "hybrid_agent": "active" if hybrid_agent else "inactive",
-                "memory_manager": "active" if memory_manager else "inactive"
+                "memory_manager": "active" if memory_manager else "inactive",
+                "key_builder": "active" if db_service and hasattr(db_service, 'key_builder') else "inactive"
             },
             "background_jobs": {
                 "data_pipeline": "active" if background_pipeline else "inactive",
@@ -980,7 +1101,7 @@ async def admin_dashboard():
                 }
             },
             "users": {
-                "total_profiles": len(personality_engine.user_profiles)
+                "total_profiles": len(personality_engine.user_profiles) if personality_engine else 0
             },
             "features": {
                 "claude_reasoning": claude_agent is not None,
@@ -994,7 +1115,8 @@ async def admin_dashboard():
                 "advanced_screening": cached_screener is not None,
                 "options_analysis": options_analyzer is not None,
                 "emotional_intelligence": memory_manager is not None,
-                "memory_enhanced": memory_manager is not None
+                "memory_enhanced": memory_manager is not None,
+                "unified_key_management": db_service is not None and hasattr(db_service, 'key_builder')
             },
             "preferences": {
                 "prefer_claude": settings.prefer_claude,
@@ -1060,7 +1182,8 @@ async def test_message_processing(request: Request):
                 "superior_analysis": claude_agent is not None,
                 "cached_screening": background_pipeline is not None,
                 "options_analysis": options_analyzer is not None,
-                "memory_enhanced": memory_manager is not None
+                "memory_enhanced": memory_manager is not None,
+                "key_builder": db_service is not None and hasattr(db_service, 'key_builder')
             }
         }
         
@@ -1099,9 +1222,10 @@ async def diagnose_services():
             "background_pipeline": background_pipeline is not None,
             "cached_screener": cached_screener is not None,
             "options_analyzer": options_analyzer is not None,
-            "memory_manager": memory_manager is not None
+            "memory_manager": memory_manager is not None,
+            "key_builder": db_service is not None and hasattr(db_service, 'key_builder')
         },
-        "architecture": "claude_powered_with_background_jobs",
+        "architecture": "claude_powered_with_background_jobs_keybuilder",
         "active_agent": get_agent_type(),
         "recommendations": []
     }
@@ -1123,15 +1247,19 @@ async def diagnose_services():
         diagnosis["recommendations"].append("⚠️ Background data pipeline not running - check EODHD_API_KEY and MongoDB")
     if not memory_manager:
         diagnosis["recommendations"].append("⚠️ Memory manager not available - check Pinecone and OpenAI API keys")
+    if not (db_service and hasattr(db_service, 'key_builder')):
+        diagnosis["recommendations"].append("⚠️ KeyBuilder not available - check DatabaseService initialization")
     
-    if claude_agent and openai_agent and background_pipeline and memory_manager:
-        diagnosis["recommendations"].append("✅ All systems operational - Claude + OpenAI + Background Jobs + Memory active!")
-    elif claude_agent and background_pipeline and memory_manager:
-        diagnosis["recommendations"].append("✅ Claude agent + Background jobs + Memory operational - excellent setup!")
-    elif claude_agent and memory_manager:
-        diagnosis["recommendations"].append("✅ Claude agent + Memory operational - enhanced conversations available!")
-    elif background_pipeline:
-        diagnosis["recommendations"].append("✅ Background jobs operational - cached data available!")
+    if claude_agent and openai_agent and background_pipeline and memory_manager and (db_service and hasattr(db_service, 'key_builder')):
+        diagnosis["recommendations"].append("✅ All systems operational - Claude + OpenAI + Background Jobs + Memory + KeyBuilder active!")
+    elif claude_agent and background_pipeline and memory_manager and (db_service and hasattr(db_service, 'key_builder')):
+        diagnosis["recommendations"].append("✅ Claude agent + Background jobs + Memory + KeyBuilder operational - excellent setup!")
+    elif claude_agent and memory_manager and (db_service and hasattr(db_service, 'key_builder')):
+        diagnosis["recommendations"].append("✅ Claude agent + Memory + KeyBuilder operational - enhanced conversations available!")
+    elif background_pipeline and (db_service and hasattr(db_service, 'key_builder')):
+        diagnosis["recommendations"].append("✅ Background jobs + KeyBuilder operational - cached data with unified management!")
+    elif (db_service and hasattr(db_service, 'key_builder')):
+        diagnosis["recommendations"].append("✅ KeyBuilder operational - unified data management available!")
     
     if not diagnosis["recommendations"]:
         diagnosis["recommendations"].append("✅ All systems operational!")
@@ -1147,7 +1275,7 @@ async def test_interface():
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SMS Trading Bot - Claude + Memory + Background Jobs Test Interface</title>
+    <title>SMS Trading Bot - Claude + Memory + Background Jobs + KeyBuilder Test Interface</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
         .form-group { margin-bottom: 15px; }
@@ -1157,7 +1285,8 @@ async def test_interface():
         button.claude { background: #8B5CF6; }
         button.background { background: #10B981; }
         button.memory { background: #EC4899; }
-        button.compare { background: #F59E0B; }
+        button.keybuilder { background: #F59E0B; }
+        button.compare { background: #EF4444; }
         .result { margin-top: 20px; padding: 15px; border-radius: 4px; background: #f8f9fa; }
         .comparison { display: flex; gap: 20px; }
         .agent-result { flex: 1; padding: 15px; border-radius: 4px; }
@@ -1169,17 +1298,19 @@ async def test_interface():
         .badge.hybrid { background: #10B981; }
         .badge.background { background: #6366F1; }
         .badge.memory { background: #EC4899; }
+        .badge.keybuilder { background: #F59E0B; }
         .status-panel { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
     </style>
 </head>
 <body>
-    <h1>SMS Trading Bot - Claude + Memory + Background Jobs Test Interface</h1>
+    <h1>SMS Trading Bot - Claude + Memory + Background Jobs + KeyBuilder Test Interface</h1>
     <div>
         <span class="badge">Claude-Powered</span>
         <span class="badge openai">OpenAI Fallback</span>
         <span class="badge hybrid">Hybrid Available</span>
         <span class="badge background">Background Pipeline</span>
         <span class="badge memory">Memory Enhanced</span>
+        <span class="badge keybuilder">KeyBuilder Unified</span>
     </div>
     
     <div class="status-panel">
@@ -1208,6 +1339,13 @@ async def test_interface():
         <button class="memory" onclick="testMemory('health')">Check Memory Health</button>
         <button class="memory" onclick="testMemory('stats')">Get User Stats</button>
         <button class="memory" onclick="testConversation()">Test Memory Conversation</button>
+    </div>
+    
+    <div class="quick-tests">
+        <button class="keybuilder" onclick="testKeyBuilder('stats')">KeyBuilder Stats</button>
+        <button class="keybuilder" onclick="testKeyBuilder('test-user')">Test User Data</button>
+        <button class="keybuilder" onclick="testKeyBuilder('test-stock')">Test Stock Data</button>
+        <button class="keybuilder" onclick="testKeyBuilder('migrate')">Migrate Users</button>
     </div>
     
     <form onsubmit="testSMS(event)">
@@ -1255,6 +1393,7 @@ async def test_interface():
                     <strong>Claude:</strong> ${data.services.claude_agent} | 
                     <strong>OpenAI:</strong> ${data.services.openai_agent} | 
                     <strong>Memory:</strong> ${data.services.memory_manager} | 
+                    <strong>KeyBuilder:</strong> ${data.services.key_builder} | 
                     <strong>Background Pipeline:</strong> ${data.background_jobs.data_pipeline} | 
                     <strong>Screener:</strong> ${data.background_jobs.cached_screener} | 
                     <strong>Options:</strong> ${data.background_jobs.options_analyzer}
@@ -1267,6 +1406,38 @@ async def test_interface():
         function quickTest(message) {
             document.getElementById('message').value = message;
             testSMS(new Event('submit'));
+        }
+        
+        async function testKeyBuilder(testType) {
+            document.getElementById('result').innerHTML = `<div class="result">🔄 Testing KeyBuilder ${testType}...</div>`;
+            
+            try {
+                let url = '';
+                let method = 'GET';
+                
+                if (testType === 'stats') {
+                    url = '/admin/keybuilder/migration/stats';
+                } else if (testType === 'test-user') {
+                    url = '/admin/keybuilder/test/+1555TEST';
+                } else if (testType === 'test-stock') {
+                    url = '/admin/keybuilder/test/stock/AAPL';
+                } else if (testType === 'migrate') {
+                    url = '/admin/keybuilder/migrate/users?limit=5';
+                    method = 'POST';
+                }
+                
+                const response = await fetch(url, { method });
+                const data = await response.json();
+                
+                document.getElementById('result').innerHTML = 
+                    `<div class="result">
+                        <h3>✅ KeyBuilder ${testType}</h3>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </div>`;
+            } catch (error) {
+                document.getElementById('result').innerHTML = 
+                    `<div class="result" style="background: #f8d7da;">❌ Error: ${error.message}</div>`;
+            }
         }
         
         async function testMemory(testType) {
@@ -1332,6 +1503,7 @@ async def test_interface():
                         <p><strong>First Response:</strong> ${data1.bot_response}</p>
                         <p><strong>Follow-up:</strong> "${data2.input_message}"</p>
                         <p><strong>Context-Aware Response:</strong> ${data2.bot_response}</p>
+                        <p><strong>KeyBuilder Features:</strong> ${data2.features_active?.key_builder ? '✅' : '❌'} Unified Data</p>
                         <p><strong>Memory Features:</strong> ${data2.features_active?.memory_enhanced ? '✅' : '❌'} Enhanced</p>
                     </div>`;
             } catch (error) {
@@ -1426,6 +1598,7 @@ async def test_interface():
                             <h3>✅ Response from ${data.agent_used}</h3>
                             <p><strong>Input:</strong> ${data.input_message}</p>
                             <p><strong>Response:</strong> ${data.bot_response}</p>
+                            <p><strong>KeyBuilder:</strong> ${data.features_active?.key_builder ? '✅' : '❌'}</p>
                             <p><strong>Memory Enhanced:</strong> ${data.features_active?.memory_enhanced ? '✅' : '❌'}</p>
                             <p><strong>Background Services:</strong> 
                                 Pipeline: ${data.background_services?.data_pipeline ? '✅' : '❌'}, 
@@ -1462,6 +1635,7 @@ async def test_interface():
                             <h3>✅ ${agentType.toUpperCase()} Response</h3>
                             <p><strong>Input:</strong> ${data.input_message}</p>
                             <p><strong>Response:</strong> ${data.bot_response}</p>
+                            <p><strong>KeyBuilder:</strong> ${data.features_active?.key_builder ? '✅' : '❌'}</p>
                             <p><strong>Memory Enhanced:</strong> ${data.features_active?.memory_enhanced ? '✅' : '❌'}</p>
                         </div>`;
                 } else {
@@ -1480,38 +1654,41 @@ async def test_interface():
             document.getElementById('result').innerHTML = '<div class="result">🔄 Comparing Claude vs OpenAI...</div>';
             
             try {
-                const response = await fetch('/debug/compare-agents', {
+                // Test Claude
+                const claudeResponse = await fetch('/debug/test-message', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message, phone })
+                    body: JSON.stringify({ message, phone, force_agent: 'claude' })
                 });
+                const claudeData = await claudeResponse.json();
                 
-                if (response.ok) {
-                    const data = await response.json();
-                    const claudeResult = data.comparison.claude;
-                    const openaiResult = data.comparison.openai;
-                    
-                    document.getElementById('result').innerHTML = 
-                        `<div class="result">
-                            <h3>🔍 Agent Comparison</h3>
-                            <p><strong>Input:</strong> ${data.input_message}</p>
-                            <div class="comparison">
-                                <div class="agent-result claude-result">
-                                    <h4>🧠 Claude Response</h4>
-                                    <p><strong>Status:</strong> ${claudeResult.status}</p>
-                                    ${claudeResult.response ? `<p><strong>Response:</strong> ${claudeResult.response}</p>` : ''}
-                                </div>
-                                <div class="agent-result openai-result">
-                                    <h4>🤖 OpenAI Response</h4>
-                                    <p><strong>Status:</strong> ${openaiResult.status}</p>
-                                    ${openaiResult.response ? `<p><strong>Response:</strong> ${openaiResult.response}</p>` : ''}
-                                </div>
+                // Test OpenAI
+                const openaiResponse = await fetch('/debug/test-message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, phone, force_agent: 'openai' })
+                });
+                const openaiData = await openaiResponse.json();
+                
+                document.getElementById('result').innerHTML = 
+                    `<div class="result">
+                        <h3>🔍 Agent Comparison</h3>
+                        <p><strong>Input:</strong> ${message}</p>
+                        <div class="comparison">
+                            <div class="agent-result claude-result">
+                                <h4>🧠 Claude Response</h4>
+                                <p><strong>Status:</strong> ${claudeData.success ? 'Success' : 'Failed'}</p>
+                                <p><strong>Response:</strong> ${claudeData.bot_response || 'No response'}</p>
+                                <p><strong>KeyBuilder:</strong> ${claudeData.features_active?.key_builder ? '✅' : '❌'}</p>
                             </div>
-                            <p><strong>Recommendation:</strong> ${data.recommendation}</p>
-                        </div>`;
-                } else {
-                    throw new Error(`HTTP ${response.status}`);
-                }
+                            <div class="agent-result openai-result">
+                                <h4>🤖 OpenAI Response</h4>
+                                <p><strong>Status:</strong> ${openaiData.success ? 'Success' : 'Failed'}</p>
+                                <p><strong>Response:</strong> ${openaiData.bot_response || 'No response'}</p>
+                                <p><strong>KeyBuilder:</strong> ${openaiData.features_active?.key_builder ? '✅' : '❌'}</p>
+                            </div>
+                        </div>
+                    </div>`;
             } catch (error) {
                 document.getElementById('result').innerHTML = 
                     `<div class="result" style="background: #f8d7da;">❌ Error: ${error.message}</div>`;
@@ -1522,23 +1699,7 @@ async def test_interface():
 </html>
 """
 
-# ===== RUN SERVER =====
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    logger.info(f"🚀 Starting Claude-Powered SMS Trading Bot with Background Jobs on port {port}")
-    logger.info(f"Environment: {settings.environment}")
-    logger.info(f"Claude Preference: {settings.prefer_claude}")
-    logger.info(f"Available APIs: Claude={anthropic is not None and settings.anthropic_api_key}, OpenAI={settings.openai_api_key is not None}, EODHD={settings.eodhd_api_key is not None}")
-    logger.info(f"Background Jobs: Enabled={BackgroundDataPipeline is not None and settings.eodhd_api_key is not None}")
-    logger.info(f"Memory Manager: Enabled={MemoryManager is not None and settings.pinecone_api_key is not None}")
-    
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=port,
-        reload=settings.environment == "development"
-    )
+# ===== STRIPE WEBHOOK ENDPOINTS =====
 
 @app.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
@@ -1587,8 +1748,13 @@ async def process_stripe_webhook_event(event_type: str, event_data: Dict) -> Dic
     
     # Get user from database using customer ID
     user = None
-    if customer_id:
-        user = await user_manager.get_user_by_stripe_customer(customer_id)
+    if customer_id and db_service:
+        try:
+            user_doc = await db_service.db.users.find_one({"stripe_customer_id": customer_id})
+            if user_doc:
+                user = user_doc
+        except Exception as e:
+            logger.error(f"Error fetching user by customer ID {customer_id}: {e}")
     
     result = {"processed": False, "action_taken": "none", "user_found": bool(user)}
     
@@ -1633,32 +1799,28 @@ async def handle_subscription_created(event_data: Dict, user: Optional[Dict]) ->
         logger.warning(f"⚠️ Subscription created but no user found for customer {event_data.get('customer')}")
         return {"processed": False, "action_taken": "user_not_found"}
     
-    # Determine plan type from price ID
-    price_id = event_data['items']['data'][0]['price']['id']
-    plan_type = PlanType.BASIC.value if price_id == stripe_service.basic_price_id else PlanType.PRO.value
-    
-    # Update user subscription
-    success = await user_manager.update_subscription(
-        user["phone_number"],
-        plan_type,
-        event_data.get('customer'),
-        event_data.get('id'),
-        SubscriptionStatus.ACTIVE.value if event_data['status'] == 'active' else event_data['status']
-    )
-    
-    if success:
-        # Send welcome message
-        await send_subscription_welcome_message(user["phone_number"], plan_type)
+    # Update user subscription status
+    try:
+        await db_service.db.users.update_one(
+            {"_id": user["_id"]},
+            {
+                "$set": {
+                    "subscription_status": "active",
+                    "stripe_subscription_id": event_data.get('id'),
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
         
-        logger.info(f"✅ Subscription created: {user['phone_number']} -> {plan_type}")
+        logger.info(f"✅ Subscription created: {user.get('phone_number')} -> active")
         return {
             "processed": True,
             "action_taken": "subscription_activated",
-            "plan_type": plan_type,
             "status": event_data['status']
         }
-    
-    return {"processed": False, "action_taken": "update_failed"}
+    except Exception as e:
+        logger.error(f"❌ Failed to update subscription for user {user['_id']}: {e}")
+        return {"processed": False, "action_taken": "update_failed"}
 
 async def handle_subscription_updated(event_data: Dict, user: Optional[Dict]) -> Dict:
     """Handle subscription.updated webhook"""
@@ -1666,77 +1828,52 @@ async def handle_subscription_updated(event_data: Dict, user: Optional[Dict]) ->
         return {"processed": False, "action_taken": "user_not_found"}
     
     subscription_status = event_data.get('status')
-    cancel_at_period_end = event_data.get('cancel_at_period_end', False)
     
-    # Handle different subscription states
-    if cancel_at_period_end:
-        # User cancelled but subscription continues until period end
-        await user_manager.handle_subscription_cancellation(
-            user["phone_number"],
-            reason="user_cancelled_end_of_period",
-            immediate=False
-        )
-        
-        # Send cancellation confirmation
-        await send_cancellation_confirmation_message(user["phone_number"], event_data.get('current_period_end'))
-        
-        return {
-            "processed": True,
-            "action_taken": "subscription_cancelled_end_of_period",
-            "period_end": event_data.get('current_period_end')
-        }
-    
-    elif subscription_status == 'paused':
-        # Subscription paused
-        await user_manager.update_subscription(
-            user["phone_number"],
-            user["plan_type"],  # Keep same plan
-            subscription_status=SubscriptionStatus.PAUSED.value
+    try:
+        await db_service.db.users.update_one(
+            {"_id": user["_id"]},
+            {
+                "$set": {
+                    "subscription_status": subscription_status,
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
         )
         
         return {
             "processed": True,
-            "action_taken": "subscription_paused"
+            "action_taken": "subscription_updated",
+            "new_status": subscription_status
         }
-    
-    elif subscription_status == 'active' and user.get('subscription_status') == 'paused':
-        # Subscription resumed
-        await user_manager.update_subscription(
-            user["phone_number"],
-            user["plan_type"],
-            subscription_status=SubscriptionStatus.ACTIVE.value
-        )
-        
-        return {
-            "processed": True,
-            "action_taken": "subscription_resumed"
-        }
-    
-    return {"processed": True, "action_taken": "subscription_updated"}
+    except Exception as e:
+        logger.error(f"❌ Failed to update subscription status for user {user['_id']}: {e}")
+        return {"processed": False, "action_taken": "update_failed"}
 
 async def handle_subscription_deleted(event_data: Dict, user: Optional[Dict]) -> Dict:
     """Handle subscription.deleted webhook"""
     if not user:
         return {"processed": False, "action_taken": "user_not_found"}
     
-    # Downgrade user to free plan
-    success = await user_manager.update_subscription(
-        user["phone_number"],
-        PlanType.FREE.value,
-        subscription_status=SubscriptionStatus.EXPIRED.value
-    )
-    
-    if success:
-        # Send downgrade notification
-        await send_downgrade_notification_message(user["phone_number"])
+    try:
+        await db_service.db.users.update_one(
+            {"_id": user["_id"]},
+            {
+                "$set": {
+                    "subscription_status": "cancelled",
+                    "plan_type": "free",
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
         
-        logger.info(f"✅ Subscription deleted: {user['phone_number']} downgraded to free")
+        logger.info(f"✅ Subscription deleted: {user.get('phone_number')} downgraded to free")
         return {
             "processed": True,
             "action_taken": "downgraded_to_free"
         }
-    
-    return {"processed": False, "action_taken": "downgrade_failed"}
+    except Exception as e:
+        logger.error(f"❌ Failed to downgrade user {user['_id']}: {e}")
+        return {"processed": False, "action_taken": "downgrade_failed"}
 
 async def handle_trial_will_end(event_data: Dict, user: Optional[Dict]) -> Dict:
     """Handle subscription.trial_will_end webhook"""
@@ -1746,8 +1883,10 @@ async def handle_trial_will_end(event_data: Dict, user: Optional[Dict]) -> Dict:
     trial_end_timestamp = event_data.get('trial_end')
     trial_end_date = datetime.fromtimestamp(trial_end_timestamp, timezone.utc) if trial_end_timestamp else None
     
-    # Send trial ending reminder
-    await send_trial_ending_message(user["phone_number"], trial_end_date)
+    # Send trial ending reminder via SMS
+    if twilio_service and user.get('phone_number'):
+        trial_message = f"⏰ Your free trial ends in 3 days. Upgrade to continue getting trading insights!"
+        await twilio_service.send_message(user['phone_number'], trial_message)
     
     return {
         "processed": True,
@@ -1760,66 +1899,78 @@ async def handle_payment_succeeded(event_data: Dict, user: Optional[Dict]) -> Di
     if not user:
         return {"processed": False, "action_taken": "user_not_found"}
     
-    # Reset payment failure count
-    await user_manager.db.db.users.update_one(
-        {"phone_number": user["phone_number"]},
-        {
-            "$set": {
-                "payment_failures": 0,
-                "last_payment_success": datetime.now(timezone.utc),
-                "billing_status": "current",
-                "updated_at": datetime.now(timezone.utc)
+    try:
+        await db_service.db.users.update_one(
+            {"_id": user["_id"]},
+            {
+                "$set": {
+                    "payment_failures": 0,
+                    "last_payment_success": datetime.now(timezone.utc),
+                    "billing_status": "current",
+                    "updated_at": datetime.now(timezone.utc)
+                }
             }
+        )
+        
+        amount = event_data.get('amount_paid', 0) / 100  # Convert from cents
+        return {
+            "processed": True,
+            "action_taken": "payment_success_recorded",
+            "amount": amount
         }
-    )
-    
-    # Send payment confirmation (optional)
-    amount = event_data.get('amount_paid', 0) / 100  # Convert from cents
-    await send_payment_success_message(user["phone_number"], amount)
-    
-    return {
-        "processed": True,
-        "action_taken": "payment_success_recorded",
-        "amount": amount
-    }
+    except Exception as e:
+        logger.error(f"❌ Failed to record payment success for user {user['_id']}: {e}")
+        return {"processed": False, "action_taken": "record_failed"}
 
 async def handle_payment_failed(event_data: Dict, user: Optional[Dict]) -> Dict:
     """Handle invoice.payment_failed webhook"""
     if not user:
         return {"processed": False, "action_taken": "user_not_found"}
     
-    # Track payment failure
-    await user_manager.handle_payment_failure(user["phone_number"])
-    
-    # Get updated user data
-    updated_user = await user_manager.get_user_by_phone(user["phone_number"])
-    payment_failures = updated_user.get("payment_failures", 1)
-    
-    # Send appropriate message based on failure count
-    if payment_failures == 1:
-        await send_payment_retry_message(user["phone_number"], "first")
-    elif payment_failures == 2:
-        await send_payment_retry_message(user["phone_number"], "second")
-    elif payment_failures >= 3:
-        await send_account_suspended_message(user["phone_number"])
-    
-    return {
-        "processed": True,
-        "action_taken": "payment_failure_handled",
-        "failure_count": payment_failures,
-        "suspended": payment_failures >= 3
-    }
+    try:
+        # Increment payment failure count
+        result = await db_service.db.users.update_one(
+            {"_id": user["_id"]},
+            {
+                "$inc": {"payment_failures": 1},
+                "$set": {"updated_at": datetime.now(timezone.utc)}
+            }
+        )
+        
+        # Get updated failure count
+        updated_user = await db_service.db.users.find_one({"_id": user["_id"]})
+        payment_failures = updated_user.get("payment_failures", 1)
+        
+        # Send appropriate message based on failure count
+        if twilio_service and user.get('phone_number'):
+            if payment_failures == 1:
+                message = "💳 Payment failed. Please update your payment method to continue service."
+            elif payment_failures >= 3:
+                message = "🚫 Account suspended due to payment issues. Please contact support."
+            else:
+                message = f"💳 Payment attempt {payment_failures} failed. Please check your payment method."
+            
+            await twilio_service.send_message(user['phone_number'], message)
+        
+        return {
+            "processed": True,
+            "action_taken": "payment_failure_handled",
+            "failure_count": payment_failures,
+            "suspended": payment_failures >= 3
+        }
+    except Exception as e:
+        logger.error(f"❌ Failed to handle payment failure for user {user['_id']}: {e}")
+        return {"processed": False, "action_taken": "handle_failed"}
 
 async def handle_customer_created(event_data: Dict) -> Dict:
     """Handle customer.created webhook"""
     phone_number = event_data.get('phone')
     customer_id = event_data.get('id')
     
-    if phone_number:
-        # Update user with Stripe customer ID
-        user = await user_manager.get_user_by_phone(phone_number)
-        if user:
-            await user_manager.db.db.users.update_one(
+    if phone_number and db_service:
+        try:
+            # Update user with Stripe customer ID
+            result = await db_service.db.users.update_one(
                 {"phone_number": phone_number},
                 {
                     "$set": {
@@ -1829,10 +1980,13 @@ async def handle_customer_created(event_data: Dict) -> Dict:
                 }
             )
             
-            return {
-                "processed": True,
-                "action_taken": "customer_linked_to_user"
-            }
+            if result.modified_count > 0:
+                return {
+                    "processed": True,
+                    "action_taken": "customer_linked_to_user"
+                }
+        except Exception as e:
+            logger.error(f"❌ Failed to link customer {customer_id} to user: {e}")
     
     return {"processed": True, "action_taken": "customer_created_no_user"}
 
@@ -1843,62 +1997,31 @@ async def handle_customer_updated(event_data: Dict, user: Optional[Dict]) -> Dic
     
     # Update user email if changed
     email = event_data.get('email')
-    if email and email != user.get('email'):
-        await user_manager.db.db.users.update_one(
-            {"phone_number": user["phone_number"]},
-            {
-                "$set": {
-                    "email": email,
-                    "updated_at": datetime.now(timezone.utc)
+    if email and email != user.get('email') and db_service:
+        try:
+            await db_service.db.users.update_one(
+                {"_id": user["_id"]},
+                {
+                    "$set": {
+                        "email": email,
+                        "updated_at": datetime.now(timezone.utc)
+                    }
                 }
+            )
+            
+            return {
+                "processed": True,
+                "action_taken": "user_email_updated",
+                "email": email
             }
-        )
-        
-        return {
-            "processed": True,
-            "action_taken": "user_email_updated",
-            "email": email
-        }
+        except Exception as e:
+            logger.error(f"❌ Failed to update email for user {user['_id']}: {e}")
+            return {"processed": False, "action_taken": "update_failed"}
     
     return {"processed": True, "action_taken": "no_changes_needed"}
 
-# SMS Notification Functions
-async def send_subscription_welcome_message(phone_number: str, plan_type: str):
-    """Send welcome message for new subscription"""
-    plan_config = PlanLimits.get_plan_config(plan_type)
-    
-    message = f"""🎉 Welcome to {plan_type.upper()}!
+# ===== DEBUG REDIS/MONGO ENDPOINTS =====
 
-Your subscription is now active:
-💰 ${plan_config['price']}/month
-📱 {plan_config.get('weekly_limit', 'Unlimited')} messages/week
-✨ All {plan_type} features unlocked
-
-Try asking: "How is AAPL?" or "Find me tech stocks"
-
-Questions? Just reply HELP"""
-    
-    # Send via Twilio (implement your SMS sending logic)
-    await send_sms_message(phone_number, message)
-
-async def send_cancellation_confirmation_message(phone_number: str, period_end_timestamp: int):
-    """Send cancellation confirmation message"""
-    period_end = datetime.fromtimestamp(period_end_timestamp, timezone.utc)
-    
-    message = f"""📋 Subscription Cancelled
-
-Your plan will remain active until {period_end.strftime('%B %d, %Y')}
-
-After that, you'll be on our FREE plan:
-• 10 messages per week
-• Basic stock analysis
-• Daily insights
-
-Change your mind? Reply REACTIVATE"""
-    
-    await send_sms
-
-# In your main.py
 @app.get("/admin/debug/keys")
 async def get_all_keys():
     """Temporary endpoint to audit Redis keys"""
@@ -1922,6 +2045,9 @@ async def get_all_keys():
 async def get_mongo_collections():
     """Check what's in MongoDB"""
     try:
+        if not db_service or not db_service.db:
+            return {"error": "MongoDB connection not available"}
+            
         # Get all collection names
         collections = await db_service.db.list_collection_names()
         
@@ -1947,3 +2073,22 @@ async def get_mongo_collections():
         return result
     except Exception as e:
         return {"error": str(e)}
+
+# ===== RUN SERVER =====
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    logger.info(f"🚀 Starting Claude-Powered SMS Trading Bot with Background Jobs + KeyBuilder on port {port}")
+    logger.info(f"Environment: {settings.environment}")
+    logger.info(f"Claude Preference: {settings.prefer_claude}")
+    logger.info(f"Available APIs: Claude={anthropic is not None and settings.anthropic_api_key}, OpenAI={settings.openai_api_key is not None}, EODHD={settings.eodhd_api_key is not None}")
+    logger.info(f"Background Jobs: Enabled={BackgroundDataPipeline is not None and settings.eodhd_api_key is not None}")
+    logger.info(f"Memory Manager: Enabled={MemoryManager is not None and settings.pinecone_api_key is not None}")
+    logger.info(f"KeyBuilder: Enabled={KeyBuilder is not None}")
+    
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=settings.environment == "development"
+    )
