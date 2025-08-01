@@ -36,8 +36,8 @@ class DatabaseService:
             await self.cleanup_invalid_users()
             
             if self.redis and self.db:
-            self.key_builder = KeyBuilder(self.redis, self.db)
-            logger.info("🔧 KeyBuilder initialized successfully")
+                self.key_builder = KeyBuilder(self.redis, self.db)
+                logger.info("🔧 KeyBuilder initialized successfully")
         
         logger.info("✅ Database connections initialized")
     except Exception as e:
