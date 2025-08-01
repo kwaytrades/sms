@@ -1892,3 +1892,20 @@ After that, you'll be on our FREE plan:
 Change your mind? Reply REACTIVATE"""
     
     await send_sms
+
+# In your main.py
+@app.get("/admin/debug/keys")
+async def get_all_keys():
+    """Temporary endpoint to audit Redis keys"""
+    try:
+        redis = # however you get your redis connection
+        all_keys = await redis.keys("*")
+        
+        key_list = [key.decode('utf-8') if isinstance(key, bytes) else key for key in all_keys]
+        
+        return {
+            "total_keys": len(key_list),
+            "keys": sorted(key_list)
+        }
+    except Exception as e:
+        return {"error": str(e)}
