@@ -247,6 +247,11 @@ async def lifespan(app: FastAPI):
             cache_service = CacheService(db_service.redis)
             logger.info("✅ Cache service initialized")
         
+
+        if db_service.redis and db_service.db:
+            db_service.key_builder = KeyBuilder(db_service.redis, db_service.db)
+            logger.info("🔧 KeyBuilder initialized")
+        
         if OpenAIService:
             openai_service = OpenAIService()
             logger.info("✅ OpenAI service initialized")
