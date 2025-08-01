@@ -1,7 +1,8 @@
-# services/claude_data_driven_agent.py - COMPLETE FIX
+# services/claude_data_driven_agent.py - COMPLETE FIX with Memory Tool
 """
 Claude-powered data-driven LLM agent for superior trading analysis
 FIXED: All async/await issues that were causing coroutine errors
+ADDED: Memory search tool for contextual awareness
 """
 
 import json
@@ -17,6 +18,7 @@ class ClaudeDataDrivenAgent:
     1. Calls tools directly based on user query
     2. Passes raw data to Claude
     3. Claude handles everything - analysis, tone, conversation style
+    4. NOW WITH MEMORY ACCESS during tool calling
     """
     
     def __init__(self, anthropic_client, ta_service, news_service, fundamental_tool, cache_service, personality_engine, memory_manager=None, db_service=None):
@@ -28,6 +30,7 @@ class ClaudeDataDrivenAgent:
         self.personality_engine = personality_engine
         self.memory_manager = memory_manager
         self.db_service = db_service  # DatabaseService with KeyBuilder
+        self._current_user_phone = None  # Store for tool calling context
     
     async def process_message(self, message: str, user_phone: str) -> str:
         """
@@ -35,6 +38,9 @@ class ClaudeDataDrivenAgent:
         """
         try:
             logger.info(f"🎯 Claude processing: '{message}' from {user_phone}")
+            
+            # Store user_phone for tool calling access
+            self._current_user_phone = user_phone
             
             # Save incoming message to memory
             if self.memory_manager:
@@ -65,7 +71,7 @@ class ClaudeDataDrivenAgent:
             # ✅ AWAIT ADDED for user profile
             user_profile = await self._get_user_profile(user_phone)
             
-            # Step 2: Claude analyzes query and calls tools directly - ✅ AWAIT ADDED
+            # Step 2: Claude analyzes query and calls tools directly - ✅ AWAIT ADDED (NOW WITH MEMORY ACCESS)
             tool_results = await self._claude_driven_tool_calling(message, context)
             
             # Step 3: Claude generates response with all context - ✅ AWAIT ADDED
@@ -150,12 +156,12 @@ class ClaudeDataDrivenAgent:
     
     async def _claude_driven_tool_calling(self, message: str, context: Dict) -> Dict[str, Any]:
         """
-        Let Claude decide which tools to call and execute them with real data - FIXED async
+        Let Claude decide which tools to call and execute them with real data - NOW WITH MEMORY ACCESS
         """
         
         context_summary = self._format_context_summary(context)
         
-        tool_calling_prompt = f"""You are a trading analyst with access to market data tools. Analyze the user's request and call the appropriate tools to get REAL data.
+        tool_calling_prompt = f"""You are a trading analyst with access to market data tools AND conversation memory. Analyze the user's request and call the appropriate tools.
 
 USER REQUEST: "{message}"
 CONVERSATION CONTEXT: {context_summary}
@@ -164,16 +170,18 @@ AVAILABLE TOOLS:
 - getTechnical(symbol): Get technical analysis, price, RSI, support/resistance
 - getFundamentals(symbol): Get P/E ratio, financial health, growth metrics  
 - getNews(symbol): Get recent news sentiment and market impact
+- searchMemory(query): Search conversation history for context about previously discussed stocks
 
-INSTRUCTIONS:
-1. Determine which tools to call based on the user's request
-2. Call tools to get REAL market data
-3. You will see the actual data returned from each tool
+IMPORTANT USAGE RULES:
+- If user asks vague questions like "What stock am I talking about?", "How's it doing?", "Should I buy it?" 
+- FIRST call searchMemory("recent stock discussed") to find what they were talking about
+- THEN call the appropriate analysis tools with the discovered stock symbol
+- Use searchMemory when you need context about previous conversations
 
 Extract any stock symbols and call the appropriate tools now."""
 
         try:
-            # Claude's function calling format
+            # Claude's function calling format - NOW WITH MEMORY TOOL
             tools = [
                 {
                     "name": "getTechnical",
@@ -216,6 +224,21 @@ Extract any stock symbols and call the appropriate tools now."""
                         },
                         "required": ["symbol"]
                     }
+                },
+                # ✅ NEW: Memory search tool
+                {
+                    "name": "searchMemory",
+                    "description": "Search conversation history to find context about previously discussed stocks or topics",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search query to find relevant conversation context (e.g. 'recent stock discussed', 'last symbol mentioned')"
+                            }
+                        },
+                        "required": ["query"]
+                    }
                 }
             ]
             
@@ -239,12 +262,12 @@ Extract any stock symbols and call the appropriate tools now."""
                     if content_block.type == "tool_use":
                         function_name = content_block.name
                         arguments = content_block.input
-                        symbol = arguments.get("symbol", "").upper()
                         
-                        logger.info(f"🔧 Claude requested: {function_name}({symbol})")
+                        logger.info(f"🔧 Claude requested: {function_name}({arguments})")
                         
                         # Execute the actual tool and get real data
                         if function_name == "getTechnical" and self.ta_service:
+                            symbol = arguments.get("symbol", "").upper()
                             # ✅ FIXED: Added await for async ta_service call
                             result = await self.ta_service.analyze_symbol(symbol)
                             if result:
@@ -252,6 +275,7 @@ Extract any stock symbols and call the appropriate tools now."""
                         
                         # ✅ FIXED: FAEngine is synchronous, no await needed (this was correct)
                         elif function_name == "getFundamentals" and self.fundamental_tool:
+                            symbol = arguments.get("symbol", "").upper()
                             # FAEngine uses execute() method, not analyze_fundamentals()
                             result = self.fundamental_tool.execute({
                                 "symbol": symbol,
@@ -262,10 +286,61 @@ Extract any stock symbols and call the appropriate tools now."""
                                 tool_results[f"fundamental_{symbol}"] = result["analysis_result"]
                         
                         elif function_name == "getNews" and self.news_service:
+                            symbol = arguments.get("symbol", "").upper()
                             # ✅ FIXED: Added await for async news_service call
                             result = await self.news_service.get_sentiment(symbol)
                             if result and not result.get('error'):
                                 tool_results[f"news_{symbol}"] = result
+                        
+                        # ✅ NEW: Handle memory search tool
+                        elif function_name == "searchMemory" and self.memory_manager:
+                            query = arguments.get("query", "")
+                            user_phone = self._current_user_phone
+                            
+                            if user_phone:
+                                try:
+                                    from services.memory_manager import AgentType
+                                    memory_result = await self.memory_manager.get_context(
+                                        user_id=user_phone,
+                                        agent_type=AgentType.TRADING,
+                                        query=query
+                                    )
+                                    
+                                    # Extract recent symbols and messages from memory
+                                    stm = memory_result.get('short_term_memory', [])
+                                    recent_symbols = []
+                                    recent_messages = []
+                                    
+                                    for msg in stm[:5]:  # Last 5 messages
+                                        content = msg.get('content', '')
+                                        direction = msg.get('direction', 'unknown')
+                                        if content:
+                                            recent_messages.append(f"{direction}: {content}")
+                                        
+                                        topics = msg.get('topics', [])
+                                        recent_symbols.extend([t for t in topics if t.isupper() and len(t) <= 5])
+                                    
+                                    # Remove duplicate symbols, keep order
+                                    unique_symbols = []
+                                    for symbol in recent_symbols:
+                                        if symbol not in unique_symbols:
+                                            unique_symbols.append(symbol)
+                                    
+                                    tool_results["memory_search"] = {
+                                        "recent_symbols": unique_symbols[:3],
+                                        "most_recent_symbol": unique_symbols[0] if unique_symbols else None,
+                                        "recent_messages": recent_messages[:3],
+                                        "context_found": len(stm) > 0,
+                                        "query_used": query
+                                    }
+                                    
+                                    logger.info(f"🧠 Memory search found: {unique_symbols[:3]}")
+                                    
+                                except Exception as e:
+                                    logger.error(f"Memory search failed: {e}")
+                                    tool_results["memory_search"] = {"error": "Memory search failed", "query_used": query}
+                            else:
+                                tool_results["memory_search"] = {"error": "No user context available", "query_used": query}
             
             return tool_results
             
@@ -367,12 +442,17 @@ Generate your response now - be brilliant but concise:"""
         formatted_results = []
         
         for key, data in tool_results.items():
-            symbol = key.split('_', 1)[1] if '_' in key else 'UNKNOWN'
-            data_type = key.split('_', 1)[0] if '_' in key else 'unknown'
-            
-            # Claude can handle more complex data structures better than GPT
-            result_text = f"=== {data_type.upper()} DATA for {symbol} ===\n{json.dumps(data, indent=2, default=str)}"
-            formatted_results.append(result_text)
+            if key == "memory_search":
+                # Special formatting for memory search results
+                result_text = f"=== MEMORY SEARCH RESULTS ===\n{json.dumps(data, indent=2, default=str)}"
+                formatted_results.append(result_text)
+            else:
+                symbol = key.split('_', 1)[1] if '_' in key else 'UNKNOWN'
+                data_type = key.split('_', 1)[0] if '_' in key else 'unknown'
+                
+                # Claude can handle more complex data structures better than GPT
+                result_text = f"=== {data_type.upper()} DATA for {symbol} ===\n{json.dumps(data, indent=2, default=str)}"
+                formatted_results.append(result_text)
         
         return "\n\n".join(formatted_results)
     
