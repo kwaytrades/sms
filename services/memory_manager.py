@@ -511,11 +511,17 @@ class MemoryManager:
             existing_indexes = [index.name for index in pc.list_indexes()]
             
             if index_name not in existing_indexes:
+                from pinecone import ServerlessSpec
                 pc.create_index(
                     name=index_name,
-                    dimension=1536,  # OpenAI embedding dimension
-                    metric="cosine"
+                    dimension=1536,
+                    metric="cosine",
+                    spec=ServerlessSpec(
+                        cloud='aws', 
+                        region='us-east-1'
+                    )
                 )
+                
                 logger.info(f"Created new Pinecone index: {index_name}")
             
             self.pinecone_index = pc.Index(index_name)
