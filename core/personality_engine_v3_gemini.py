@@ -86,103 +86,101 @@ class EnhancedPersonalityEngine:
         
         logger.info(f"🧠 Enhanced PersonalityEngine v{self.PROFILE_VERSION} initialized")
 
-def _load_authoritative_tickers(self) -> set:
-    """Load authoritative ticker list - focused on trending stocks across all hot sectors"""
-    popular_tickers = [
-        # 🔥 MAGNIFICENT 7 + AI GIANTS
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA',
-        
-        # 🤖 AI & MACHINE LEARNING - The Hottest Sector
-        'NVDA', 'AMD', 'SMCI', 'ARM', 'AVGO', 'MRVL', 'QCOM', 'MU',
-        'PLTR', 'C3AI', 'AI', 'BBAI', 'SOUN', 'STEM', 'PATH', 'UPST',
-        'SNOW', 'CRWD', 'ZS', 'DDOG', 'NET', 'NOW', 'VEEV', 'WDAY',
-        
-        # 🔬 QUANTUM COMPUTING - Next Big Thing
-        'IBM', 'GOOGL', 'IONQ', 'RGTI', 'QBTS', 'ARQQ', 'QTUM', 'DEFN',
-        'QUBT', 'QMCO', 'MMAT', 'ATOM', 'RCAT', 'IonQ',
-        
-        # 💻 SEMICONDUCTOR POWERHOUSES - AI Chips Everywhere
-        'NVDA', 'AMD', 'INTC', 'TSM', 'ASML', 'LRCX', 'KLAC', 'AMAT',
-        'MU', 'MCHP', 'ADI', 'NXPI', 'TXN', 'AVGO', 'QCOM', 'MRVL',
-        'ARM', 'SMCI', 'WDC', 'STX', 'SWKS', 'CRUS', 'SLAB', 'MPWR',
-        
-        # ⚛️ NUCLEAR ENERGY - Clean Power Renaissance  
-        'OKLO', 'NNE', 'SMR', 'LEU', 'UEC', 'UUUU', 'DNN', 'CCJ',
-        'LTBR', 'VST', 'CEG', 'ETR', 'EXC', 'NEE', 'SO', 'DUK',
-        'VALE', 'FCX', 'SCCO', 'STLD', 'NUE', 'X', 'CLF', 'MT',
-        
-        # 🚗 EV & AUTONOMOUS DRIVING
-        'TSLA', 'RIVN', 'LCID', 'NIO', 'XPEV', 'LI', 'BYD', 'GM',
-        'F', 'CHPT', 'BLNK', 'EVG0', 'QS', 'STEM', 'RUN', 'ENPH',
-        
-        # 🚀 SPACE & SATELLITES - Final Frontier
-        'SPCE', 'RKLB', 'ASTS', 'PL', 'MAXR', 'SATS', 'IRDM', 'GILT',
-        'BA', 'LMT', 'RTX', 'NOC', 'GD', 'HWM', 'KTOS', 'AVAV',
-        
-        # 🪙 CRYPTO & BLOCKCHAIN - Digital Gold Rush
-        'BTC', 'ETH', 'XRP', 'SOL', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK',
-        'DOGE', 'SHIB', 'PEPE', 'FLOKI', 'WIF', 'BONK', 'MEME',
-        'COIN', 'MSTR', 'RIOT', 'MARA', 'CLSK', 'HUT', 'BITF', 'BTBT',
-        'GLXY', 'ARBK', 'WULF', 'IREN', 'CORZ', 'CIFR', 'GRIID',
-        
-        # 🏦 FINTECH REVOLUTION
-        'SQ', 'PYPL', 'SOFI', 'AFRM', 'UPST', 'LC', 'NU', 'HOOD',
-        'V', 'MA', 'AXP', 'ALLY', 'COF', 'DFS', 'SYF', 'WFC',
-        
-        # 🧬 BIOTECH & GENE EDITING - Medical Revolution
-        'MRNA', 'BNTX', 'NVAX', 'GILD', 'BIIB', 'REGN', 'VRTX', 'ILMN',
-        'CRISPR', 'EDIT', 'NTLA', 'BEAM', 'PACB', 'TWST', 'CDNA', 'FATE',
-        'BLUE', 'SGMO', 'CRSP', 'DTIL', 'RXRX', 'SDGR', 'ADPT', 'VNDA',
-        
-        # ☁️ CLOUD & CYBERSECURITY - Digital Infrastructure
-        'SNOW', 'CRWD', 'ZS', 'OKTA', 'DDOG', 'NET', 'FSLY', 'TWLO',
-        'ZOOM', 'TEAM', 'WDAY', 'SPLK', 'ESTC', 'MDB', 'DOCN', 'GTLB',
-        'PANW', 'FTNT', 'CYBR', 'TENB', 'QLYS', 'VRNS', 'SAIL', 'S',
-        
-        # 🎮 GAMING & METAVERSE
-        'RBLX', 'U', 'EA', 'ATVI', 'TTWO', 'ZNGA', 'SKLZ', 'DKNG',
-        'NVDA', 'AMD', 'META', 'MSFT', 'GOOGL', 'SNAP', 'PINS', 'MTCH',
-        
-        # 🛒 E-COMMERCE & DIGITAL ECONOMY
-        'AMZN', 'SHOP', 'ETSY', 'CHWY', 'CVNA', 'W', 'OSTK', 'MELI',
-        'SE', 'BABA', 'JD', 'PDD', 'BILI', 'UBER', 'LYFT', 'DASH',
-        
-        # 🏗️ INFRASTRUCTURE & MATERIALS
-        'CAT', 'DE', 'VMC', 'MLM', 'CRH', 'STLD', 'NUE', 'X',
-        'FCX', 'SCCO', 'AA', 'CENX', 'CLF', 'MT', 'VALE', 'RIO',
-        
-        # 💊 MEME STOCKS - Retail Trading Favorites
-        'GME', 'AMC', 'BB', 'NOK', 'WISH', 'CLOV', 'EXPR', 'KOSS',
-        'NAKD', 'SNDL', 'TLRY', 'CGC', 'ACB', 'HEXO', 'OGI', 'CRON',
-        
-        # 📊 POPULAR ETFs - All Sectors Covered
-        'QQQ', 'TQQQ', 'SQQQ', 'XLK', 'VGT', 'FTEC', 'ARKK', 'ARKW',
-        'ARKG', 'ARKF', 'ARKQ', 'ICLN', 'PBW', 'WCLD', 'SKYY', 'ROBO',
-        'QTUM', 'HACK', 'CIBR', 'BUG', 'IHAK', 'FINX', 'THNQ', 'BOTZ',
-        'UFO', 'MOON', 'BLCN', 'LEGR', 'KOIN', 'BITS', 'BITO', 'GBTC',
-        
-        # 🏦 TRADITIONAL POWERHOUSES 
-        'JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'BRK.A', 'BRK.B',
-        'SPY', 'VOO', 'IVV', 'VTI', 'SPLG', 'SCHB', 'ITOT', 'SWTSX',
-        
-        # 🌿 CANNABIS & ALTERNATIVE INVESTMENTS
-        'TLRY', 'CGC', 'ACB', 'HEXO', 'OGI', 'CRON', 'SNDL', 'GRWG',
-        'SMG', 'IIPR', 'CURLF', 'GTBIF', 'TCNNF', 'CRLBF', 'MSOS', 'YOLO',
-        
-        # 🏠 REAL ESTATE & REITS
-        'REIT', 'VNQ', 'SCHH', 'RWR', 'IYR', 'XLRE', 'FREL', 'USRT',
-        'O', 'STAG', 'PLD', 'AMT', 'CCI', 'EQIX', 'DLR', 'CONE',
-        
-        # ⚡ ENERGY TRANSITION - Oil, Gas, Renewables
-        'XOM', 'CVX', 'COP', 'EOG', 'SLB', 'HAL', 'OXY', 'MPC',
-        'ENPH', 'SEDG', 'FSLR', 'JKS', 'CSIQ', 'RUN', 'NOVA', 'MAXN'
-    ]
-    return set(popular_tickers)
+    def _load_authoritative_tickers(self) -> set:
+        """Load authoritative ticker list - focused on trending stocks across all hot sectors"""
+        popular_tickers = [
+            # 🔥 MAGNIFICENT 7 + AI GIANTS
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA',
+            
+            # 🤖 AI & MACHINE LEARNING - The Hottest Sector
+            'NVDA', 'AMD', 'SMCI', 'ARM', 'AVGO', 'MRVL', 'QCOM', 'MU',
+            'PLTR', 'C3AI', 'AI', 'BBAI', 'SOUN', 'STEM', 'PATH', 'UPST',
+            'SNOW', 'CRWD', 'ZS', 'DDOG', 'NET', 'NOW', 'VEEV', 'WDAY',
+            
+            # 🔬 QUANTUM COMPUTING - Next Big Thing
+            'IBM', 'GOOGL', 'IONQ', 'RGTI', 'QBTS', 'ARQQ', 'QTUM', 'DEFN',
+            'QUBT', 'QMCO', 'MMAT', 'ATOM', 'RCAT', 'IonQ',
+            
+            # 💻 SEMICONDUCTOR POWERHOUSES - AI Chips Everywhere
+            'NVDA', 'AMD', 'INTC', 'TSM', 'ASML', 'LRCX', 'KLAC', 'AMAT',
+            'MU', 'MCHP', 'ADI', 'NXPI', 'TXN', 'AVGO', 'QCOM', 'MRVL',
+            'ARM', 'SMCI', 'WDC', 'STX', 'SWKS', 'CRUS', 'SLAB', 'MPWR',
+            
+            # ⚛️ NUCLEAR ENERGY - Clean Power Renaissance  
+            'OKLO', 'NNE', 'SMR', 'LEU', 'UEC', 'UUUU', 'DNN', 'CCJ',
+            'LTBR', 'VST', 'CEG', 'ETR', 'EXC', 'NEE', 'SO', 'DUK',
+            'VALE', 'FCX', 'SCCO', 'STLD', 'NUE', 'X', 'CLF', 'MT',
+            
+            # 🚗 EV & AUTONOMOUS DRIVING
+            'TSLA', 'RIVN', 'LCID', 'NIO', 'XPEV', 'LI', 'BYD', 'GM',
+            'F', 'CHPT', 'BLNK', 'EVG0', 'QS', 'STEM', 'RUN', 'ENPH',
+            
+            # 🚀 SPACE & SATELLITES - Final Frontier
+            'SPCE', 'RKLB', 'ASTS', 'PL', 'MAXR', 'SATS', 'IRDM', 'GILT',
+            'BA', 'LMT', 'RTX', 'NOC', 'GD', 'HWM', 'KTOS', 'AVAV',
+            
+            # 🪙 CRYPTO & BLOCKCHAIN - Digital Gold Rush
+            'BTC', 'ETH', 'XRP', 'SOL', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK',
+            'DOGE', 'SHIB', 'PEPE', 'FLOKI', 'WIF', 'BONK', 'MEME',
+            'COIN', 'MSTR', 'RIOT', 'MARA', 'CLSK', 'HUT', 'BITF', 'BTBT',
+            'GLXY', 'ARBK', 'WULF', 'IREN', 'CORZ', 'CIFR', 'GRIID',
+            
+            # 🏦 FINTECH REVOLUTION
+            'SQ', 'PYPL', 'SOFI', 'AFRM', 'UPST', 'LC', 'NU', 'HOOD',
+            'V', 'MA', 'AXP', 'ALLY', 'COF', 'DFS', 'SYF', 'WFC',
+            
+            # 🧬 BIOTECH & GENE EDITING - Medical Revolution
+            'MRNA', 'BNTX', 'NVAX', 'GILD', 'BIIB', 'REGN', 'VRTX', 'ILMN',
+            'CRISPR', 'EDIT', 'NTLA', 'BEAM', 'PACB', 'TWST', 'CDNA', 'FATE',
+            'BLUE', 'SGMO', 'CRSP', 'DTIL', 'RXRX', 'SDGR', 'ADPT', 'VNDA',
+            
+            # ☁️ CLOUD & CYBERSECURITY - Digital Infrastructure
+            'SNOW', 'CRWD', 'ZS', 'OKTA', 'DDOG', 'NET', 'FSLY', 'TWLO',
+            'ZOOM', 'TEAM', 'WDAY', 'SPLK', 'ESTC', 'MDB', 'DOCN', 'GTLB',
+            'PANW', 'FTNT', 'CYBR', 'TENB', 'QLYS', 'VRNS', 'SAIL', 'S',
+            
+            # 🎮 GAMING & METAVERSE
+            'RBLX', 'U', 'EA', 'ATVI', 'TTWO', 'ZNGA', 'SKLZ', 'DKNG',
+            'NVDA', 'AMD', 'META', 'MSFT', 'GOOGL', 'SNAP', 'PINS', 'MTCH',
+            
+            # 🛒 E-COMMERCE & DIGITAL ECONOMY
+            'AMZN', 'SHOP', 'ETSY', 'CHWY', 'CVNA', 'W', 'OSTK', 'MELI',
+            'SE', 'BABA', 'JD', 'PDD', 'BILI', 'UBER', 'LYFT', 'DASH',
+            
+            # 🏗️ INFRASTRUCTURE & MATERIALS
+            'CAT', 'DE', 'VMC', 'MLM', 'CRH', 'STLD', 'NUE', 'X',
+            'FCX', 'SCCO', 'AA', 'CENX', 'CLF', 'MT', 'VALE', 'RIO',
+            
+            # 💊 MEME STOCKS - Retail Trading Favorites
+            'GME', 'AMC', 'BB', 'NOK', 'WISH', 'CLOV', 'EXPR', 'KOSS',
+            'NAKD', 'SNDL', 'TLRY', 'CGC', 'ACB', 'HEXO', 'OGI', 'CRON',
+            
+            # 📊 POPULAR ETFs - All Sectors Covered
+            'QQQ', 'TQQQ', 'SQQQ', 'XLK', 'VGT', 'FTEC', 'ARKK', 'ARKW',
+            'ARKG', 'ARKF', 'ARKQ', 'ICLN', 'PBW', 'WCLD', 'SKYY', 'ROBO',
+            'QTUM', 'HACK', 'CIBR', 'BUG', 'IHAK', 'FINX', 'THNQ', 'BOTZ',
+            'UFO', 'MOON', 'BLCN', 'LEGR', 'KOIN', 'BITS', 'BITO', 'GBTC',
+            
+            # 🏦 TRADITIONAL POWERHOUSES 
+            'JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'BRK.A', 'BRK.B',
+            'SPY', 'VOO', 'IVV', 'VTI', 'SPLG', 'SCHB', 'ITOT', 'SWTSX',
+            
+            # 🌿 CANNABIS & ALTERNATIVE INVESTMENTS
+            'TLRY', 'CGC', 'ACB', 'HEXO', 'OGI', 'CRON', 'SNDL', 'GRWG',
+            'SMG', 'IIPR', 'CURLF', 'GTBIF', 'TCNNF', 'CRLBF', 'MSOS', 'YOLO',
+            
+            # 🏠 REAL ESTATE & REITS
+            'REIT', 'VNQ', 'SCHH', 'RWR', 'IYR', 'XLRE', 'FREL', 'USRT',
+            'O', 'STAG', 'PLD', 'AMT', 'CCI', 'EQIX', 'DLR', 'CONE',
+            
+            # ⚡ ENERGY TRANSITION - Oil, Gas, Renewables
+            'XOM', 'CVX', 'COP', 'EOG', 'SLB', 'HAL', 'OXY', 'MPC',
+            'ENPH', 'SEDG', 'FSLR', 'JKS', 'CSIQ', 'RUN', 'NOVA', 'MAXN'
+        ]
+        return set(popular_tickers)
 
     def _create_default_profile(self) -> Dict[str, Any]:
         """Create default user profile with enhanced v3.0 structure"""
-        from datetime import datetime, timezone
-        
         return {
             "profile_version": self.PROFILE_VERSION,
             "created_at": datetime.utcnow().isoformat(),
@@ -432,392 +430,297 @@ def _load_authoritative_tickers(self) -> set:
             processing_time_ms=1,
             gemini_analysis=None
         )
-    
-    # Add these missing methods to your core/personality_engine_v3_gemini.py file
-# Insert these methods in the EnhancedPersonalityEngine class
 
-def _load_communication_patterns(self) -> Dict[str, Any]:
-    """Load communication analysis patterns"""
-    return {
-        'formality_indicators': {
-            'formal': ['please', 'thank you', 'kindly', 'respectfully', 'sincerely'],
-            'casual': ['yo', 'hey', 'sup', 'dude', 'bro', 'lol', 'omg', 'wtf'],
-            'professional': ['analyze', 'assessment', 'evaluation', 'consideration', 'recommendation']
-        },
-        'energy_indicators': {
-            'high': ['!', '!!', '!!!', 'excited', 'pumped', 'amazing', 'awesome', 'love it'],
-            'low': ['tired', 'meh', 'okay', 'fine', 'whatever', 'sure'],
-            'moderate': ['good', 'nice', 'cool', 'interesting', 'thanks']
-        },
-        'technical_depth': {
-            'basic': ['buy', 'sell', 'up', 'down', 'good', 'bad'],
-            'intermediate': ['rsi', 'macd', 'support', 'resistance', 'volume', 'trend'],
-            'advanced': ['fibonacci', 'bollinger', 'stochastic', 'divergence', 'consolidation']
+    def _load_communication_patterns(self) -> Dict[str, Any]:
+        """Load communication analysis patterns"""
+        return {
+            'formality_indicators': {
+                'formal': ['please', 'thank you', 'kindly', 'respectfully', 'sincerely'],
+                'casual': ['yo', 'hey', 'sup', 'dude', 'bro', 'lol', 'omg', 'wtf'],
+                'professional': ['analyze', 'assessment', 'evaluation', 'consideration', 'recommendation']
+            },
+            'energy_indicators': {
+                'high': ['!', '!!', '!!!', 'excited', 'pumped', 'amazing', 'awesome', 'love it'],
+                'low': ['tired', 'meh', 'okay', 'fine', 'whatever', 'sure'],
+                'moderate': ['good', 'nice', 'cool', 'interesting', 'thanks']
+            },
+            'technical_depth': {
+                'basic': ['buy', 'sell', 'up', 'down', 'good', 'bad'],
+                'intermediate': ['rsi', 'macd', 'support', 'resistance', 'volume', 'trend'],
+                'advanced': ['fibonacci', 'bollinger', 'stochastic', 'divergence', 'consolidation']
+            }
         }
-    }
 
-def _load_trading_patterns(self) -> Dict[str, Any]:
-    """Load trading behavior analysis patterns"""
-    return {
-        'risk_indicators': {
-            'conservative': ['safe', 'secure', 'stable', 'dividend', 'blue chip', 'worried', 'scared'],
-            'moderate': ['growth', 'balanced', 'reasonable', 'consider', 'think about'],
-            'aggressive': ['yolo', 'moon', 'rocket', 'all in', 'bet', 'gamble', 'risky']
-        },
-        'trading_actions': {
-            'buying': ['buy', 'purchase', 'get', 'acquire', 'long', 'calls'],
-            'selling': ['sell', 'dump', 'exit', 'short', 'puts', 'close'],
-            'holding': ['hold', 'keep', 'hodl', 'diamond hands', 'stay'],
-            'researching': ['analyze', 'research', 'study', 'look into', 'investigate']
-        },
-        'experience_indicators': {
-            'novice': ['new', 'beginner', 'start', 'learn', 'help', 'confused', 'what is'],
-            'intermediate': ['understand', 'know', 'familiar', 'experience', 'usually'],
-            'advanced': ['strategy', 'algorithm', 'model', 'backtest', 'optimize', 'correlate']
+    def _load_trading_patterns(self) -> Dict[str, Any]:
+        """Load trading behavior analysis patterns"""
+        return {
+            'risk_indicators': {
+                'conservative': ['safe', 'secure', 'stable', 'dividend', 'blue chip', 'worried', 'scared'],
+                'moderate': ['growth', 'balanced', 'reasonable', 'consider', 'think about'],
+                'aggressive': ['yolo', 'moon', 'rocket', 'all in', 'bet', 'gamble', 'risky']
+            },
+            'trading_actions': {
+                'buying': ['buy', 'purchase', 'get', 'acquire', 'long', 'calls'],
+                'selling': ['sell', 'dump', 'exit', 'short', 'puts', 'close'],
+                'holding': ['hold', 'keep', 'hodl', 'diamond hands', 'stay'],
+                'researching': ['analyze', 'research', 'study', 'look into', 'investigate']
+            },
+            'experience_indicators': {
+                'novice': ['new', 'beginner', 'start', 'learn', 'help', 'confused', 'what is'],
+                'intermediate': ['understand', 'know', 'familiar', 'experience', 'usually'],
+                'advanced': ['strategy', 'algorithm', 'model', 'backtest', 'optimize', 'correlate']
+            }
         }
-    }
 
-def _load_sales_indicators(self) -> Dict[str, Any]:
-    """Load sales opportunity detection patterns"""
-    return {
-        'buying_signals': {
-            'strong': ['need help', 'premium', 'upgrade', 'better service', 'more features'],
-            'moderate': ['interested', 'tell me more', 'pricing', 'cost', 'worth it'],
-            'weak': ['maybe', 'someday', 'later', 'thinking about', 'not sure']
-        },
-        'pain_points': {
-            'performance': ['slow', 'delayed', 'late', 'timing', 'missing opportunities'],
-            'accuracy': ['wrong', 'incorrect', 'bad advice', 'lost money', 'mistake'],
-            'features': ['limited', 'basic', 'need more', 'lacking', 'insufficient']
-        },
-        'urgency_indicators': {
-            'high': ['urgent', 'asap', 'now', 'immediately', 'quick', 'fast'],
-            'medium': ['soon', 'today', 'this week', 'need', 'want'],
-            'low': ['eventually', 'someday', 'when', 'if', 'maybe']
+    def _load_sales_indicators(self) -> Dict[str, Any]:
+        """Load sales opportunity detection patterns"""
+        return {
+            'buying_signals': {
+                'strong': ['need help', 'premium', 'upgrade', 'better service', 'more features'],
+                'moderate': ['interested', 'tell me more', 'pricing', 'cost', 'worth it'],
+                'weak': ['maybe', 'someday', 'later', 'thinking about', 'not sure']
+            },
+            'pain_points': {
+                'performance': ['slow', 'delayed', 'late', 'timing', 'missing opportunities'],
+                'accuracy': ['wrong', 'incorrect', 'bad advice', 'lost money', 'mistake'],
+                'features': ['limited', 'basic', 'need more', 'lacking', 'insufficient']
+            },
+            'urgency_indicators': {
+                'high': ['urgent', 'asap', 'now', 'immediately', 'quick', 'fast'],
+                'medium': ['soon', 'today', 'this week', 'need', 'want'],
+                'low': ['eventually', 'someday', 'when', 'if', 'maybe']
+            }
         }
-    }
 
-def _load_service_patterns(self) -> Dict[str, Any]:
-    """Load service need detection patterns"""
-    return {
-        'service_types': {
-            'technical_analysis': ['chart', 'pattern', 'indicator', 'signal', 'trend'],
-            'fundamental_analysis': ['earnings', 'revenue', 'pe ratio', 'financials', 'valuation'],
-            'news_analysis': ['news', 'announcement', 'earnings call', 'merger', 'acquisition'],
-            'portfolio_management': ['portfolio', 'diversify', 'allocation', 'balance', 'risk'],
-            'education': ['learn', 'explain', 'teach', 'understand', 'how to', 'what is']
-        },
-        'urgency_patterns': {
-            'immediate': ['now', 'urgent', 'asap', 'quick', 'emergency'],
-            'today': ['today', 'this morning', 'this afternoon', 'tonight'],
-            'this_week': ['this week', 'soon', 'in a few days'],
-            'general': ['when', 'sometime', 'eventually', 'later']
+    def _load_service_patterns(self) -> Dict[str, Any]:
+        """Load service need detection patterns"""
+        return {
+            'service_types': {
+                'technical_analysis': ['chart', 'pattern', 'indicator', 'signal', 'trend'],
+                'fundamental_analysis': ['earnings', 'revenue', 'pe ratio', 'financials', 'valuation'],
+                'news_analysis': ['news', 'announcement', 'earnings call', 'merger', 'acquisition'],
+                'portfolio_management': ['portfolio', 'diversify', 'allocation', 'balance', 'risk'],
+                'education': ['learn', 'explain', 'teach', 'understand', 'how to', 'what is']
+            },
+            'urgency_patterns': {
+                'immediate': ['now', 'urgent', 'asap', 'quick', 'emergency'],
+                'today': ['today', 'this morning', 'this afternoon', 'tonight'],
+                'this_week': ['this week', 'soon', 'in a few days'],
+                'general': ['when', 'sometime', 'eventually', 'later']
+            }
         }
-    }
 
-# Also add these helper methods for the regex-based analysis:
-
-def _analyze_communication_style_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
-    """Analyze communication style using regex patterns"""
-    patterns = self.communication_patterns
-    
-    # Formality analysis
-    formal_count = sum(1 for word in patterns['formality_indicators']['formal'] 
-                      if word in preprocessed['lower'])
-    casual_count = sum(1 for word in patterns['formality_indicators']['casual'] 
-                      if word in preprocessed['lower'])
-    
-    formality_score = 0.5
-    if formal_count > casual_count:
-        formality_score = min(1.0, 0.5 + (formal_count * 0.1))
-    elif casual_count > formal_count:
-        formality_score = max(0.0, 0.5 - (casual_count * 0.1))
-    
-    # Energy analysis
-    high_energy = sum(1 for word in patterns['energy_indicators']['high'] 
-                     if word in preprocessed['lower'])
-    energy_level = "moderate"
-    if high_energy > 2:
-        energy_level = "high"
-    elif preprocessed['char_analysis']['exclamation_marks'] > 2:
-        energy_level = "high"
-    
-    # Technical depth
-    basic_count = sum(1 for word in patterns['technical_depth']['basic'] 
-                     if word in preprocessed['lower'])
-    advanced_count = sum(1 for word in patterns['technical_depth']['advanced'] 
-                        if word in preprocessed['lower'])
-    
-    technical_depth = "basic"
-    if advanced_count > 0:
-        technical_depth = "advanced"
-    elif advanced_count == 0 and basic_count == 0:
-        technical_depth = "intermediate"
-    
-    return {
-        'formality_score': formality_score,
-        'energy_level': energy_level,
-        'technical_depth': technical_depth,
-        'emoji_usage': preprocessed['char_analysis']['emoji_count'],
-        'message_length': len(preprocessed['words'])
-    }
-
-def _analyze_trading_content_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
-    """Analyze trading content using regex patterns"""
-    patterns = self.trading_patterns
-    
-    # Risk tolerance analysis
-    conservative_count = sum(1 for word in patterns['risk_indicators']['conservative'] 
-                           if word in preprocessed['lower'])
-    aggressive_count = sum(1 for word in patterns['risk_indicators']['aggressive'] 
+    def _analyze_communication_style_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
+        """Analyze communication style using regex patterns"""
+        patterns = self.communication_patterns
+        
+        # Formality analysis
+        formal_count = sum(1 for word in patterns['formality_indicators']['formal'] 
                           if word in preprocessed['lower'])
-    
-    risk_tolerance = "moderate"
-    if aggressive_count > conservative_count and aggressive_count > 0:
-        risk_tolerance = "aggressive"
-    elif conservative_count > aggressive_count and conservative_count > 0:
-        risk_tolerance = "conservative"
-    
-    # Trading action analysis
-    trading_action = "unclear"
-    for action, keywords in patterns['trading_actions'].items():
-        if any(keyword in preprocessed['lower'] for keyword in keywords):
-            trading_action = action
-            break
-    
-    return {
-        'symbols_mentioned': preprocessed['symbols'],
-        'trading_action': trading_action,
-        'risk_tolerance': risk_tolerance,
-        'money_amounts': preprocessed['patterns'].get('money_amounts', []),
-        'percentages': preprocessed['patterns'].get('percentages', [])
-    }
-
-def _analyze_emotional_state_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
-    """Analyze emotional state using regex patterns"""
-    emotional_words = {
-        'excited': ['excited', 'pumped', 'thrilled', 'amazing', 'awesome'],
-        'worried': ['worried', 'concerned', 'scared', 'nervous', 'anxious'],
-        'frustrated': ['frustrated', 'annoyed', 'upset', 'angry', 'mad'],
-        'confident': ['confident', 'sure', 'certain', 'bullish', 'optimistic'],
-        'uncertain': ['uncertain', 'confused', 'unsure', 'maybe', 'not sure']
-    }
-    
-    primary_emotion = "neutral"
-    emotional_intensity = 0.0
-    
-    for emotion, keywords in emotional_words.items():
-        count = sum(1 for keyword in keywords if keyword in preprocessed['lower'])
-        if count > 0:
-            primary_emotion = emotion
-            emotional_intensity = min(1.0, count * 0.3)
-            break
-    
-    # Check for intensity indicators
-    if preprocessed['char_analysis']['exclamation_marks'] > 2:
-        emotional_intensity = min(1.0, emotional_intensity + 0.2)
-    
-    return {
-        'primary_emotion': primary_emotion,
-        'emotional_intensity': emotional_intensity,
-        'support_needed': 'high_support' if emotional_intensity > 0.7 else 'standard_guidance'
-    }
-
-def _analyze_user_intent_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
-    """Analyze user intent using regex patterns"""
-    intent_patterns = {
-        'question': message.count('?') > 0 or any(q in preprocessed['lower'] for q in ['what', 'how', 'when', 'where', 'why']),
-        'request_analysis': any(word in preprocessed['lower'] for word in ['analyze', 'analysis', 'chart', 'technical']),
-        'general_chat': len(preprocessed['symbols']) == 0 and not any(t in preprocessed['lower'] for t in ['buy', 'sell', 'trade'])
-    }
-    
-    primary_intent = "general_chat"
-    if intent_patterns['request_analysis']:
-        primary_intent = "request_analysis"
-    elif intent_patterns['question']:
-        primary_intent = "question"
-    
-    return {
-        'primary_intent': primary_intent,
-        'requires_tools': ['technical_analysis'] if primary_intent == 'request_analysis' else [],
-        'follow_up_likelihood': 0.7 if primary_intent == 'question' else 0.3
-    }
-
-def _analyze_service_needs_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
-    """Analyze service needs using regex patterns"""
-    patterns = self.service_patterns
-    
-    service_type = "none"
-    urgency_level = 0.0
-    
-    for stype, keywords in patterns['service_types'].items():
-        if any(keyword in preprocessed['lower'] for keyword in keywords):
-            service_type = stype
-            break
-    
-    for urgency, keywords in patterns['urgency_patterns'].items():
-        if any(keyword in preprocessed['lower'] for keyword in keywords):
-            urgency_level = {'immediate': 1.0, 'today': 0.8, 'this_week': 0.5, 'general': 0.2}[urgency]
-            break
-    
-    return {
-        'service_type': service_type,
-        'urgency_level': urgency_level
-    }
-
-def _analyze_sales_opportunity_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
-    """Analyze sales opportunity using regex patterns"""
-    patterns = self.sales_indicators
-    
-    buying_signal_strength = 0.0
-    for strength, keywords in patterns['buying_signals'].items():
-        if any(keyword in preprocessed['lower'] for keyword in keywords):
-            buying_signal_strength = {'strong': 0.9, 'moderate': 0.6, 'weak': 0.3}[strength]
-            break
-    
-    return {
-        'sales_readiness_score': buying_signal_strength,
-        'opportunity_type': 'premium_upgrade' if buying_signal_strength > 0.6 else 'none'
-    }
-
-# Add these utility methods as well:
-
-def _update_global_patterns(self, user_id: str, analysis: MessageAnalysis) -> None:
-    """Update global patterns for intelligence aggregation"""
-    # Update global symbol patterns
-    symbols = analysis.trading_insights.get('symbols_mentioned', [])
-    for symbol in symbols:
-        self._global_patterns['symbols'][symbol] += 1
-    
-    # Update global communication patterns
-    energy = analysis.communication_insights.get('energy_level', 'moderate')
-    self._global_patterns['energy'][energy] += 1
-
-async def _trigger_analysis_hooks(self, user_id: str, analysis: MessageAnalysis) -> None:
-    """Trigger registered analysis hooks"""
-    for hook in self._analysis_hooks:
-        try:
-            await hook(user_id, analysis)
-        except Exception as e:
-            logger.error(f"Analysis hook failed: {e}")
-
-def _get_global_insights(self, symbols: List[str], profile: Dict) -> Dict[str, Any]:
-    """Get global insights for the user"""
-    return {
-        'popular_symbols': dict(self._global_patterns['symbols'].most_common(5)),
-        'user_uniqueness': len(set(symbols)) / max(1, len(symbols)) if symbols else 0.0
-    }
-
-def _generate_response_strategy_enhanced(self, profile: Dict, analysis: MessageAnalysis, global_insights: Dict) -> Dict[str, Any]:
-    """Generate enhanced response strategy"""
-    return {
-        'communication_style': analysis.communication_insights.get('energy_level', 'moderate'),
-        'technical_level': analysis.communication_insights.get('technical_depth', 'basic'),
-        'personalization_strength': profile.get('confidence_score', 0.5),
-        'global_context': global_insights
-    }
-
-def clear_analysis_cache(self) -> int:
-    """Clear analysis cache and return number of entries cleared"""
-    cache_size = len(self._analysis_cache)
-    self._analysis_cache.clear()
-    return cache_size
-
-def optimize_global_patterns(self) -> Dict[str, int]:
-    """Optimize global patterns storage"""
-    # Keep only top N patterns to save memory
-    for pattern_type in self._global_patterns:
-        if len(self._global_patterns[pattern_type]) > 1000:
-            # Keep only top 500 most common
-            top_patterns = dict(self._global_patterns[pattern_type].most_common(500))
-            self._global_patterns[pattern_type] = Counter(top_patterns)
-    
-    return {k: len(v) for k, v in self._global_patterns.items()}
-
-# Add profile management methods:
-
-async def get_user_profile(self, user_id: str) -> Dict[str, Any]:
-    """Get user profile with KeyBuilder integration"""
-    if self.key_builder:
-        try:
-            profile_data = await self.key_builder.get_user_personality(user_id)
-            if profile_data:
-                return profile_data
-        except Exception as e:
-            logger.warning(f"KeyBuilder profile retrieval failed: {e}")
-    
-    # Fallback to in-memory storage
-    if user_id not in self.user_profiles:
-        self.user_profiles[user_id] = self._create_default_profile()
-    
-    return self.user_profiles[user_id]
-
-async def update_user_profile(self, user_id: str, updates: Dict[str, Any]) -> bool:
-    """Update user profile with KeyBuilder integration"""
-    try:
-        # Update timestamp
-        updates['updated_at'] = datetime.now(timezone.utc).isoformat()
+        casual_count = sum(1 for word in patterns['formality_indicators']['casual'] 
+                          if word in preprocessed['lower'])
         
-        if self.key_builder:
-            try:
-                success = await self.key_builder.update_user_personality(user_id, updates)
-                if success:
-                    return True
-            except Exception as e:
-                logger.warning(f"KeyBuilder profile update failed: {e}")
+        formality_score = 0.5
+        if formal_count > casual_count:
+            formality_score = min(1.0, 0.5 + (formal_count * 0.1))
+        elif casual_count > formal_count:
+            formality_score = max(0.0, 0.5 - (casual_count * 0.1))
         
-        # Fallback to in-memory storage
-        if user_id not in self.user_profiles:
-            self.user_profiles[user_id] = self._create_default_profile()
+        # Energy analysis
+        high_energy = sum(1 for word in patterns['energy_indicators']['high'] 
+                         if word in preprocessed['lower'])
+        energy_level = "moderate"
+        if high_energy > 2:
+            energy_level = "high"
+        elif preprocessed['char_analysis']['exclamation_marks'] > 2:
+            energy_level = "high"
         
-        # Deep merge updates
-        self._deep_merge_dict(self.user_profiles[user_id], updates)
-        return True
+        # Technical depth
+        basic_count = sum(1 for word in patterns['technical_depth']['basic'] 
+                         if word in preprocessed['lower'])
+        advanced_count = sum(1 for word in patterns['technical_depth']['advanced'] 
+                            if word in preprocessed['lower'])
         
-    except Exception as e:
-        logger.error(f"Profile update failed for {user_id}: {e}")
-        return False
+        technical_depth = "basic"
+        if advanced_count > 0:
+            technical_depth = "advanced"
+        elif advanced_count == 0 and basic_count == 0:
+            technical_depth = "intermediate"
+        
+        return {
+            'formality_score': formality_score,
+            'energy_level': energy_level,
+            'technical_depth': technical_depth,
+            'emoji_usage': preprocessed['char_analysis']['emoji_count'],
+            'message_length': len(preprocessed['words'])
+        }
 
-def _deep_merge_dict(self, target: Dict, source: Dict) -> None:
-    """Deep merge source dict into target dict"""
-    for key, value in source.items():
-        if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-            self._deep_merge_dict(target[key], value)
-        else:
-            target[key] = value
+    def _analyze_trading_content_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
+        """Analyze trading content using regex patterns"""
+        patterns = self.trading_patterns
+        
+        # Risk tolerance analysis
+        conservative_count = sum(1 for word in patterns['risk_indicators']['conservative'] 
+                               if word in preprocessed['lower'])
+        aggressive_count = sum(1 for word in patterns['risk_indicators']['aggressive'] 
+                              if word in preprocessed['lower'])
+        
+        risk_tolerance = "moderate"
+        if aggressive_count > conservative_count and aggressive_count > 0:
+            risk_tolerance = "aggressive"
+        elif conservative_count > aggressive_count and conservative_count > 0:
+            risk_tolerance = "conservative"
+        
+        # Trading action analysis
+        trading_action = "unclear"
+        for action, keywords in patterns['trading_actions'].items():
+            if any(keyword in preprocessed['lower'] for keyword in keywords):
+                trading_action = action
+                break
+        
+        return {
+            'symbols_mentioned': preprocessed['symbols'],
+            'trading_action': trading_action,
+            'risk_tolerance': risk_tolerance,
+            'money_amounts': preprocessed['patterns'].get('money_amounts', []),
+            'percentages': preprocessed['patterns'].get('percentages', [])
+        }
 
-async def learn_from_analysis(self, user_id: str, profile: Dict, analysis: MessageAnalysis) -> Dict[str, Any]:
-    """Generate learning updates from analysis"""
-    updates = {}
+    def _analyze_emotional_state_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
+        """Analyze emotional state using regex patterns"""
+        emotional_words = {
+            'excited': ['excited', 'pumped', 'thrilled', 'amazing', 'awesome'],
+            'worried': ['worried', 'concerned', 'scared', 'nervous', 'anxious'],
+            'frustrated': ['frustrated', 'annoyed', 'upset', 'angry', 'mad'],
+            'confident': ['confident', 'sure', 'certain', 'bullish', 'optimistic'],
+            'uncertain': ['uncertain', 'confused', 'unsure', 'maybe', 'not sure']
+        }
+        
+        primary_emotion = "neutral"
+        emotional_intensity = 0.0
+        
+        for emotion, keywords in emotional_words.items():
+            count = sum(1 for keyword in keywords if keyword in preprocessed['lower'])
+            if count > 0:
+                primary_emotion = emotion
+                emotional_intensity = min(1.0, count * 0.3)
+                break
+        
+        # Check for intensity indicators
+        if preprocessed['char_analysis']['exclamation_marks'] > 2:
+            emotional_intensity = min(1.0, emotional_intensity + 0.2)
+        
+        return {
+            'primary_emotion': primary_emotion,
+            'emotional_intensity': emotional_intensity,
+            'support_needed': 'high_support' if emotional_intensity > 0.7 else 'standard_guidance'
+        }
+
+    def _analyze_user_intent_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
+        """Analyze user intent using regex patterns"""
+        intent_patterns = {
+            'question': message.count('?') > 0 or any(q in preprocessed['lower'] for q in ['what', 'how', 'when', 'where', 'why']),
+            'request_analysis': any(word in preprocessed['lower'] for word in ['analyze', 'analysis', 'chart', 'technical']),
+            'general_chat': len(preprocessed['symbols']) == 0 and not any(t in preprocessed['lower'] for t in ['buy', 'sell', 'trade'])
+        }
+        
+        primary_intent = "general_chat"
+        if intent_patterns['request_analysis']:
+            primary_intent = "request_analysis"
+        elif intent_patterns['question']:
+            primary_intent = "question"
+        
+        return {
+            'primary_intent': primary_intent,
+            'requires_tools': ['technical_analysis'] if primary_intent == 'request_analysis' else [],
+            'follow_up_likelihood': 0.7 if primary_intent == 'question' else 0.3
+        }
+
+    def _analyze_service_needs_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
+        """Analyze service needs using regex patterns"""
+        patterns = self.service_patterns
+        
+        service_type = "none"
+        urgency_level = 0.0
+        
+        for stype, keywords in patterns['service_types'].items():
+            if any(keyword in preprocessed['lower'] for keyword in keywords):
+                service_type = stype
+                break
+        
+        for urgency, keywords in patterns['urgency_patterns'].items():
+            if any(keyword in preprocessed['lower'] for keyword in keywords):
+                urgency_level = {'immediate': 1.0, 'today': 0.8, 'this_week': 0.5, 'general': 0.2}[urgency]
+                break
+        
+        return {
+            'service_type': service_type,
+            'urgency_level': urgency_level
+        }
+
+    def _analyze_sales_opportunity_regex(self, message: str, preprocessed: Dict) -> Dict[str, Any]:
+        """Analyze sales opportunity using regex patterns"""
+        patterns = self.sales_indicators
+        
+        buying_signal_strength = 0.0
+        for strength, keywords in patterns['buying_signals'].items():
+            if any(keyword in preprocessed['lower'] for keyword in keywords):
+                buying_signal_strength = {'strong': 0.9, 'moderate': 0.6, 'weak': 0.3}[strength]
+                break
+        
+        return {
+            'sales_readiness_score': buying_signal_strength,
+            'opportunity_type': 'premium_upgrade' if buying_signal_strength > 0.6 else 'none'
+        }
+
+    def _compile_regex_patterns(self) -> Dict[str, re.Pattern]:
+        """Pre-compile regex patterns for performance (fallback only)"""
+        return {
+            'potential_symbols': re.compile(r'\b[A-Z]{2,5}\b'),
+            'money_amounts': re.compile(r'\$([0-9,]+(?:\.[0-9]{2})?)'),
+            'percentages': re.compile(r'([0-9]+(?:\.[0-9]+)?)%'),
+            'emojis': re.compile(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002700-\U000027BF\U0001f900-\U0001f9ff\U0001f600-\U0001f64f\U0001f300-\U0001f5ff\U0001f680-\U0001f6ff\U0001f1e0-\U0001f1ff]'),
+            'caps_words': re.compile(r'\b[A-Z]{2,}\b'),
+            'excessive_punct': re.compile(r'[!?]{3,}'),
+            'repeated_chars': re.compile(r'(.)\1{2,}')
+        }
     
-    # Update communication style
-    comm_insights = analysis.communication_insights
-    if 'formality_score' in comm_insights:
-        current_formality = profile.get('communication_style', {}).get('formality', 0.5)
-        new_formality = (current_formality * 0.8) + (comm_insights['formality_score'] * 0.2)
-        updates['communication_style'] = {'formality': new_formality}
-    
-    # Update trading personality
-    trading_insights = analysis.trading_insights
-    if 'symbols_mentioned' in trading_insights and trading_insights['symbols_mentioned']:
-        current_symbols = profile.get('trading_personality', {}).get('common_symbols', [])
-        new_symbols = list(set(current_symbols + trading_insights['symbols_mentioned']))
-        if 'trading_personality' not in updates:
-            updates['trading_personality'] = {}
-        updates['trading_personality']['common_symbols'] = new_symbols[-20:]  # Keep last 20
-    
-    # Update confidence score
-    current_confidence = profile.get('confidence_score', 0.1)
-    new_confidence = min(1.0, current_confidence + 0.05)
-    updates['confidence_score'] = new_confidence
-    
-    # Update message count
-    current_count = profile.get('learning_data', {}).get('total_messages', 0)
-    if 'learning_data' not in updates:
-        updates['learning_data'] = {}
-    updates['learning_data']['total_messages'] = current_count + 1
-    
-    return updates
+    def _preprocess_message(self, message: str) -> Dict[str, Any]:
+        """Preprocessing for fallback analysis"""
+        message_lower = message.lower()
+        words = message.split()
+        words_lower = message_lower.split()
+        
+        patterns = {}
+        for pattern_name, compiled_regex in self._compiled_patterns.items():
+            patterns[pattern_name] = compiled_regex.findall(message)
+        
+        char_analysis = {
+            'total_length': len(message),
+            'emoji_count': len(patterns.get('emojis', [])),
+            'caps_words': patterns.get('caps_words', []),
+            'question_marks': message.count('?'),
+            'exclamation_marks': message.count('!'),
+            'excessive_punctuation': patterns.get('excessive_punct', []),
+            'repeated_chars': patterns.get('repeated_chars', [])
+        }
+        
+        symbols = [s for s in patterns.get('potential_symbols', []) if self._validate_symbol_with_authority(s)]
+        
+        return {
+            'original': message,
+            'lower': message_lower,
+            'words': words,
+            'words_lower': words_lower,
+            'patterns': patterns,
+            'char_analysis': char_analysis,
+            'symbols': symbols,
+            'preprocessing_timestamp': datetime.now(timezone.utc).isoformat()
+        }
+
+    def _validate_symbol_with_authority(self, symbol: str) -> bool:
+        """Validate symbol against authoritative ticker list"""
+        return symbol.upper() in self.authoritative_tickers
 
     # ==========================================
     # BACKGROUND DEEP LEARNING PIPELINE
@@ -1095,7 +998,150 @@ async def learn_from_analysis(self, user_id: str, profile: Dict, analysis: Messa
         except Exception as e:
             logger.error(f"❌ Error in analyze_and_learn for {user_id}: {e}")
             return {"error": str(e)}
-    
+
+    # ==========================================
+    # UTILITY AND HELPER METHODS
+    # ==========================================
+
+    def _update_global_patterns(self, user_id: str, analysis: MessageAnalysis) -> None:
+        """Update global patterns for intelligence aggregation"""
+        # Update global symbol patterns
+        symbols = analysis.trading_insights.get('symbols_mentioned', [])
+        for symbol in symbols:
+            self._global_patterns['symbols'][symbol] += 1
+        
+        # Update global communication patterns
+        energy = analysis.communication_insights.get('energy_level', 'moderate')
+        self._global_patterns['energy'][energy] += 1
+
+    async def _trigger_analysis_hooks(self, user_id: str, analysis: MessageAnalysis) -> None:
+        """Trigger registered analysis hooks"""
+        for hook in self._analysis_hooks:
+            try:
+                await hook(user_id, analysis)
+            except Exception as e:
+                logger.error(f"Analysis hook failed: {e}")
+
+    def _get_global_insights(self, symbols: List[str], profile: Dict) -> Dict[str, Any]:
+        """Get global insights for the user"""
+        return {
+            'popular_symbols': dict(self._global_patterns['symbols'].most_common(5)),
+            'user_uniqueness': len(set(symbols)) / max(1, len(symbols)) if symbols else 0.0
+        }
+
+    def _generate_response_strategy_enhanced(self, profile: Dict, analysis: MessageAnalysis, global_insights: Dict) -> Dict[str, Any]:
+        """Generate enhanced response strategy"""
+        return {
+            'communication_style': analysis.communication_insights.get('energy_level', 'moderate'),
+            'technical_level': analysis.communication_insights.get('technical_depth', 'basic'),
+            'personalization_strength': profile.get('confidence_score', 0.5),
+            'global_context': global_insights
+        }
+
+    def clear_analysis_cache(self) -> int:
+        """Clear analysis cache and return number of entries cleared"""
+        cache_size = len(self._analysis_cache)
+        self._analysis_cache.clear()
+        return cache_size
+
+    def optimize_global_patterns(self) -> Dict[str, int]:
+        """Optimize global patterns storage"""
+        # Keep only top N patterns to save memory
+        for pattern_type in self._global_patterns:
+            if len(self._global_patterns[pattern_type]) > 1000:
+                # Keep only top 500 most common
+                top_patterns = dict(self._global_patterns[pattern_type].most_common(500))
+                self._global_patterns[pattern_type] = Counter(top_patterns)
+        
+        return {k: len(v) for k, v in self._global_patterns.items()}
+
+    # ==========================================
+    # PROFILE MANAGEMENT METHODS
+    # ==========================================
+
+    async def get_user_profile(self, user_id: str) -> Dict[str, Any]:
+        """Get user profile with KeyBuilder integration"""
+        if self.key_builder:
+            try:
+                profile_data = await self.key_builder.get_user_personality(user_id)
+                if profile_data:
+                    return profile_data
+            except Exception as e:
+                logger.warning(f"KeyBuilder profile retrieval failed: {e}")
+        
+        # Fallback to in-memory storage
+        if user_id not in self.user_profiles:
+            self.user_profiles[user_id] = self._create_default_profile()
+        
+        return self.user_profiles[user_id]
+
+    async def update_user_profile(self, user_id: str, updates: Dict[str, Any]) -> bool:
+        """Update user profile with KeyBuilder integration"""
+        try:
+            # Update timestamp
+            updates['updated_at'] = datetime.now(timezone.utc).isoformat()
+            
+            if self.key_builder:
+                try:
+                    success = await self.key_builder.update_user_personality(user_id, updates)
+                    if success:
+                        return True
+                except Exception as e:
+                    logger.warning(f"KeyBuilder profile update failed: {e}")
+            
+            # Fallback to in-memory storage
+            if user_id not in self.user_profiles:
+                self.user_profiles[user_id] = self._create_default_profile()
+            
+            # Deep merge updates
+            self._deep_merge_dict(self.user_profiles[user_id], updates)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Profile update failed for {user_id}: {e}")
+            return False
+
+    def _deep_merge_dict(self, target: Dict, source: Dict) -> None:
+        """Deep merge source dict into target dict"""
+        for key, value in source.items():
+            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+                self._deep_merge_dict(target[key], value)
+            else:
+                target[key] = value
+
+    async def learn_from_analysis(self, user_id: str, profile: Dict, analysis: MessageAnalysis) -> Dict[str, Any]:
+        """Generate learning updates from analysis"""
+        updates = {}
+        
+        # Update communication style
+        comm_insights = analysis.communication_insights
+        if 'formality_score' in comm_insights:
+            current_formality = profile.get('communication_style', {}).get('formality', 0.5)
+            new_formality = (current_formality * 0.8) + (comm_insights['formality_score'] * 0.2)
+            updates['communication_style'] = {'formality': new_formality}
+        
+        # Update trading personality
+        trading_insights = analysis.trading_insights
+        if 'symbols_mentioned' in trading_insights and trading_insights['symbols_mentioned']:
+            current_symbols = profile.get('trading_personality', {}).get('common_symbols', [])
+            new_symbols = list(set(current_symbols + trading_insights['symbols_mentioned']))
+            if 'trading_personality' not in updates:
+                updates['trading_personality'] = {}
+            updates['trading_personality']['common_symbols'] = new_symbols[-20:]  # Keep last 20
+        
+        # Update confidence score
+        current_confidence = profile.get('confidence_score', 0.1)
+        new_confidence = min(1.0, current_confidence + 0.05)
+        updates['confidence_score'] = new_confidence
+        
+        # Update message count
+        current_count = profile.get('learning_data', {}).get('total_messages', 0)
+        if 'learning_data' not in updates:
+            updates['learning_data'] = {}
+        updates['learning_data']['total_messages'] = current_count + 1
+        
+        return updates
+
     # ==========================================
     # COST MONITORING AND OPTIMIZATION
     # ==========================================
@@ -1131,77 +1177,34 @@ async def learn_from_analysis(self, user_id: str, profile: Dict, analysis: Messa
         if self.gemini_service:
             self.gemini_service.cache_ttl = cache_ttl
             logger.info(f"💰 Enabled aggressive caching (TTL: {cache_ttl}s)")
-    
+
     # ==========================================
-    # FALLBACK REGEX METHODS (PRESERVED)
+    # HOOK MANAGEMENT
     # ==========================================
-    
-    
-    def _validate_symbol_with_authority(self, symbol: str) -> bool:
-        """Validate symbol against authoritative ticker list"""
-        return symbol.upper() in self.authoritative_tickers
-    
-    # [All other existing methods preserved for compatibility and fallback]
-    # This includes all the regex-based detection methods, profile management, 
-    # learning algorithms, etc. - they remain unchanged for fallback support
-    
-    def _compile_regex_patterns(self) -> Dict[str, re.Pattern]:
-        """Pre-compile regex patterns for fallback analysis"""
-        return {
-            'potential_symbols': re.compile(r'\b[A-Z]{2,5}\b'),
-            'money_amounts': re.compile(r'\$([0-9,]+(?:\.[0-9]{2})?)'),
-            'percentages': re.compile(r'([0-9]+(?:\.[0-9]+)?)%'),
-            'emojis': re.compile(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002700-\U000027BF\U0001f900-\U0001f9ff\U0001f600-\U0001f64f\U0001f300-\U0001f5ff\U0001f680-\U0001f6ff\U0001f1e0-\U0001f1ff]'),
-            'caps_words': re.compile(r'\b[A-Z]{2,}\b'),
-            'excessive_punct': re.compile(r'[!?]{3,}'),
-            'repeated_chars': re.compile(r'(.)\1{2,}')
-        }
-    
-    def _preprocess_message(self, message: str) -> Dict[str, Any]:
-        """Preprocessing for fallback analysis"""
-        message_lower = message.lower()
-        words = message.split()
-        words_lower = message_lower.split()
-        
-        patterns = {}
-        for pattern_name, compiled_regex in self._compiled_patterns.items():
-            patterns[pattern_name] = compiled_regex.findall(message)
-        
-        char_analysis = {
-            'total_length': len(message),
-            'emoji_count': len(patterns.get('emojis', [])),
-            'caps_words': patterns.get('caps_words', []),
-            'question_marks': message.count('?'),
-            'exclamation_marks': message.count('!'),
-            'excessive_punctuation': patterns.get('excessive_punct', []),
-            'repeated_chars': patterns.get('repeated_chars', [])
-        }
-        
-        symbols = [s for s in patterns.get('potential_symbols', []) if self._validate_symbol_with_authority(s)]
-        
-        return {
-            'original': message,
-            'lower': message_lower,
-            'words': words,
-            'words_lower': words_lower,
-            'patterns': patterns,
-            'char_analysis': char_analysis,
-            'symbols': symbols,
-            'preprocessing_timestamp': datetime.now(timezone.utc).isoformat()
-        }
-    
-    # [All other existing methods preserved - just updating the class name references]
-    
-    # ==========================================
-    # PRESERVED EXISTING FUNCTIONALITY
-    # ==========================================
-    
-    # All existing methods from the original personality engine are preserved
-    # for backward compatibility and fallback functionality
-    
-    # [Keep all existing method implementations from the original file]
-    # This includes: profile management, learning algorithms, regex detection,
-    # global patterns, response strategies, etc.
+
+    def add_profile_update_hook(self, hook_func: Callable) -> None:
+        """Add a hook function to be called when profiles are updated"""
+        self._profile_update_hooks.append(hook_func)
+
+    def add_analysis_hook(self, hook_func: Callable) -> None:
+        """Add a hook function to be called after analysis"""
+        self._analysis_hooks.append(hook_func)
+
+    def remove_profile_update_hook(self, hook_func: Callable) -> bool:
+        """Remove a profile update hook"""
+        try:
+            self._profile_update_hooks.remove(hook_func)
+            return True
+        except ValueError:
+            return False
+
+    def remove_analysis_hook(self, hook_func: Callable) -> bool:
+        """Remove an analysis hook"""
+        try:
+            self._analysis_hooks.remove(hook_func)
+            return True
+        except ValueError:
+            return False
 
 
 # Factory function for easy integration
@@ -1211,3 +1214,459 @@ async def create_enhanced_personality_engine(
 ) -> EnhancedPersonalityEngine:
     """Factory function to create enhanced personality engine"""
     return EnhancedPersonalityEngine(db_service, gemini_api_key)
+
+
+# ==========================================
+# LEGACY COMPATIBILITY CLASS
+# ==========================================
+
+class UserPersonalityEngine(EnhancedPersonalityEngine):
+    """
+    Legacy compatibility wrapper for existing code
+    Maintains backward compatibility while providing enhanced features
+    """
+    
+    def __init__(self, db_service=None):
+        """Initialize with legacy interface"""
+        super().__init__(db_service=db_service, gemini_api_key=None)
+        logger.info("🔄 UserPersonalityEngine initialized in compatibility mode")
+    
+    # Legacy method aliases for backward compatibility
+    async def analyze_message(self, user_id: str, message: str, context: Dict = None) -> Dict[str, Any]:
+        """Legacy analyze_message method - redirects to new comprehensive analysis"""
+        analysis = await self.run_comprehensive_analysis(message, context)
+        
+        # Convert to legacy format
+        return {
+            "communication_style": analysis.communication_insights,
+            "trading_behavior": analysis.trading_insights,
+            "emotional_analysis": analysis.emotional_state,
+            "confidence": analysis.confidence_score
+        }
+    
+    def get_personality_summary(self, user_id: str) -> Dict[str, Any]:
+        """Get personality summary in legacy format"""
+        profile = self.user_profiles.get(user_id)
+        if not profile:
+            return {"error": "Profile not found"}
+        
+        return {
+            "communication_style": profile["communication_style"],
+            "trading_personality": profile["trading_personality"],
+            "learning_progress": {
+                "total_messages": profile["learning_data"]["total_messages"],
+                "confidence_score": profile["confidence_score"]
+            }
+        }
+    
+    def update_learning_data(self, user_id: str, feedback: Dict[str, Any]) -> bool:
+        """Legacy learning update method"""
+        try:
+            if user_id not in self.user_profiles:
+                self.user_profiles[user_id] = self._create_default_profile()
+            
+            profile = self.user_profiles[user_id]
+            
+            # Update learning metrics
+            if feedback.get("successful_trade"):
+                profile["learning_data"]["successful_trades_mentioned"] += 1
+            elif feedback.get("loss_trade"):
+                profile["learning_data"]["loss_trades_mentioned"] += 1
+            
+            profile["learning_data"]["total_messages"] += 1
+            profile["updated_at"] = datetime.now(timezone.utc).isoformat()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Legacy learning update failed: {e}")
+            return False
+
+
+# ==========================================
+# ADVANCED FEATURES AND EXTENSIONS
+# ==========================================
+
+class PersonalityInsightsGenerator:
+    """Advanced personality insights and reporting"""
+    
+    def __init__(self, personality_engine: EnhancedPersonalityEngine):
+        self.engine = personality_engine
+    
+    async def generate_personality_report(self, user_id: str) -> Dict[str, Any]:
+        """Generate comprehensive personality report"""
+        try:
+            profile = await self.engine.get_user_profile(user_id)
+            
+            # Calculate personality metrics
+            communication_score = self._calculate_communication_score(profile)
+            trading_sophistication = self._calculate_trading_sophistication(profile)
+            engagement_level = self._calculate_engagement_level(profile)
+            
+            return {
+                "user_id": user_id,
+                "report_timestamp": datetime.now(timezone.utc).isoformat(),
+                "personality_scores": {
+                    "communication_effectiveness": communication_score,
+                    "trading_sophistication": trading_sophistication,
+                    "engagement_level": engagement_level
+                },
+                "communication_profile": {
+                    "style": profile["communication_style"]["energy"],
+                    "formality": profile["communication_style"]["formality"],
+                    "technical_depth": profile["communication_style"]["technical_depth"],
+                    "consistency": profile["communication_style"]["consistency_score"]
+                },
+                "trading_profile": {
+                    "risk_tolerance": profile["trading_personality"]["risk_tolerance"],
+                    "experience_level": profile["trading_personality"]["experience_level"],
+                    "preferred_symbols": profile["trading_personality"]["common_symbols"][:10],
+                    "trading_focus": len(profile["trading_personality"]["common_symbols"])
+                },
+                "learning_metrics": {
+                    "total_interactions": profile["learning_data"]["total_messages"],
+                    "profile_confidence": profile["confidence_score"],
+                    "learning_progression": self._calculate_learning_progression(profile)
+                },
+                "recommendations": self._generate_personalization_recommendations(profile)
+            }
+            
+        except Exception as e:
+            logger.error(f"Personality report generation failed: {e}")
+            return {"error": str(e)}
+    
+    def _calculate_communication_score(self, profile: Dict) -> float:
+        """Calculate communication effectiveness score"""
+        style = profile["communication_style"]
+        consistency = style.get("consistency_score", 1.0)
+        message_count = profile["learning_data"]["total_messages"]
+        
+        # Score based on consistency and interaction frequency
+        base_score = consistency * 0.6
+        activity_bonus = min(0.4, message_count / 50)  # Up to 0.4 bonus for activity
+        
+        return round(base_score + activity_bonus, 2)
+    
+    def _calculate_trading_sophistication(self, profile: Dict) -> float:
+        """Calculate trading sophistication score"""
+        trading = profile["trading_personality"]
+        
+        # Experience level mapping
+        exp_scores = {"novice": 0.2, "intermediate": 0.5, "advanced": 0.8, "expert": 1.0}
+        base_score = exp_scores.get(trading["experience_level"], 0.5)
+        
+        # Symbol diversity bonus
+        symbol_count = len(trading["common_symbols"])
+        diversity_bonus = min(0.3, symbol_count / 20)  # Up to 0.3 bonus
+        
+        return round(base_score + diversity_bonus, 2)
+    
+    def _calculate_engagement_level(self, profile: Dict) -> float:
+        """Calculate user engagement level"""
+        total_messages = profile["learning_data"]["total_messages"]
+        confidence = profile["confidence_score"]
+        
+        # Engagement based on activity and profile development
+        activity_score = min(0.7, total_messages / 30)  # Up to 0.7 for activity
+        development_score = confidence * 0.3  # Up to 0.3 for profile development
+        
+        return round(activity_score + development_score, 2)
+    
+    def _calculate_learning_progression(self, profile: Dict) -> str:
+        """Calculate learning progression stage"""
+        total_messages = profile["learning_data"]["total_messages"]
+        confidence = profile["confidence_score"]
+        
+        if total_messages < 5:
+            return "getting_started"
+        elif total_messages < 15:
+            return "building_profile"
+        elif confidence < 0.7:
+            return "developing_preferences"
+        else:
+            return "personalized_experience"
+    
+    def _generate_personalization_recommendations(self, profile: Dict) -> List[str]:
+        """Generate personalization recommendations"""
+        recommendations = []
+        
+        # Communication recommendations
+        if profile["communication_style"]["formality"] < 0.3:
+            recommendations.append("Consider more casual, friendly communication style")
+        elif profile["communication_style"]["formality"] > 0.7:
+            recommendations.append("Maintain professional, detailed responses")
+        
+        # Trading recommendations
+        risk_tolerance = profile["trading_personality"]["risk_tolerance"]
+        if risk_tolerance == "conservative":
+            recommendations.append("Focus on stable, blue-chip stock recommendations")
+        elif risk_tolerance == "aggressive":
+            recommendations.append("Include high-growth and volatile stock opportunities")
+        
+        # Learning recommendations
+        if profile["learning_data"]["total_messages"] < 10:
+            recommendations.append("Encourage more interaction to improve personalization")
+        
+        return recommendations
+
+
+# ==========================================
+# BATCH PROCESSING AND ANALYTICS
+# ==========================================
+
+class PersonalityBatchProcessor:
+    """Batch processing for personality analytics"""
+    
+    def __init__(self, personality_engine: EnhancedPersonalityEngine):
+        self.engine = personality_engine
+    
+    async def process_user_batch(self, user_ids: List[str]) -> Dict[str, Any]:
+        """Process personality analysis for multiple users"""
+        results = {}
+        
+        for user_id in user_ids:
+            try:
+                profile = await self.engine.get_user_profile(user_id)
+                results[user_id] = {
+                    "profile_confidence": profile["confidence_score"],
+                    "total_messages": profile["learning_data"]["total_messages"],
+                    "communication_style": profile["communication_style"]["energy"],
+                    "risk_tolerance": profile["trading_personality"]["risk_tolerance"],
+                    "common_symbols": profile["trading_personality"]["common_symbols"][:5]
+                }
+            except Exception as e:
+                results[user_id] = {"error": str(e)}
+        
+        return {
+            "batch_results": results,
+            "total_processed": len(user_ids),
+            "successful": len([r for r in results.values() if "error" not in r]),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    
+    def generate_aggregate_insights(self, user_profiles: Dict[str, Dict]) -> Dict[str, Any]:
+        """Generate aggregate insights across all users"""
+        if not user_profiles:
+            return {"error": "No profiles provided"}
+        
+        # Aggregate communication styles
+        energy_levels = [p["communication_style"]["energy"] for p in user_profiles.values() 
+                        if "communication_style" in p]
+        
+        # Aggregate risk tolerances
+        risk_tolerances = [p["trading_personality"]["risk_tolerance"] for p in user_profiles.values()
+                          if "trading_personality" in p]
+        
+        # Aggregate symbol preferences
+        all_symbols = []
+        for profile in user_profiles.values():
+            if "trading_personality" in profile:
+                all_symbols.extend(profile["trading_personality"].get("common_symbols", []))
+        
+        return {
+            "total_users": len(user_profiles),
+            "communication_distribution": dict(Counter(energy_levels)),
+            "risk_distribution": dict(Counter(risk_tolerances)),
+            "popular_symbols": dict(Counter(all_symbols).most_common(20)),
+            "average_confidence": np.mean([p.get("confidence_score", 0) for p in user_profiles.values()]),
+            "analysis_timestamp": datetime.now(timezone.utc).isoformat()
+        }
+
+
+# ==========================================
+# EXPORT AND MIGRATION UTILITIES
+# ==========================================
+
+class PersonalityDataManager:
+    """Data management utilities for personality profiles"""
+    
+    def __init__(self, personality_engine: EnhancedPersonalityEngine):
+        self.engine = personality_engine
+    
+    async def export_user_profile(self, user_id: str, format: str = "json") -> Union[str, Dict]:
+        """Export user profile in specified format"""
+        try:
+            profile = await self.engine.get_user_profile(user_id)
+            
+            if format.lower() == "json":
+                return json.dumps(profile, indent=2, default=str)
+            elif format.lower() == "dict":
+                return profile
+            else:
+                raise ValueError(f"Unsupported export format: {format}")
+                
+        except Exception as e:
+            logger.error(f"Profile export failed: {e}")
+            return {"error": str(e)}
+    
+    async def import_user_profile(self, user_id: str, profile_data: Union[str, Dict]) -> bool:
+        """Import user profile from data"""
+        try:
+            if isinstance(profile_data, str):
+                profile = json.loads(profile_data)
+            else:
+                profile = profile_data
+            
+            # Validate profile structure
+            if not self._validate_profile_structure(profile):
+                raise ValueError("Invalid profile structure")
+            
+            # Update profile
+            success = await self.engine.update_user_profile(user_id, profile)
+            
+            if success:
+                logger.info(f"✅ Profile imported successfully for user {user_id}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Profile import failed: {e}")
+            return False
+    
+    def _validate_profile_structure(self, profile: Dict) -> bool:
+        """Validate profile structure"""
+        required_keys = [
+            "profile_version", "communication_style", 
+            "trading_personality", "learning_data"
+        ]
+        
+        for key in required_keys:
+            if key not in profile:
+                return False
+        
+        return True
+    
+    async def backup_all_profiles(self) -> Dict[str, Any]:
+        """Backup all user profiles"""
+        try:
+            backup_data = {
+                "backup_timestamp": datetime.now(timezone.utc).isoformat(),
+                "engine_version": self.engine.PROFILE_VERSION,
+                "profiles": {}
+            }
+            
+            for user_id in self.engine.user_profiles.keys():
+                profile = await self.engine.get_user_profile(user_id)
+                backup_data["profiles"][user_id] = profile
+            
+            backup_data["total_profiles"] = len(backup_data["profiles"])
+            
+            return backup_data
+            
+        except Exception as e:
+            logger.error(f"Profile backup failed: {e}")
+            return {"error": str(e)}
+    
+    async def restore_from_backup(self, backup_data: Dict) -> Dict[str, Any]:
+        """Restore profiles from backup"""
+        try:
+            if "profiles" not in backup_data:
+                raise ValueError("Invalid backup format")
+            
+            results = {"successful": 0, "failed": 0, "errors": []}
+            
+            for user_id, profile_data in backup_data["profiles"].items():
+                success = await self.import_user_profile(user_id, profile_data)
+                if success:
+                    results["successful"] += 1
+                else:
+                    results["failed"] += 1
+                    results["errors"].append(f"Failed to restore profile for {user_id}")
+            
+            logger.info(f"✅ Backup restore completed: {results['successful']} successful, {results['failed']} failed")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Profile restore failed: {e}")
+            return {"error": str(e)}
+
+
+# ==========================================
+# PERFORMANCE MONITORING
+# ==========================================
+
+class PersonalityEngineMonitor:
+    """Performance monitoring for personality engine"""
+    
+    def __init__(self, personality_engine: EnhancedPersonalityEngine):
+        self.engine = personality_engine
+        self.metrics = {
+            "analysis_count": 0,
+            "cache_hits": 0,
+            "cache_misses": 0,
+            "gemini_calls": 0,
+            "fallback_calls": 0,
+            "errors": 0,
+            "total_processing_time": 0.0
+        }
+    
+    def record_analysis(self, analysis: MessageAnalysis) -> None:
+        """Record analysis metrics"""
+        self.metrics["analysis_count"] += 1
+        self.metrics["total_processing_time"] += analysis.processing_time_ms
+        
+        if analysis.analysis_method == "gemini":
+            self.metrics["gemini_calls"] += 1
+        else:
+            self.metrics["fallback_calls"] += 1
+    
+    def record_cache_hit(self) -> None:
+        """Record cache hit"""
+        self.metrics["cache_hits"] += 1
+    
+    def record_cache_miss(self) -> None:
+        """Record cache miss"""
+        self.metrics["cache_misses"] += 1
+    
+    def record_error(self) -> None:
+        """Record error"""
+        self.metrics["errors"] += 1
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get performance statistics"""
+        total_analyses = self.metrics["analysis_count"]
+        
+        return {
+            "total_analyses": total_analyses,
+            "average_processing_time": (
+                self.metrics["total_processing_time"] / max(1, total_analyses)
+            ),
+            "cache_hit_rate": (
+                self.metrics["cache_hits"] / 
+                max(1, self.metrics["cache_hits"] + self.metrics["cache_misses"])
+            ),
+            "gemini_usage_rate": (
+                self.metrics["gemini_calls"] / max(1, total_analyses)
+            ),
+            "error_rate": (
+                self.metrics["errors"] / max(1, total_analyses)
+            ),
+            "engine_efficiency": {
+                "cache_efficiency": f"{self.metrics['cache_hits']}/{self.metrics['cache_hits'] + self.metrics['cache_misses']}",
+                "gemini_vs_fallback": f"{self.metrics['gemini_calls']}/{self.metrics['fallback_calls']}",
+                "total_profiles": len(self.engine.user_profiles)
+            }
+        }
+    
+    def reset_metrics(self) -> None:
+        """Reset all metrics"""
+        for key in self.metrics:
+            if isinstance(self.metrics[key], (int, float)):
+                self.metrics[key] = 0 if isinstance(self.metrics[key], int) else 0.0
+
+
+# ==========================================
+# FINAL EXPORTS
+# ==========================================
+
+__all__ = [
+    'EnhancedPersonalityEngine',
+    'UserPersonalityEngine',  # Legacy compatibility
+    'MessageAnalysis',
+    'PersonalityInsightsGenerator',
+    'PersonalityBatchProcessor',
+    'PersonalityDataManager',
+    'PersonalityEngineMonitor',
+    'create_enhanced_personality_engine'
+]
