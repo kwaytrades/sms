@@ -1,48 +1,100 @@
-# ===== services/database.py - ENHANCED WITH CONTEXT-RICH OPERATIONS =====
+# services/database.py - INTEGRATED WITH OPTIMIZED PERSONALITY ENGINE V2.0
 from motor.motor_asyncio import AsyncIOMotorClient
-import redis.asyncio as aioredis  # ✅ FIXED: Use correct alias
+import redis.asyncio as aioredis
 from typing import Optional, Dict, List, Any
 from bson import ObjectId
 import json
 from datetime import datetime, timedelta, timezone
 from loguru import logger
-from services.key_builder import KeyBuilder
+
 from models.user import UserProfile
 from models.conversation import ChatMessage, Conversation
 from models.trading import TradingData
 from config import settings
 
+
+class KeyBuilder:
+    """KeyBuilder class compatible with OptimizedPersonalityEngine v2.0"""
+    
+    def __init__(self, redis_client, mongo_db):
+        self.redis = redis_client
+        self.db = mongo_db
+    
+    async def get(self, key: str) -> Optional[Dict]:
+        """Get data from Redis with JSON deserialization"""
+        try:
+            data = await self.redis.get(key)
+            if data:
+                return json.loads(data)
+            return None
+        except Exception as e:
+            logger.error(f"❌ KeyBuilder get error for {key}: {e}")
+            return None
+    
+    async def set(self, key: str, value: Dict, ttl: int = 86400) -> bool:
+        """Set data in Redis with JSON serialization"""
+        try:
+            serialized_value = json.dumps(value, default=str)
+            await self.redis.setex(key, ttl, serialized_value)
+            return True
+        except Exception as e:
+            logger.error(f"❌ KeyBuilder set error for {key}: {e}")
+            return False
+    
+    async def delete(self, key: str) -> bool:
+        """Delete key from Redis"""
+        try:
+            result = await self.redis.delete(key)
+            return result > 0
+        except Exception as e:
+            logger.error(f"❌ KeyBuilder delete error for {key}: {e}")
+            return False
+    
+    async def exists(self, key: str) -> bool:
+        """Check if key exists in Redis"""
+        try:
+            result = await self.redis.exists(key)
+            return result > 0
+        except Exception as e:
+            logger.error(f"❌ KeyBuilder exists error for {key}: {e}")
+            return False
+
+
 class DatabaseService:
+    """
+    Enhanced Database Service fully compatible with OptimizedPersonalityEngine v2.0
+    Provides both traditional MongoDB operations and KeyBuilder integration
+    """
+    
     def __init__(self):
         self.mongo_client = None
         self.db = None
         self.redis = None
-        self.key_builder = None  # ADD THIS LINE
+        self.key_builder = None
 
     async def initialize(self):
-        """Initialize database connections"""
+        """Initialize database connections with KeyBuilder integration"""
         try:
             # MongoDB connection
             self.mongo_client = AsyncIOMotorClient(settings.mongodb_url)
             self.db = self.mongo_client.ai
             
-            # Redis connection - NOW MATCHES THE IMPORT!
+            # Redis connection
             self.redis = await aioredis.from_url(settings.redis_url)
+            
+            # Initialize KeyBuilder for OptimizedPersonalityEngine v2.0 compatibility
+            self.key_builder = KeyBuilder(self.redis, self.db)
             
             # Setup indexes
             await self._setup_indexes()
             
-            # ADDED: Clean up invalid users on startup
+            # Clean up invalid users on startup
             await self.cleanup_invalid_users()
             
-            if self.redis and self.db:
-                self.key_builder = KeyBuilder(self.redis, self.db)
-                logger.info("🔧 KeyBuilder initialized successfully")
-        
-        logger.info("✅ Database connections initialized")
-    except Exception as e:
-        logger.error(f"❌ Database initialization failed: {e}")
-        raise
+            logger.info("✅ Database connections initialized with KeyBuilder support")
+        except Exception as e:
+            logger.error(f"❌ Database initialization failed: {e}")
+            raise
     
     async def _setup_indexes(self):
         """Setup database indexes for performance"""
@@ -58,20 +110,95 @@ class DatabaseService:
             # Trading data indexes
             await self.db.trading_data.create_index("user_id", unique=True)
             
-            # NEW: Context-rich indexes
+            # Context-rich indexes for enhanced functionality
             await self.db.daily_sessions.create_index([("phone_number", 1), ("date", -1)])
             await self.db.conversation_context.create_index("phone_number", unique=True)
             await self.db.enhanced_conversations.create_index([("phone_number", 1), ("timestamp", -1)])
+            
+            # Personality engine indexes
+            await self.db.personality_profiles.create_index("user_id", unique=True)
+            await self.db.personality_analytics.create_index([("user_id", 1), ("timestamp", -1)])
             
             logger.info("✅ Database indexes created")
         except Exception as e:
             logger.error(f"❌ Index creation failed: {e}")
     
-    # EXISTING METHODS - UNCHANGED
+    # ==========================================
+    # PERSONALITY ENGINE INTEGRATION METHODS
+    # ==========================================
+    
+    async def get_personality_profile(self, user_id: str) -> Optional[Dict]:
+        """Get personality profile with KeyBuilder integration"""
+        try:
+            # Try KeyBuilder first (Redis)
+            personality_key = f"user:{user_id}:personality"
+            profile = await self.key_builder.get(personality_key)
+            
+            if profile:
+                return profile
+            
+            # Fallback to MongoDB
+            profile_doc = await self.db.personality_profiles.find_one({"user_id": user_id})
+            if profile_doc:
+                profile_doc.pop('_id', None)  # Remove MongoDB ID
+                # Cache in Redis for future requests
+                await self.key_builder.set(personality_key, profile_doc, ttl=86400 * 7)  # 7 days
+                return profile_doc
+            
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error getting personality profile for {user_id}: {e}")
+            return None
+    
+    async def save_personality_profile(self, user_id: str, profile: Dict) -> bool:
+        """Save personality profile with dual storage (Redis + MongoDB)"""
+        try:
+            # Save to Redis via KeyBuilder
+            personality_key = f"user:{user_id}:personality"
+            redis_success = await self.key_builder.set(personality_key, profile, ttl=86400 * 7)
+            
+            # Save to MongoDB as backup
+            mongo_profile = profile.copy()
+            mongo_profile["user_id"] = user_id
+            mongo_profile["updated_at"] = datetime.now(timezone.utc)
+            
+            await self.db.personality_profiles.update_one(
+                {"user_id": user_id},
+                {"$set": mongo_profile},
+                upsert=True
+            )
+            
+            logger.info(f"✅ Saved personality profile for {user_id} (Redis: {redis_success})")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error saving personality profile for {user_id}: {e}")
+            return False
+    
+    async def cache_analysis_result(self, user_id: str, analysis_data: Dict, ttl: int = 3600) -> bool:
+        """Cache analysis result for OptimizedPersonalityEngine"""
+        try:
+            cache_key = f"user:{user_id}:last_analysis"
+            return await self.key_builder.set(cache_key, analysis_data, ttl=ttl)
+        except Exception as e:
+            logger.error(f"❌ Error caching analysis for {user_id}: {e}")
+            return False
+    
+    async def get_cached_analysis(self, user_id: str) -> Optional[Dict]:
+        """Get cached analysis result"""
+        try:
+            cache_key = f"user:{user_id}:last_analysis"
+            return await self.key_builder.get(cache_key)
+        except Exception as e:
+            logger.error(f"❌ Error getting cached analysis for {user_id}: {e}")
+            return None
+    
+    # ==========================================
+    # TRADITIONAL DATABASE OPERATIONS
+    # ==========================================
+    
     async def get_user_by_phone(self, phone_number: str) -> Optional[UserProfile]:
         """Get user by phone number with validation"""
         try:
-            # ADDED: Validate phone_number is not None or empty
             if not phone_number or phone_number.strip() == "":
                 logger.warning("❌ get_user_by_phone called with empty phone_number")
                 return None
@@ -89,7 +216,6 @@ class DatabaseService:
     async def save_user(self, user: UserProfile) -> str:
         """Save or update user profile with validation"""
         try:
-            # ADDED: Validate user has valid phone_number
             if not user.phone_number or user.phone_number.strip() == "":
                 logger.error("❌ Cannot save user with empty phone_number")
                 raise ValueError("User must have a valid phone_number")
@@ -98,7 +224,6 @@ class DatabaseService:
             user_dict['updated_at'] = datetime.utcnow()
             
             if user._id:
-                # Update existing - remove _id from update data
                 user_dict.pop('_id', None)
                 await self.db.users.update_one(
                     {"_id": ObjectId(user._id)},
@@ -106,7 +231,6 @@ class DatabaseService:
                 )
                 return user._id
             else:
-                # Create new - remove _id if it's None
                 user_dict.pop('_id', None)
                 result = await self.db.users.insert_one(user_dict)
                 return str(result.inserted_id)
@@ -155,43 +279,33 @@ class DatabaseService:
             logger.error(f"❌ Error incrementing usage: {e}")
     
     async def cleanup_invalid_users(self):
-        """Remove users with null or empty phone_number - ENHANCED"""
+        """Remove users with null or empty phone_number"""
         try:
-            # Remove users with null phone_number
             result_null = await self.db.users.delete_many({"phone_number": None})
-            
-            # Remove users with empty string phone_number
             result_empty = await self.db.users.delete_many({"phone_number": ""})
-            
-            # Remove users with missing phone_number field
             result_missing = await self.db.users.delete_many({"phone_number": {"$exists": False}})
             
             total_cleaned = result_null.deleted_count + result_empty.deleted_count + result_missing.deleted_count
             
             if total_cleaned > 0:
-                logger.info(f"🧹 Cleaned up {total_cleaned} invalid users (null: {result_null.deleted_count}, empty: {result_empty.deleted_count}, missing: {result_missing.deleted_count})")
+                logger.info(f"🧹 Cleaned up {total_cleaned} invalid users")
             else:
                 logger.info("✅ No invalid users found to clean up")
-                
         except Exception as e:
             logger.error(f"❌ Cleanup failed: {e}")
     
-    # FIXED METHOD - Updated signature and validation
     async def update_user_activity(self, phone_number: str) -> bool:
-        """Update user activity with proper validation - FIXED"""
+        """Update user activity with proper validation"""
         try:
-            # ADDED: Validate phone_number
             if not phone_number or phone_number.strip() == "":
                 logger.error("❌ update_user_activity called with empty phone_number")
                 return False
             
-            # ADDED: Check if user exists first
             user = await self.get_user_by_phone(phone_number)
             if not user:
                 logger.warning(f"⚠️ User not found for activity update: {phone_number}")
                 return False
             
-            # FIXED: Update using phone_number (not phone) and proper field structure
             now = datetime.utcnow()
             result = await self.db.users.update_one(
                 {"phone_number": phone_number},
@@ -212,31 +326,27 @@ class DatabaseService:
             else:
                 logger.warning(f"⚠️ No document modified for {phone_number}")
                 return False
-                
         except Exception as e:
             logger.error(f"❌ Failed to update user activity: {e}")
             return False
     
-    # NEW: MISSING store_conversation METHOD - THIS IS THE FIX!
     async def store_conversation(self, phone_number: str, user_message: str, bot_response: str, 
                                intent: Dict, tool_results: Dict) -> bool:
-        """Store conversation - wrapper around save_enhanced_message for backward compatibility"""
+        """Store conversation with enhanced context"""
         try:
             # Extract symbols from intent or tool results
             symbols = intent.get("symbols", []) if intent else []
             
-            # If no symbols in intent, try to extract from tool_results
             if not symbols and tool_results:
                 for tool_name, tool_data in tool_results.items():
                     if isinstance(tool_data, dict):
-                        # Check if tool_data has symbols as keys (common pattern)
                         if any(isinstance(key, str) and key.isupper() and len(key) <= 5 
                               for key in tool_data.keys()):
                             symbols.extend([key for key in tool_data.keys() 
                                           if isinstance(key, str) and key.isupper() and len(key) <= 5])
                             break
             
-            # Use the existing save_enhanced_message method
+            # Use enhanced message saving
             return await self.save_enhanced_message(
                 phone_number=phone_number,
                 user_message=user_message,
@@ -245,19 +355,13 @@ class DatabaseService:
                 symbols=symbols,
                 context_used=tool_results
             )
-            
         except Exception as e:
             logger.error(f"❌ Error storing conversation for {phone_number}: {e}")
             return False
     
-    async def close(self):
-        """Close database connections"""
-        if self.mongo_client:
-            self.mongo_client.close()
-        if self.redis:
-            await self.redis.close()
-    
-    # ===== NEW: CONTEXT-RICH CONVERSATION OPERATIONS =====
+    # ==========================================
+    # CONTEXT-RICH CONVERSATION OPERATIONS
+    # ==========================================
     
     async def get_conversation_context(self, phone_number: str) -> Dict[str, Any]:
         """Get rich conversation context for response generation"""
@@ -272,7 +376,7 @@ class DatabaseService:
                 "date": today
             })
             
-            # Get recent message history (last 10 messages)
+            # Get recent message history
             recent_messages = await self.get_recent_messages(phone_number, limit=10)
             
             # Get user profile for personality context
@@ -303,7 +407,6 @@ class DatabaseService:
                 "recent_messages": recent_messages,
                 "context_summary": self._build_context_summary(context, today_session, user_profile)
             }
-            
         except Exception as e:
             logger.error(f"❌ Error getting conversation context for {phone_number}: {e}")
             return self._get_fallback_context()
@@ -327,9 +430,7 @@ class DatabaseService:
             
             await self.db.conversation_context.insert_one(default_context)
             logger.info(f"✅ Created default conversation context for {phone_number}")
-            
             return default_context
-            
         except Exception as e:
             logger.error(f"❌ Error creating default context for {phone_number}: {e}")
             return {}
@@ -339,32 +440,27 @@ class DatabaseService:
         try:
             summary_parts = []
             
-            # Relationship context
             if context:
                 stage = context.get("relationship_stage", "new")
                 total_convos = context.get("total_conversations", 0)
                 summary_parts.append(f"Relationship: {stage} ({total_convos} conversations)")
             
-            # Communication style
             if user_profile:
                 comm_style = user_profile.__dict__.get("communication_style", {})
                 formality = comm_style.get("formality", "casual")
                 energy = comm_style.get("energy", "moderate")
                 summary_parts.append(f"Style: {formality}/{energy}")
             
-            # Today's activity
             if today_session:
                 msg_count = today_session.get("message_count", 0)
                 mood = today_session.get("session_mood", "neutral")
                 summary_parts.append(f"Today: {msg_count} messages, {mood} mood")
             
-            # Recent focus
             if context and context.get("last_discussed_symbols"):
                 recent_symbols = context["last_discussed_symbols"][-3:]
                 summary_parts.append(f"Recent symbols: {', '.join(recent_symbols)}")
             
             return " | ".join(summary_parts) if summary_parts else "New conversation"
-            
         except Exception as e:
             logger.error(f"❌ Error building context summary: {e}")
             return "Context unavailable"
@@ -400,9 +496,7 @@ class DatabaseService:
                 {"phone_number": phone_number}
             ).sort("timestamp", -1).limit(limit).to_list(length=limit)
             
-            # Reverse to get chronological order (oldest first)
             return list(reversed(messages))
-            
         except Exception as e:
             logger.error(f"❌ Error getting recent messages for {phone_number}: {e}")
             return []
@@ -437,7 +531,6 @@ class DatabaseService:
             
             logger.info(f"✅ Saved enhanced message for {phone_number}")
             return True
-            
         except Exception as e:
             logger.error(f"❌ Error saving enhanced message for {phone_number}: {e}")
             return False
@@ -453,11 +546,9 @@ class DatabaseService:
                 "$set": {"updated_at": now}
             }
             
-            # Add symbols to recent list
             if symbols:
                 updates["$addToSet"] = {"last_discussed_symbols": {"$each": symbols}}
             
-            # Add topic if not general
             if intent != "general":
                 topic_entry = {
                     "topic": intent,
@@ -473,7 +564,7 @@ class DatabaseService:
                 upsert=True
             )
             
-            # Clean up old data (keep last 30 entries)
+            # Clean up old data
             cleanup_date = (now - timedelta(days=30)).isoformat()
             await self.db.conversation_context.update_one(
                 {"phone_number": phone_number},
@@ -484,12 +575,11 @@ class DatabaseService:
                     "$push": {
                         "last_discussed_symbols": {
                             "$each": [],
-                            "$slice": -10  # Keep only last 10 symbols
+                            "$slice": -10
                         }
                     }
                 }
             )
-            
         except Exception as e:
             logger.error(f"❌ Error updating conversation context in DB for {phone_number}: {e}")
     
@@ -513,106 +603,135 @@ class DatabaseService:
                 updates,
                 upsert=True
             )
-            
         except Exception as e:
             logger.error(f"❌ Error updating daily session in DB for {phone_number}: {e}")
     
-    async def add_pending_decision(self, phone_number: str, decision: str, 
-                                 context: str, urgency: str = "medium") -> bool:
-        """Add pending decision to track"""
-        try:
-            decision_entry = {
-                "decision": decision,
-                "context": context,
-                "urgency": urgency,
-                "date": datetime.now(timezone.utc).isoformat()
-            }
-            
-            await self.db.conversation_context.update_one(
-                {"phone_number": phone_number},
-                {"$push": {"pending_decisions": decision_entry}},
-                upsert=True
-            )
-            
-            logger.info(f"📝 Added pending decision for {phone_number}: {decision}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Error adding pending decision for {phone_number}: {e}")
-            return False
+    # ==========================================
+    # UTILITY AND MANAGEMENT METHODS
+    # ==========================================
     
-    async def get_user_conversation_summary(self, phone_number: str, days: int = 7) -> Dict[str, Any]:
-        """Get conversation summary for the last N days"""
+    async def health_check(self) -> Dict[str, str]:
+        """Check database health"""
+        health = {
+            "mongodb": "unknown",
+            "redis": "unknown",
+            "key_builder": "unknown"
+        }
+        
         try:
-            start_date = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+            await self.db.command("ping")
+            health["mongodb"] = "connected"
+        except Exception as e:
+            health["mongodb"] = f"error: {str(e)}"
+        
+        try:
+            await self.redis.ping()
+            health["redis"] = "connected"
+        except Exception as e:
+            health["redis"] = f"error: {str(e)}"
+        
+        try:
+            test_key = "health_check_test"
+            test_value = {"test": True, "timestamp": datetime.now(timezone.utc).isoformat()}
+            await self.key_builder.set(test_key, test_value, ttl=60)
+            retrieved = await self.key_builder.get(test_key)
+            await self.key_builder.delete(test_key)
             
-            # Get sessions in date range
-            sessions = await self.db.daily_sessions.find({
-                "phone_number": phone_number,
-                "date": {"$gte": start_date}
-            }).sort("date", -1).to_list(length=days)
+            if retrieved and retrieved.get("test"):
+                health["key_builder"] = "working"
+            else:
+                health["key_builder"] = "not_working"
+        except Exception as e:
+            health["key_builder"] = f"error: {str(e)}"
+        
+        return health
+    
+    async def close(self):
+        """Close database connections"""
+        if self.mongo_client:
+            self.mongo_client.close()
+        if self.redis:
+            await self.redis.close()
+    
+    # ==========================================
+    # ADDITIONAL UTILITY METHODS
+    # ==========================================
+    
+    async def get_conversation_history(self, user_id: str, limit: int = 10) -> List[Dict]:
+        """Get recent conversation history for user"""
+        try:
+            conversations = await self.db.conversations.find(
+                {"user_id": user_id}
+            ).sort("session_start", -1).limit(limit).to_list(length=limit)
             
-            # Get conversation context
-            context = await self.db.conversation_context.find_one({"phone_number": phone_number})
+            for conv in conversations:
+                conv['_id'] = str(conv['_id'])
             
-            # Build summary
-            total_messages = sum(session.get("message_count", 0) for session in sessions)
-            all_symbols = []
-            all_topics = []
-            
-            for session in sessions:
-                all_symbols.extend(session.get("symbols_mentioned", []))
-                all_topics.extend(session.get("topics_discussed", []))
-            
-            unique_symbols = list(set(all_symbols))
-            unique_topics = list(set(all_topics))
-            
-            return {
-                "phone_number": phone_number,
-                "period": f"Last {days} days",
-                "total_messages": total_messages,
-                "active_days": len(sessions),
-                "symbols_discussed": unique_symbols,
-                "topics_covered": unique_topics,
-                "relationship_stage": context.get("relationship_stage", "new") if context else "new",
-                "pending_decisions": context.get("pending_decisions", []) if context else [],
-                "daily_breakdown": sessions
+            return conversations
+        except Exception as e:
+            logger.error(f"❌ Error getting conversation history: {e}")
+            return []
+    
+    async def get_user_stats(self, user_id: str) -> Dict:
+        """Get user statistics"""
+        try:
+            stats = {
+                "total_conversations": 0,
+                "total_messages": 0,
+                "first_interaction": None,
+                "last_interaction": None
             }
             
+            pipeline = [
+                {"$match": {"user_id": user_id}},
+                {"$group": {
+                    "_id": None,
+                    "total_conversations": {"$sum": 1},
+                    "total_messages": {"$sum": "$total_messages"},
+                    "first_interaction": {"$min": "$session_start"},
+                    "last_interaction": {"$max": "$session_start"}
+                }}
+            ]
+            
+            result = await self.db.conversations.aggregate(pipeline).to_list(length=1)
+            if result:
+                stats.update(result[0])
+                stats.pop('_id', None)
+            
+            return stats
         except Exception as e:
-            logger.error(f"❌ Error getting conversation summary for {phone_number}: {e}")
+            logger.error(f"❌ Error getting user stats: {e}")
             return {}
     
-    async def update_relationship_stage(self, phone_number: str) -> str:
-        """Update and return relationship stage based on activity"""
+    async def save_trading_data(self, user_id: str, symbol: str, data: Dict) -> str:
+        """Save trading analysis data"""
         try:
-            context = await self.db.conversation_context.find_one({"phone_number": phone_number})
-            if not context:
-                return "new"
+            trading_data = {
+                "user_id": user_id,
+                "symbol": symbol,
+                "data": data,
+                "timestamp": datetime.utcnow()
+            }
             
-            total_conversations = context.get("total_conversations", 0)
-            current_stage = context.get("relationship_stage", "new")
-            
-            # Determine new stage
-            if total_conversations < 3:
-                new_stage = "new"
-            elif total_conversations < 10:
-                new_stage = "getting_acquainted"
-            elif total_conversations < 25:
-                new_stage = "building_trust"
-            else:
-                new_stage = "established"
-            
-            # Update if changed
-            if new_stage != current_stage:
-                await self.db.conversation_context.update_one(
-                    {"phone_number": phone_number},
-                    {"$set": {"relationship_stage": new_stage}}
-                )
-                logger.info(f"🤝 Updated relationship stage for {phone_number}: {current_stage} → {new_stage}")
-            
-            return new_stage
-            
+            result = await self.db.trading_data.insert_one(trading_data)
+            return str(result.inserted_id)
         except Exception as e:
-            logger.error(f"❌ Error updating relationship stage for {phone_number}: {e}")
-            return "new"
+            logger.error(f"❌ Error saving trading data: {e}")
+            raise
+    
+    async def get_trading_data(self, user_id: str, symbol: str = None, limit: int = 10) -> List[Dict]:
+        """Get trading data for user"""
+        try:
+            query = {"user_id": user_id}
+            if symbol:
+                query["symbol"] = symbol
+            
+            data = await self.db.trading_data.find(query).sort("timestamp", -1).limit(limit).to_list(length=limit)
+            
+            for item in data:
+                item['_id'] = str(item['_id'])
+            
+            return data
+        except Exception as e:
+            logger.error(f"❌ Error getting trading data: {e}")
+            return []
