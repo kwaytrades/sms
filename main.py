@@ -22,6 +22,19 @@ from loguru import logger
 from services.stripe_service import StripeService
 from core.user_manager import UserManager, PlanType, SubscriptionStatus, AccountStatus
 
+# In your main.py or wherever you initialize services
+from social import (
+    SocialMemoryService,
+    SocialResponseService,
+    SocialConversationHandler,
+    TikTokService
+)
+
+# Initialize social services alongside existing services
+social_memory_service = SocialMemoryService(database_service)
+social_response_service = SocialResponseService(openai_service)
+tiktok_service = TikTokService(social_memory_service, social_response_service)
+
 # Import configuration
 try:
     from config import settings
