@@ -1898,8 +1898,11 @@ Change your mind? Reply REACTIVATE"""
 async def get_all_keys():
     """Temporary endpoint to audit Redis keys"""
     try:
-        redis = # however you get your redis connection
-        all_keys = await redis.keys("*")
+        # Use your existing database service
+        if not db_service or not db_service.redis:
+            return {"error": "Redis connection not available"}
+            
+        all_keys = await db_service.redis.keys("*")
         
         key_list = [key.decode('utf-8') if isinstance(key, bytes) else key for key in all_keys]
         
