@@ -5,13 +5,13 @@ from loguru import logger
 from models.user import UserProfile
 
 class MessageHandler:
-    def __init__(self, db_service, openai_service, twilio_service, user_manager=None, message_processor=None):
+    def __init__(self, db_service, claude_service, twilio_service, user_manager=None, message_processor=None):
         self.db = db_service
-        self.openai = openai_service
+        self.claude = claude_service
         self.twilio = twilio_service
         self.user_manager = user_manager
         self.message_processor = message_processor  # NEW: Add orchestrator processor
-        logger.info("✅ Enhanced message handler initialized with context support")
+        logger.info("✅ Enhanced message handler initialized with Claude and context support")
     
     async def process_incoming_message(self, phone_number: str, message_body: str) -> bool:
         """Process incoming SMS message with rich conversation context"""
@@ -54,8 +54,21 @@ class MessageHandler:
     
     # ALL EXISTING METHODS REMAIN UNCHANGED
     async def _get_or_create_user(self, phone_number: str) -> UserProfile:
-        """Get existing user or create new one"""
+        """Get existing user or create new one using KeyBuilder"""
         if self.db:
+            # Try KeyBuilder first for user lookup
+            if hasattr(self.db, 'key_builder'):
+                try:
+                    user_profile = await self.db.key_builder.get_user_profile(phone_number)
+                    if user_profile:
+                        # Convert dict to UserProfile object if needed
+                        if isinstance(user_profile, dict):
+                            return UserProfile(**user_profile)
+                        return user_profile
+                except Exception as e:
+                    logger.warning(f"KeyBuilder user lookup failed: {e}")
+            
+            # Fallback to existing database method
             user = await self.db.get_user_by_phone(phone_number)
             if user:
                 return user
@@ -78,19 +91,36 @@ class MessageHandler:
             )
     
     async def _check_weekly_limits(self, user: UserProfile) -> Dict:
-        """Check weekly usage limits"""
+        """Check weekly usage limits using KeyBuilder"""
         limits = {"free": 10, "paid": 100, "pro": 999999}
         limit = limits.get(user.plan_type, 10)
         
-        # Mock usage check
-        current_usage = user.messages_this_period if hasattr(user, 'messages_this_period') else 0
-        
-        return {
-            "can_send": current_usage < limit,
-            "limit": limit,
-            "used": current_usage,
-            "remaining": max(0, limit - current_usage)
-        }
+        try:
+            current_usage = 0
+            
+            # Try KeyBuilder for usage data
+            if self.db and hasattr(self.db, 'key_builder'):
+                try:
+                    usage_data = await self.db.key_builder.get_user_usage(user.phone_number, "weekly")
+                    current_usage = usage_data.get("message_count", 0) if usage_data else 0
+                except Exception as e:
+                    logger.warning(f"KeyBuilder usage lookup failed: {e}")
+            
+            # Fallback to user object attribute
+            if current_usage == 0:
+                current_usage = user.messages_this_period if hasattr(user, 'messages_this_period') else 0
+            
+            return {
+                "can_send": current_usage < limit,
+                "limit": limit,
+                "used": current_usage,
+                "remaining": max(0, limit - current_usage)
+            }
+            
+        except Exception as e:
+            logger.warning(f"Usage check failed: {e}")
+            # Safe fallback
+            return {"can_send": True, "limit": limit, "used": 0, "remaining": limit}
     
     async def _send_limit_message(self, user: UserProfile, usage_info: Dict):
         """Send limit reached message"""
@@ -118,11 +148,20 @@ class MessageHandler:
         except Exception as e:
             logger.error(f"❌ Error updating usage: {e}")
     
-    # EXISTING CONTEXT METHODS REMAIN UNCHANGED
+    # EXISTING CONTEXT METHODS WITH KEYBUILDER INTEGRATION
     async def _get_conversation_context(self, phone_number: str) -> Dict:
-        """Get conversation context for enhanced response generation"""
+        """Get conversation context for enhanced response generation using KeyBuilder"""
         try:
-            # Try database service first (new enhanced context)
+            # Try KeyBuilder first for conversation context
+            if self.db and hasattr(self.db, 'key_builder'):
+                try:
+                    context_data = await self.db.key_builder.get_user_context(phone_number)
+                    if context_data:
+                        return context_data
+                except Exception as e:
+                    logger.warning(f"KeyBuilder context lookup failed: {e}")
+            
+            # Try database service (new enhanced context)
             if self.db and hasattr(self.db, 'get_conversation_context'):
                 return await self.db.get_conversation_context(phone_number)
             
@@ -147,32 +186,34 @@ class MessageHandler:
                 "pending_decisions": [],
                 "relationship_stage": "new",
                 "total_conversations": 0,
-                "conversation_frequency": "occasional"
+                "conversation_frequency": "occasional",
+                "conversation_type": "unknown"  # trading, customer_service, sales
             },
             "today_session": {
                 "message_count": 0,
                 "topics_discussed": [],
                 "symbols_mentioned": [],
                 "session_mood": "neutral",
-                "is_first_message_today": True
+                "is_first_message_today": True,
+                "session_type": "mixed"  # trading, support, sales
             },
             "recent_messages": [],
             "context_summary": "No conversation history available"
         }
     
     async def _generate_context_aware_response(self, user: UserProfile, message: str, conversation_context: Dict) -> str:
-        """Generate response with conversation context awareness"""
+        """Generate response with conversation context awareness for trading AND customer service"""
         try:
-            # Check if we have enhanced LLM agent with context support
-            if hasattr(self.openai, 'generate_context_aware_response'):
-                return await self.openai.generate_context_aware_response(
+            # Check if we have enhanced Claude agent with context support
+            if hasattr(self.claude, 'generate_context_aware_response'):
+                return await self.claude.generate_context_aware_response(
                     user_query=message,
                     user_profile=user.__dict__ if hasattr(user, '__dict__') else {},
                     conversation_context=conversation_context
                 )
             
             # Check if we have personality-aware response generation
-            elif hasattr(self.openai, 'generate_personalized_response'):
+            elif hasattr(self.claude, 'generate_personalized_response'):
                 # Enhanced call with context information
                 user_profile_dict = user.__dict__ if hasattr(user, '__dict__') else {}
                 
@@ -180,7 +221,7 @@ class MessageHandler:
                 if conversation_context:
                     user_profile_dict['conversation_context'] = conversation_context
                 
-                return await self.openai.generate_personalized_response(
+                return await self.claude.generate_personalized_response(
                     user_query=message,
                     user_profile=user_profile_dict,
                     conversation_history=conversation_context.get('recent_messages', [])
@@ -195,8 +236,11 @@ class MessageHandler:
             return self._generate_fallback_response(conversation_context)
     
     async def _generate_basic_response(self, user: UserProfile, message: str, conversation_context: Dict) -> str:
-        """Generate basic response with available context"""
+        """Generate basic response with available context for trading AND customer service conversations"""
         try:
+            # Determine conversation type from context or message content
+            conversation_type = self._determine_conversation_type(message, conversation_context)
+            
             # Build context-aware prompt
             context_info = ""
             if conversation_context:
@@ -208,10 +252,21 @@ class MessageHandler:
                 total_convos = conv_ctx.get("total_conversations", 0)
                 context_info += f"Relationship: {relationship} ({total_convos} conversations). "
                 
-                # Add recent context
-                recent_symbols = conv_ctx.get("recent_symbols", [])
-                if recent_symbols:
-                    context_info += f"Recently discussed: {', '.join(recent_symbols[-3:])}. "
+                # Add conversation type context
+                conv_type = conv_ctx.get("conversation_type", conversation_type)
+                context_info += f"Conversation type: {conv_type}. "
+                
+                # Add recent context based on conversation type
+                if conv_type == "trading":
+                    recent_symbols = conv_ctx.get("recent_symbols", [])
+                    if recent_symbols:
+                        context_info += f"Recently discussed: {', '.join(recent_symbols[-3:])}. "
+                elif conv_type in ["customer_service", "support"]:
+                    recent_topics = conv_ctx.get("recent_topics", [])
+                    if recent_topics:
+                        context_info += f"Recent support topics: {', '.join(recent_topics[-2:])}. "
+                elif conv_type == "sales":
+                    context_info += f"Sales conversation in progress. "
                 
                 # Add today's context
                 if not today_session.get("is_first_message_today", True):
@@ -219,8 +274,51 @@ class MessageHandler:
                 else:
                     context_info += f"First message today. "
             
-            # Enhanced prompt with context
-            enhanced_prompt = f"""Respond as a knowledgeable trading buddy.
+            # Enhanced prompt with conversation type awareness
+            if conversation_type == "trading":
+                enhanced_prompt = f"""Respond as a knowledgeable trading buddy.
+
+Context: {context_info}
+
+User message: "{message}"
+
+Instructions:
+- Be conversational and helpful with trading insights
+- Reference conversation history naturally if relevant
+- Match their communication style
+- Provide valuable trading insights
+- Keep response under 300 characters for SMS
+"""
+            elif conversation_type in ["customer_service", "support"]:
+                enhanced_prompt = f"""Respond as a helpful customer service representative.
+
+Context: {context_info}
+
+User message: "{message}"
+
+Instructions:
+- Be professional and helpful with support issues
+- Reference previous support interactions if relevant
+- Provide clear solutions or next steps
+- Match their communication style
+- Keep response under 300 characters for SMS
+"""
+            elif conversation_type == "sales":
+                enhanced_prompt = f"""Respond as a friendly sales representative.
+
+Context: {context_info}
+
+User message: "{message}"
+
+Instructions:
+- Be helpful and not pushy about service offerings
+- Reference previous conversations if relevant
+- Focus on user benefits and value
+- Match their communication style
+- Keep response under 300 characters for SMS
+"""
+            else:
+                enhanced_prompt = f"""Respond as a helpful AI assistant.
 
 Context: {context_info}
 
@@ -230,61 +328,127 @@ Instructions:
 - Be conversational and helpful
 - Reference conversation history naturally if relevant
 - Match their communication style
-- Provide valuable trading insights
+- Provide valuable assistance
 - Keep response under 300 characters for SMS
 """
             
-            # Use basic OpenAI generation if available
-            if hasattr(self.openai, 'client'):
-                response = await self.openai.client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": enhanced_prompt}],
+            # Use basic Claude generation if available
+            if hasattr(self.claude, 'client'):
+                response = await self.claude.client.messages.create(
+                    model="claude-3-haiku-20240307",
+                    max_tokens=150,
                     temperature=0.7,
-                    max_tokens=150
+                    messages=[{"role": "user", "content": enhanced_prompt}]
                 )
-                return response.choices[0].message.content.strip()
+                return response.content[0].text.strip()
             
-            # Fallback response
+            # Fallback response based on conversation type
             else:
-                return "I'm here to help with your trading questions! Can you tell me more about what you're looking for?"
+                if conversation_type == "trading":
+                    return "I'm here to help with your trading questions! Can you tell me more about what you're looking for?"
+                elif conversation_type in ["customer_service", "support"]:
+                    return "I'm here to help with any questions or issues you have. How can I assist you today?"
+                elif conversation_type == "sales":
+                    return "I'd be happy to help you learn more about our services. What interests you most?"
+                else:
+                    return "I'm here to help! How can I assist you today?"
                 
         except Exception as e:
             logger.error(f"❌ Error in basic response generation: {e}")
             return "I'm having trouble processing your request. Please try again."
     
+    def _determine_conversation_type(self, message: str, conversation_context: Dict) -> str:
+        """Determine if this is trading, customer service, or sales conversation"""
+        message_lower = message.lower()
+        
+        # Check context first
+        if conversation_context:
+            conv_ctx = conversation_context.get("conversation_context", {})
+            existing_type = conv_ctx.get("conversation_type")
+            if existing_type and existing_type != "unknown":
+                return existing_type
+        
+        # Trading keywords
+        trading_keywords = [
+            'stock', 'stocks', 'trade', 'trading', 'buy', 'sell', 'portfolio',
+            'analysis', 'chart', 'price', 'market', 'ticker', 'options',
+            'calls', 'puts', 'rsi', 'macd', 'support', 'resistance'
+        ]
+        
+        # Customer service keywords
+        support_keywords = [
+            'help', 'problem', 'issue', 'error', 'bug', 'not working',
+            'cancel', 'refund', 'billing', 'account', 'login', 'password',
+            'support', 'complaint', 'feedback'
+        ]
+        
+        # Sales keywords
+        sales_keywords = [
+            'upgrade', 'plan', 'pricing', 'features', 'demo', 'trial',
+            'subscription', 'pro', 'premium', 'paid'
+        ]
+        
+        # Count keyword matches
+        trading_score = sum(1 for keyword in trading_keywords if keyword in message_lower)
+        support_score = sum(1 for keyword in support_keywords if keyword in message_lower)
+        sales_score = sum(1 for keyword in sales_keywords if keyword in message_lower)
+        
+        # Determine type based on highest score
+        if trading_score > support_score and trading_score > sales_score:
+            return "trading"
+        elif support_score > trading_score and support_score > sales_score:
+            return "customer_service"
+        elif sales_score > 0:
+            return "sales"
+        else:
+            return "general"
+    
     def _generate_fallback_response(self, conversation_context: Dict) -> str:
         """Generate fallback response when all else fails"""
         # Use context to determine appropriate fallback
         if conversation_context:
-            relationship = conversation_context.get("conversation_context", {}).get("relationship_stage", "new")
+            conv_ctx = conversation_context.get("conversation_context", {})
+            relationship = conv_ctx.get("relationship_stage", "new")
+            conv_type = conv_ctx.get("conversation_type", "general")
             
-            if relationship == "new":
-                return "Hey there! I'm having some technical issues but I'm here to help with your trading questions."
-            elif relationship in ["getting_acquainted", "building_trust"]:
-                return "Hey! Running into some tech issues on my end but still here to help. What's on your mind?"
+            if conv_type == "trading":
+                if relationship == "new":
+                    return "Hey there! I'm having some technical issues but I'm here to help with your trading questions."
+                else:
+                    return "yo tech gremlins acting up but I got you! what trading help you need?"
+            elif conv_type in ["customer_service", "support"]:
+                return "I'm experiencing some technical difficulties but I'm still here to help with your support needs."
+            elif conv_type == "sales":
+                return "Technical issues on my end, but I'm still available to discuss our services with you."
             else:
-                return "yo tech gremlins acting up but I got you! what you need help with?"
+                if relationship == "new":
+                    return "Hey there! I'm having some technical issues but I'm here to help."
+                else:
+                    return "tech issues on my end but still here to help! what's up?"
         else:
             return "I'm having trouble processing your request. Please try again."
     
     async def _update_conversation_context(self, phone_number: str, user_message: str, bot_response: str):
         """Update conversation context after successful interaction"""
         try:
+            # Determine conversation type for context
+            conversation_type = self._determine_conversation_type(user_message, {})
+            
             # Update through database service if available
             if self.db and hasattr(self.db, 'save_enhanced_message'):
                 await self.db.save_enhanced_message(
                     phone_number=phone_number,
                     user_message=user_message,
                     bot_response=bot_response,
-                    intent_data={"intent": "general"},  # Basic intent for now
-                    symbols=[],
+                    intent_data={"intent": conversation_type},
+                    symbols=self._extract_basic_symbols(user_message),
                     context_used="message_handler_basic"
                 )
             
             # Update through user manager if available
             elif self.user_manager:
-                # Extract any symbols from the message for learning
-                symbols = self._extract_basic_symbols(user_message)
+                # Extract symbols and topics based on conversation type
+                symbols = self._extract_basic_symbols(user_message) if conversation_type == "trading" else []
                 
                 # Update user learning
                 if hasattr(self.user_manager, 'learn_from_interaction'):
@@ -292,7 +456,7 @@ Instructions:
                         phone_number=phone_number,
                         message=user_message,
                         symbols=symbols,
-                        intent="general"
+                        intent=conversation_type
                     )
                 
                 # Update activity
@@ -305,7 +469,7 @@ Instructions:
                         phone_number=phone_number,
                         message=user_message,
                         response=bot_response,
-                        intent="general",
+                        intent=conversation_type,
                         symbols=symbols
                     )
             
