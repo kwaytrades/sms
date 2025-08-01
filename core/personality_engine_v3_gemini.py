@@ -58,10 +58,36 @@ class EnhancedPersonalityEngine:
         else:
             logger.warning("⚠️ Gemini API key not provided - falling back to regex detection")
 
-                    # Add this method to your EnhancedPersonalityEngine class in core/personality_engine_v3_gemini.py
-# Insert this method anywhere within the EnhancedPersonalityEngine class
+        
+        # Load authoritative ticker lists for symbol validation
+        self.authoritative_tickers = self._load_authoritative_tickers()
+        
+        # Event hooks for real-time integration
+        self._profile_update_hooks: List[Callable] = []
+        self._analysis_hooks: List[Callable] = []
+        
+        # Fallback in-memory storage for when KeyBuilder is not available
+        self.user_profiles = defaultdict(self._create_default_profile)
+        
+        # Pre-compiled regex patterns for performance (fallback only)
+        self._compiled_patterns = self._compile_regex_patterns()
+        
+        # Analysis patterns (loaded once) - kept for fallback
+        self.communication_patterns = self._load_communication_patterns()
+        self.trading_patterns = self._load_trading_patterns()
+        self.sales_indicators = self._load_sales_indicators()
+        self.service_patterns = self._load_service_patterns()
+        
+        # Cached analysis results (prevents duplicate processing)
+        self._analysis_cache = {}
+        self._cache_max_size = 1000
+        
+        # Global intelligence layer for pattern aggregation
+        self._global_patterns = defaultdict(lambda: defaultdict(int))
+        
+        logger.info(f"🧠 Enhanced PersonalityEngine v{self.PROFILE_VERSION} initialized")
 
-def _create_default_profile(self) -> Dict[str, Any]:
+        def _create_default_profile(self) -> Dict[str, Any]:
     """Create default user profile with enhanced v3.0 structure"""
     from datetime import datetime, timezone
     
@@ -154,34 +180,6 @@ def _create_default_profile(self) -> Dict[str, Any]:
             "personalization_effectiveness": 0.5
         }
     }
-        
-        # Load authoritative ticker lists for symbol validation
-        self.authoritative_tickers = self._load_authoritative_tickers()
-        
-        # Event hooks for real-time integration
-        self._profile_update_hooks: List[Callable] = []
-        self._analysis_hooks: List[Callable] = []
-        
-        # Fallback in-memory storage for when KeyBuilder is not available
-        self.user_profiles = defaultdict(self._create_default_profile)
-        
-        # Pre-compiled regex patterns for performance (fallback only)
-        self._compiled_patterns = self._compile_regex_patterns()
-        
-        # Analysis patterns (loaded once) - kept for fallback
-        self.communication_patterns = self._load_communication_patterns()
-        self.trading_patterns = self._load_trading_patterns()
-        self.sales_indicators = self._load_sales_indicators()
-        self.service_patterns = self._load_service_patterns()
-        
-        # Cached analysis results (prevents duplicate processing)
-        self._analysis_cache = {}
-        self._cache_max_size = 1000
-        
-        # Global intelligence layer for pattern aggregation
-        self._global_patterns = defaultdict(lambda: defaultdict(int))
-        
-        logger.info(f"🧠 Enhanced PersonalityEngine v{self.PROFILE_VERSION} initialized")
     
     # ==========================================
     # MAIN ANALYSIS METHOD - GEMINI INTEGRATION
