@@ -980,13 +980,11 @@ async def get_background_job_status():
         latest_update = await background_pipeline.db.stocks.find_one(
             sort=[("last_updated", -1)]
             )
+
     except (AttributeError, TypeError):
         stock_count = 0
         latest_update = None
-            )
-        else:
-            stock_count = 0
-            latest_update = None
+       
         
         # Add service availability
         pipeline_status.update({
