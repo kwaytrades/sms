@@ -971,15 +971,28 @@ async def get_background_job_status():
             }
         }
     
-    try:
-        pipeline_status = await background_pipeline.get_job_status()
-        
-        # Add database stats - fix the MongoDB comparison
+try:
+    pipeline_status = await background_pipeline.get_job_status()
+    
+    # Add database stats - fix the MongoDB comparison
+
+    stock_count = 0
+    latest_update = None
+    
     try:
         stock_count = await background_pipeline.db.stocks.count_documents({})
         latest_update = await background_pipeline.db.stocks.find_one(
             sort=[("last_updated", -1)]
-            )
+        )
+    except (AttributeError, TypeError):
+        # stock_count and latest_update already set to defaults above
+        pass
+    
+    # Continue with pipeline_status.update() here...
+    
+except Exception as e:
+    logger.error(f"❌ Background job status error: {e}")
+    return {"error": str(e)}
 
     except (AttributeError, TypeError):
         stock_count = 0
