@@ -453,7 +453,7 @@ Generate your context-aware response now:"""
             return {}
     
     async def _cache_conversation_fallback(self, user_phone: str, message: str, response: str, context):
-        """Cache conversation using KeyBuilder or fallback"""
+        """Cache conversation (fallback method)"""
         
         try:
             # Extract symbols and create conversation entry
@@ -467,12 +467,7 @@ Generate your context-aware response now:"""
                 "topic": self._determine_topic(message)
             }
             
-            # Try to use KeyBuilder to save conversation
-            if self.db_service and hasattr(self.db_service, 'key_builder'):
-                await self.db_service.key_builder.save_user_conversation(user_phone, conversation_entry)
-                return
-            
-            # Fallback to cache service
+            # Use cache service (this file only reads from DB, writes to cache)
             if self.cache_service:
                 thread_key = f"conversation_thread:{user_phone}"
                 await self.cache_service.add_to_list(thread_key, conversation_entry, max_length=5)
