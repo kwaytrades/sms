@@ -971,33 +971,21 @@ async def get_background_job_status():
             }
         }
     
-try:
-    pipeline_status = await background_pipeline.get_job_status()
-    
-    # Add database stats - fix the MongoDB comparison
-
-    stock_count = 0
-    latest_update = None
-    
     try:
-        stock_count = await background_pipeline.db.stocks.count_documents({})
-        latest_update = await background_pipeline.db.stocks.find_one(
-            sort=[("last_updated", -1)]
-        )
-    except (AttributeError, TypeError):
-        # stock_count and latest_update already set to defaults above
-        pass
-    
-    # Continue with pipeline_status.update() here...
-    
-except Exception as e:
-    logger.error(f"❌ Background job status error: {e}")
-    return {"error": str(e)}
-
-    except (AttributeError, TypeError):
+        pipeline_status = await background_pipeline.get_job_status()
+        
+        # Add database stats - fix the MongoDB comparison
         stock_count = 0
         latest_update = None
-       
+        
+        try:
+            stock_count = await background_pipeline.db.stocks.count_documents({})
+            latest_update = await background_pipeline.db.stocks.find_one(
+                sort=[("last_updated", -1)]
+            )
+        except (AttributeError, TypeError):
+            # stock_count and latest_update already set to defaults above
+            pass
         
         # Add service availability
         pipeline_status.update({
@@ -1081,17 +1069,16 @@ async def get_sample_cached_data(symbol: str):
             mongo_data = None
         
         # Get from Redis - fix the comparison  
-    try:
-        redis_basic = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:basic")
-        redis_technical = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:technical")
-        redis_fundamental = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:fundamental")
-        redis_tags = await background_pipeline.redis_client.smembers(f"stock:{symbol}:tags")
-
-    except (AttributeError, TypeError):
-        redis_basic = {}
-        redis_technical = {}
-        redis_fundamental = {}
-        redis_tags = []
+        try:
+            redis_basic = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:basic")
+            redis_technical = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:technical")
+            redis_fundamental = await background_pipeline.redis_client.hgetall(f"stock:{symbol}:fundamental")
+            redis_tags = await background_pipeline.redis_client.smembers(f"stock:{symbol}:tags")
+        except (AttributeError, TypeError):
+            redis_basic = {}
+            redis_technical = {}
+            redis_fundamental = {}
+            redis_tags = []
         
         return {
             "symbol": symbol,
@@ -1662,7 +1649,7 @@ async def test_interface():
                 if (testType === 'stats') {
                     url = '/admin/personality/gemini/stats';
                 } else if (testType === 'analyze') {
-                    url = '/admin/personality/test/+1555TEST?message=Hey, what do you think about AAPL? I\'m bullish!';
+                    url = '/admin/personality/test/+1555TEST?message=Hey, what do you think about AAPL? I\\'m bullish!';
                 } else if (testType === 'optimize') {
                     url = '/admin/personality/gemini/optimize-costs';
                     method = 'POST';
