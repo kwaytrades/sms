@@ -1,6 +1,7 @@
 # services/claude_data_driven_agent.py
 """
 Claude-powered data-driven LLM agent for superior trading analysis
+Updated with KeyBuilder integration for centralized data access
 """
 
 import json
@@ -18,7 +19,7 @@ class ClaudeDataDrivenAgent:
     3. Claude handles everything - analysis, tone, conversation style
     """
     
-    def __init__(self, anthropic_client, ta_service, news_service, fundamental_tool, cache_service, personality_engine, memory_manager=None):
+    def __init__(self, anthropic_client, ta_service, news_service, fundamental_tool, cache_service, personality_engine, memory_manager=None, db_service=None):
         self.anthropic_client = anthropic_client
         self.ta_service = ta_service
         self.news_service = news_service
@@ -26,6 +27,7 @@ class ClaudeDataDrivenAgent:
         self.cache_service = cache_service
         self.personality_engine = personality_engine
         self.memory_manager = memory_manager
+        self.db_service = db_service  # DatabaseService with KeyBuilder
     
     async def process_message(self, message: str, user_phone: str) -> str:
         """
@@ -425,7 +427,7 @@ Match this user's style precisely - Claude excels at personality adaptation."""
         return response.strip()
     
     async def _get_conversation_context(self, user_phone: str) -> Dict[str, Any]:
-        """Get conversation context"""
+        """Get conversation context using KeyBuilder"""
         
         context = {
             "recent_symbols": [],
@@ -434,6 +436,19 @@ Match this user's style precisely - Claude excels at personality adaptation."""
         }
         
         try:
+            # Try KeyBuilder first for conversation context
+            if self.db_service and hasattr(self.db_service, 'key_builder'):
+                try:
+                    context_data = await self.db_service.key_builder.get_user_context(user_phone)
+                    if context_data:
+                        context["recent_symbols"] = context_data.get("recent_symbols", [])
+                        context["conversation_flow"] = context_data.get("conversation_flow", "new")
+                        context["last_topic"] = context_data.get("last_topic", None)
+                        return context
+                except Exception as e:
+                    logger.warning(f"KeyBuilder context lookup failed: {e}")
+            
+            # Fallback to cache service
             if self.cache_service:
                 thread_key = f"conversation_thread:{user_phone}"
                 recent_messages = await self.cache_service.get_list(thread_key, limit=3)
@@ -456,9 +471,19 @@ Match this user's style precisely - Claude excels at personality adaptation."""
             return context
     
     async def _get_user_profile(self, user_phone: str) -> Dict:
-        """Get user personality profile"""
+        """Get user personality profile using KeyBuilder"""
         
         try:
+            # Try KeyBuilder first for user profile
+            if self.db_service and hasattr(self.db_service, 'key_builder'):
+                try:
+                    user_profile = await self.db_service.key_builder.get_user_profile(user_phone)
+                    if user_profile:
+                        return user_profile
+                except Exception as e:
+                    logger.warning(f"KeyBuilder profile lookup failed: {e}")
+            
+            # Fallback to personality engine
             if self.personality_engine and hasattr(self.personality_engine, 'user_profiles'):
                 return self.personality_engine.user_profiles.get(user_phone, {})
             return {}
@@ -467,7 +492,7 @@ Match this user's style precisely - Claude excels at personality adaptation."""
             return {}
     
     async def _cache_conversation(self, user_phone: str, message: str, response: str, context: Dict):
-        """Cache conversation"""
+        """Cache conversation (read-only for DB, writes to cache only)"""
         
         try:
             if not self.cache_service:
@@ -539,7 +564,7 @@ class ClaudeMessageProcessor:
     
     def __init__(self, anthropic_client, ta_service, personality_engine, 
                  cache_service=None, news_service=None, fundamental_tool=None, 
-                 portfolio_service=None, screener_service=None, memory_manager=None):
+                 portfolio_service=None, screener_service=None, memory_manager=None, db_service=None):
         
         self.claude_agent = ClaudeDataDrivenAgent(
             anthropic_client=anthropic_client,
@@ -548,7 +573,8 @@ class ClaudeMessageProcessor:
             fundamental_tool=fundamental_tool,
             cache_service=cache_service,
             personality_engine=personality_engine,
-            memory_manager=memory_manager
+            memory_manager=memory_manager,
+            db_service=db_service  # Pass DatabaseService with KeyBuilder
         )
         
         self.personality_engine = personality_engine
