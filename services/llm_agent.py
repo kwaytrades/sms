@@ -2,6 +2,7 @@
 """
 Simplified data-driven LLM agent - let the LLM handle conversation style
 Enhanced with Context Orchestrator integration
+Updated with KeyBuilder integration for centralized data access
 """
 
 import json
@@ -29,13 +30,14 @@ class DataDrivenAgent:
     4. LLM handles everything - analysis, tone, conversation style
     """
     
-    def __init__(self, openai_client, ta_service, news_service, fundamental_tool, cache_service, personality_engine, memory_manager=None):
+    def __init__(self, openai_client, ta_service, news_service, fundamental_tool, cache_service, personality_engine, memory_manager=None, db_service=None):
         self.openai_client = openai_client
         self.ta_service = ta_service
         self.news_service = news_service
         self.fundamental_tool = fundamental_tool
         self.cache_service = cache_service
         self.personality_engine = personality_engine
+        self.db_service = db_service  # DatabaseService with KeyBuilder
         
         # Initialize Context Orchestrator if available
         self.context_orchestrator = None
@@ -343,7 +345,7 @@ Generate your context-aware response now:"""
     async def _get_fallback_context(self, user_phone: str) -> StructuredContext:
         """Fallback context when Context Orchestrator is not available"""
         
-        # Get basic conversation context
+        # Get basic conversation context using KeyBuilder
         context = await self._get_conversation_context(user_phone)
         
         # Create minimal StructuredContext-like object
@@ -392,7 +394,7 @@ Generate your context-aware response now:"""
         return response.strip()
     
     async def _get_conversation_context(self, user_phone: str) -> Dict[str, Any]:
-        """Get conversation context (fallback method)"""
+        """Get conversation context using KeyBuilder"""
         
         context = {
             "recent_symbols": [],
@@ -401,6 +403,16 @@ Generate your context-aware response now:"""
         }
         
         try:
+            if self.db_service and hasattr(self.db_service, 'key_builder'):
+                # Use KeyBuilder to get user context
+                user_context = await self.db_service.key_builder.get_user_context(user_phone)
+                if user_context:
+                    context["recent_symbols"] = user_context.get("recent_symbols", [])
+                    context["conversation_flow"] = user_context.get("conversation_flow", "new")
+                    context["last_topic"] = user_context.get("last_topic", None)
+                    return context
+            
+            # Fallback to cache service if KeyBuilder not available
             if self.cache_service:
                 thread_key = f"conversation_thread:{user_phone}"
                 recent_messages = await self.cache_service.get_list(thread_key, limit=3)
@@ -423,9 +435,16 @@ Generate your context-aware response now:"""
             return context
     
     async def _get_user_profile(self, user_phone: str) -> Dict:
-        """Get user personality profile"""
+        """Get user personality profile using KeyBuilder"""
         
         try:
+            # Try KeyBuilder first
+            if self.db_service and hasattr(self.db_service, 'key_builder'):
+                user_profile = await self.db_service.key_builder.get_user_profile(user_phone)
+                if user_profile:
+                    return user_profile
+            
+            # Fallback to personality engine
             if self.personality_engine and hasattr(self.personality_engine, 'user_profiles'):
                 return self.personality_engine.user_profiles.get(user_phone, {})
             return {}
@@ -434,13 +453,10 @@ Generate your context-aware response now:"""
             return {}
     
     async def _cache_conversation_fallback(self, user_phone: str, message: str, response: str, context):
-        """Cache conversation (fallback method)"""
+        """Cache conversation using KeyBuilder or fallback"""
         
         try:
-            if not self.cache_service:
-                return
-            
-            # Extract symbols and cache conversation
+            # Extract symbols and create conversation entry
             symbols = self._extract_symbols_from_text(f"{message} {response}")
             
             conversation_entry = {
@@ -451,8 +467,15 @@ Generate your context-aware response now:"""
                 "topic": self._determine_topic(message)
             }
             
-            thread_key = f"conversation_thread:{user_phone}"
-            await self.cache_service.add_to_list(thread_key, conversation_entry, max_length=5)
+            # Try to use KeyBuilder to save conversation
+            if self.db_service and hasattr(self.db_service, 'key_builder'):
+                await self.db_service.key_builder.save_user_conversation(user_phone, conversation_entry)
+                return
+            
+            # Fallback to cache service
+            if self.cache_service:
+                thread_key = f"conversation_thread:{user_phone}"
+                await self.cache_service.add_to_list(thread_key, conversation_entry, max_length=5)
             
         except Exception as e:
             logger.warning(f"Conversation caching failed: {e}")
@@ -505,7 +528,7 @@ class ComprehensiveMessageProcessor:
     
     def __init__(self, openai_client, ta_service, personality_engine, 
                  cache_service=None, news_service=None, fundamental_tool=None, 
-                 portfolio_service=None, screener_service=None, memory_manager=None):
+                 portfolio_service=None, screener_service=None, memory_manager=None, db_service=None):
         
         self.data_driven_agent = DataDrivenAgent(
             openai_client=openai_client,
@@ -514,7 +537,8 @@ class ComprehensiveMessageProcessor:
             fundamental_tool=fundamental_tool,
             cache_service=cache_service,
             personality_engine=personality_engine,
-            memory_manager=memory_manager  # Pass memory manager for context orchestrator
+            memory_manager=memory_manager,  # Pass memory manager for context orchestrator
+            db_service=db_service  # Pass DatabaseService with KeyBuilder
         )
         
         self.personality_engine = personality_engine
