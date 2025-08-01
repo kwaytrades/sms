@@ -11,7 +11,8 @@ from .twilio_service import TwilioService
 from .llm_agent import TradingAgent, ToolExecutor
 from .news_sentiment import NewsSentimentService
 from .fundamental_analysis import FundamentalAnalysisEngine, FundamentalAnalysisTool
-from .key_builder import KeyBuilder  # ← ADD THIS for unified data management
+from .key_builder import KeyBuilder
+from .gemini_service import GeminiPersonalityService  # ← ADD THIS for Gemini personality analysis
 
 __all__ = [
     "DatabaseService",
@@ -23,5 +24,6 @@ __all__ = [
     "NewsSentimentService",
     "FundamentalAnalysisEngine",
     "FundamentalAnalysisTool",
-    "KeyBuilder"  # ← ADD THIS
+    "KeyBuilder",
+    "GeminiPersonalityService"  # ← ADD THIS
 ]
