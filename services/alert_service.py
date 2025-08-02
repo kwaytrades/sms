@@ -412,7 +412,10 @@ class AlertService:
             if result.modified_count > 0:
                 logger.info(f"✅ Alert {alert_id} deleted for user {user_id}")
                 return True
-                
             else:
                 logger.warning(f"⚠️ Alert {alert_id} not found or already deleted")
                 return False
+                
+        except Exception as e:
+            logger.exception(f"❌ Error deleting alert {alert_id}: {e}")
+            return False
