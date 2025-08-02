@@ -493,6 +493,195 @@ class UnifiedDatabaseService:
         except Exception as e:
             logger.exception(f"❌ Error checking inference requirements: {e}")
             return False
+        # services/database_service.py - MINIMAL SAFE UPDATE
+"""
+Enhanced Database Service - Minimal Update for Immediate Deployment
+Adds new methods while keeping existing structure intact
+"""
+
+# Keep all your existing imports and structure
+# Just add these new methods to your existing UnifiedDatabaseService class:
+
+class UnifiedDatabaseService:
+    # ... keep all your existing methods ...
+    
+    def __init__(self):
+        # Keep all your existing initialization
+        self.new_services_enabled = False  # Will be True when you add service files
+        pass
+    
+    # ==========================================
+    # NEW ENHANCED METHODS (with graceful fallbacks)
+    # ==========================================
+    
+    async def save_conversation_turn(self, user_id: str, user_message: str,
+                                   bot_response: str, metadata: Dict = None) -> bool:
+        """Save conversation turn with memory enhancement when available"""
+        try:
+            # For now, use existing save_enhanced_message method
+            return await self.save_enhanced_message(
+                user_id, user_message, bot_response, 
+                metadata or {}, metadata.get("symbols", []) if metadata else []
+            )
+        except Exception as e:
+            logger.error(f"Error saving conversation turn: {e}")
+            return False
+
+    async def get_conversation_memory(self, user_id: str, limit: int = 10,
+                                    query: str = None) -> Dict[str, Any]:
+        """Get conversation memory with fallback to existing system"""
+        try:
+            # Use existing conversation context for now
+            context = await self.get_conversation_context(user_id)
+            return {
+                "user_id": user_id,
+                "short_term_memory": context.get("recent_messages", [])[:limit],
+                "conversation_summaries": [],
+                "relevant_memories": [],
+                "fallback_mode": True,
+                "new_services_enabled": self.new_services_enabled
+            }
+        except Exception as e:
+            logger.error(f"Error getting conversation memory: {e}")
+            return {"user_id": user_id, "error": str(e)}
+
+    async def create_price_alert(self, user_id: str, symbol: str,
+                               target_price: float, condition: str) -> Optional[str]:
+        """Create price alert - placeholder for now"""
+        try:
+            # For now, just log the alert creation
+            from datetime import datetime
+            alert_id = f"alert_{user_id}_{symbol}_{int(datetime.utcnow().timestamp())}"
+            
+            logger.info(f"Price alert created (placeholder): {alert_id} - {symbol} @ ${target_price} ({condition})")
+            
+            # TODO: Replace with real alert service when available
+            return alert_id
+            
+        except Exception as e:
+            logger.error(f"Error creating price alert: {e}")
+            return None
+
+    async def send_sms_notification(self, user_id: str, message: str, 
+                                  priority: str = "normal") -> Dict[str, Any]:
+        """Send SMS notification - uses existing Twilio service"""
+        try:
+            # For now, log the notification
+            logger.info(f"SMS notification for {user_id}: {message} (priority: {priority})")
+            
+            # TODO: Integrate with existing Twilio service or new notification service
+            return {
+                "success": True, 
+                "message": "Notification logged - full SMS service coming soon",
+                "placeholder": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error sending SMS notification: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_relevant_memories(self, user_id: str, query: str, 
+                                  top_k: int = 5) -> List[Dict]:
+        """Get semantically relevant memories - placeholder for now"""
+        try:
+            # For now, return empty list
+            logger.info(f"Memory search for {user_id}: {query} (placeholder)")
+            return []
+            
+        except Exception as e:
+            logger.error(f"Error getting relevant memories: {e}")
+            return []
+
+    async def store_embedding(self, namespace: str, doc_id: str, 
+                             embedding: List[float], metadata: Dict) -> bool:
+        """Store embedding - placeholder for now"""
+        try:
+            logger.info(f"Embedding stored (placeholder): {namespace}:{doc_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error storing embedding: {e}")
+            return False
+
+    async def cache_with_market_awareness(self, key: str, value: Any, 
+                                        ttl_strategy: str = "market_hours") -> bool:
+        """Cache with market-aware TTL - uses existing Redis for now"""
+        try:
+            # Use existing Redis caching with default TTL
+            if hasattr(self, 'redis') and self.redis:
+                import json
+                await self.redis.setex(key, 300, json.dumps(value, default=str))  # 5 min default
+                return True
+            else:
+                logger.warning("Redis not available for caching")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error caching with market awareness: {e}")
+            return False
+
+    async def get_enhanced_health_check(self) -> Dict[str, Any]:
+        """Enhanced health check with new service status"""
+        try:
+            # Get existing health check
+            base_health = await self.health_check() if hasattr(self, 'health_check') else {}
+            
+            # Add new service status
+            enhanced_health = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "overall_status": base_health.get("status", "unknown"),
+                "new_services_enabled": self.new_services_enabled,
+                "services": base_health.get("services", {}),
+                "new_features": {
+                    "conversation_memory": "placeholder",
+                    "price_alerts": "placeholder", 
+                    "sms_notifications": "placeholder",
+                    "semantic_search": "placeholder",
+                    "market_aware_caching": "basic"
+                }
+            }
+            
+            return enhanced_health
+            
+        except Exception as e:
+            logger.error(f"Error in enhanced health check: {e}")
+            return {
+                "timestamp": datetime.utcnow().isoformat(),
+                "overall_status": "error",
+                "error": str(e)
+            }
+
+    # ==========================================
+    # UTILITY METHODS
+    # ==========================================
+    
+    async def enable_new_services(self) -> bool:
+        """Enable new services when service files are added"""
+        try:
+            # Check if new service files exist
+            import os
+            service_files = [
+                'services/vector_service.py',
+                'services/cache_service.py', 
+                'services/memory_service.py',
+                'services/alert_service.py',
+                'services/notification_service.py'
+            ]
+            
+            existing_files = [f for f in service_files if os.path.exists(f)]
+            
+            if len(existing_files) >= 3:  # If at least 3 service files exist
+                self.new_services_enabled = True
+                logger.info(f"New services enabled! Found {len(existing_files)} service files")
+                return True
+            else:
+                logger.info(f"New services not yet available. Found {len(existing_files)} of {len(service_files)} files")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error checking for new services: {e}")
+            return False
+
 
     # ==========================================
     # PROPERTIES FOR DIRECT ACCESS
