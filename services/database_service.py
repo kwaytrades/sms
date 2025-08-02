@@ -1,14 +1,15 @@
-# services/database_service.py - REFACTORED FACADE v5.0
+# services/database_service.py - ENHANCED v5.0 END-GOAL ARCHITECTURE
 """
-Unified Database Service - Modular Architecture
-Provides unified interface while maintaining clean separation of concerns
+Unified Database Service - Complete Architecture for SMS Trading Bot v5.0
+Provides unified interface with ALL required services for end-goal system
 """
 
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from loguru import logger
+import asyncio
 
-# Import specialized service modules
+# Import specialized service modules (EXISTING)
 from services.db.base_db_service import BaseDBService
 from services.db.users_service import UsersService
 from services.db.conversation_service import ConversationService
@@ -18,9 +19,19 @@ from services.db.migration_service import MigrationService
 from services.db.feature_flags_service import FeatureFlagsService
 from services.db.compliance_service import ComplianceService
 
-# Import inference services
+# Import enhanced inference services (EXISTING)
 from services.inference.profile_inference import ProfileInferenceService
 from services.inference.context_inference import ContextInferenceService
+
+# Import NEW required services for end-goal architecture
+from services.vector_service import VectorService
+from services.cache_service import CacheService
+from services.memory_service import MemoryService
+from services.portfolio_service import PortfolioService
+from services.alert_service import AlertService
+from services.trade_tracker_service import TradeTrackerService
+from services.research_service import ResearchService
+from services.notification_service import NotificationService
 
 # Legacy compatibility imports
 from models.user import UserProfile
@@ -29,13 +40,17 @@ from models.conversation import ChatMessage
 
 class UnifiedDatabaseService:
     """
-    Unified Database Service v5.0 - Modular Architecture
+    Unified Database Service v5.0 - Complete End-Goal Architecture
     
-    Provides a single interface for all database operations while maintaining
-    clean separation of concerns through specialized service modules.
+    Provides a single interface for ALL database operations with comprehensive
+    service coverage for the SMS Trading Bot v5.0 end-goal architecture.
     
     This facade orchestrates:
     - Core database services (users, conversations, trading, analytics)
+    - Vector/semantic services for intelligent memory
+    - Portfolio management and trade tracking
+    - Real-time alerts and notifications
+    - Advanced research coordination
     - Auto-inference services for progressive profiling
     - Migration utilities for seamless upgrades
     - Compliance tools for GDPR/privacy requirements
@@ -46,7 +61,7 @@ class UnifiedDatabaseService:
         # Core infrastructure
         self.base_service: Optional[BaseDBService] = None
         
-        # Specialized services
+        # EXISTING specialized services
         self.users: Optional[UsersService] = None
         self.conversations: Optional[ConversationService] = None
         self.trading: Optional[TradingService] = None
@@ -55,11 +70,21 @@ class UnifiedDatabaseService:
         self.feature_flags: Optional[FeatureFlagsService] = None
         self.compliance: Optional[ComplianceService] = None
         
-        # Auto-inference services
+        # EXISTING auto-inference services
         self.profile_inference: Optional[ProfileInferenceService] = None
         self.context_inference: Optional[ContextInferenceService] = None
         
-        logger.info("🚀 UnifiedDatabaseService v5.0 (Modular) initialized")
+        # NEW SERVICES for end-goal architecture
+        self.vector_service: Optional[VectorService] = None
+        self.cache_service: Optional[CacheService] = None
+        self.memory_service: Optional[MemoryService] = None
+        self.portfolio_service: Optional[PortfolioService] = None
+        self.alert_service: Optional[AlertService] = None
+        self.trade_tracker: Optional[TradeTrackerService] = None
+        self.research_service: Optional[ResearchService] = None
+        self.notification_service: Optional[NotificationService] = None
+        
+        logger.info("🚀 UnifiedDatabaseService v5.0 (Complete End-Goal) initialized")
 
     async def initialize(self):
         """Initialize all database services with dependency injection"""
@@ -68,7 +93,7 @@ class UnifiedDatabaseService:
             self.base_service = BaseDBService()
             await self.base_service.initialize()
             
-            # Initialize specialized services with shared base
+            # Initialize EXISTING specialized services with shared base
             self.users = UsersService(self.base_service)
             self.conversations = ConversationService(self.base_service)
             self.trading = TradingService(self.base_service)
@@ -77,14 +102,24 @@ class UnifiedDatabaseService:
             self.feature_flags = FeatureFlagsService(self.base_service)
             self.compliance = ComplianceService(self.base_service)
             
-            # Initialize inference services
+            # Initialize EXISTING inference services
             self.profile_inference = ProfileInferenceService(self.base_service)
             self.context_inference = ContextInferenceService(self.base_service)
+            
+            # Initialize NEW services for end-goal architecture
+            self.vector_service = VectorService(self.base_service)
+            self.cache_service = CacheService(self.base_service)
+            self.memory_service = MemoryService(self.base_service, self.vector_service)
+            self.portfolio_service = PortfolioService(self.base_service)
+            self.alert_service = AlertService(self.base_service)
+            self.trade_tracker = TradeTrackerService(self.base_service)
+            self.research_service = ResearchService(self.base_service, self.vector_service)
+            self.notification_service = NotificationService(self.base_service)
             
             # Initialize all services
             await self._initialize_all_services()
             
-            logger.info("🎉 UnifiedDatabaseService fully initialized with modular architecture")
+            logger.info("🎉 UnifiedDatabaseService fully initialized with complete end-goal architecture")
             
         except Exception as e:
             logger.exception(f"❌ Database initialization failed: {e}")
@@ -93,9 +128,14 @@ class UnifiedDatabaseService:
     async def _initialize_all_services(self):
         """Initialize all specialized services"""
         services = [
+            # Existing services
             self.users, self.conversations, self.trading, self.analytics,
             self.migrations, self.feature_flags, self.compliance,
-            self.profile_inference, self.context_inference
+            self.profile_inference, self.context_inference,
+            # New services
+            self.vector_service, self.cache_service, self.memory_service,
+            self.portfolio_service, self.alert_service, self.trade_tracker,
+            self.research_service, self.notification_service
         ]
         
         for service in services:
@@ -121,17 +161,36 @@ class UnifiedDatabaseService:
             
             # Service-specific health checks
             service_healths = await asyncio.gather(
+                # Existing services
                 self.users.health_check(),
                 self.conversations.health_check(),
                 self.trading.health_check(),
                 self.analytics.health_check(),
+                # New services
+                self.vector_service.health_check(),
+                self.cache_service.health_check(),
+                self.memory_service.health_check(),
+                self.portfolio_service.health_check(),
+                self.alert_service.health_check(),
+                self.trade_tracker.health_check(),
+                self.research_service.health_check(),
+                self.notification_service.health_check(),
                 return_exceptions=True
             )
             
-            health["services"]["users"] = service_healths[0] if not isinstance(service_healths[0], Exception) else {"status": "error", "error": str(service_healths[0])}
-            health["services"]["conversations"] = service_healths[1] if not isinstance(service_healths[1], Exception) else {"status": "error", "error": str(service_healths[1])}
-            health["services"]["trading"] = service_healths[2] if not isinstance(service_healths[2], Exception) else {"status": "error", "error": str(service_healths[2])}
-            health["services"]["analytics"] = service_healths[3] if not isinstance(service_healths[3], Exception) else {"status": "error", "error": str(service_healths[3])}
+            service_names = [
+                "users", "conversations", "trading", "analytics",
+                "vector", "cache", "memory", "portfolio", 
+                "alerts", "trade_tracker", "research", "notifications"
+            ]
+            
+            for i, service_name in enumerate(service_names):
+                if i < len(service_healths):
+                    result = service_healths[i]
+                    health["services"][service_name] = result if not isinstance(result, Exception) else {
+                        "status": "error", 
+                        "error": str(result)
+                    }
             
             # Determine overall health
             all_healthy = all(
@@ -150,7 +209,7 @@ class UnifiedDatabaseService:
             return health
 
     # ==========================================
-    # USER OPERATIONS (Delegate to UsersService)
+    # USER OPERATIONS (Enhanced with inference)
     # ==========================================
 
     async def get_user_by_phone(self, phone_number: str) -> Optional[UserProfile]:
@@ -190,7 +249,208 @@ class UnifiedDatabaseService:
         return await self.users.update_activity(phone_number)
 
     # ==========================================
-    # CONVERSATION OPERATIONS
+    # MEMORY OPERATIONS (NEW - 3-Layer Memory)
+    # ==========================================
+
+    async def get_conversation_memory(self, user_id: str, limit: int = 10) -> Dict[str, Any]:
+        """Get complete conversation memory (STM + Summaries + LTM)"""
+        return await self.memory_service.get_conversation_memory(user_id, limit)
+
+    async def save_conversation_turn(self, user_id: str, user_message: str, 
+                                   bot_response: str, metadata: Dict = None) -> bool:
+        """Save conversation turn to memory system"""
+        return await self.memory_service.save_conversation_turn(
+            user_id, user_message, bot_response, metadata
+        )
+
+    async def get_relevant_memories(self, user_id: str, query: str, top_k: int = 5) -> List[Dict]:
+        """Get semantically relevant memories via vector search"""
+        return await self.memory_service.get_relevant_memories(user_id, query, top_k)
+
+    async def summarize_conversation_session(self, user_id: str) -> Dict[str, Any]:
+        """Trigger conversation summarization"""
+        return await self.memory_service.summarize_session(user_id)
+
+    # ==========================================
+    # VECTOR OPERATIONS (NEW - Semantic Search)
+    # ==========================================
+
+    async def store_embedding(self, namespace: str, doc_id: str, 
+                             embedding: List[float], metadata: Dict) -> bool:
+        """Store embedding in vector database"""
+        return await self.vector_service.upsert_vector(namespace, doc_id, embedding, metadata)
+
+    async def search_similar(self, namespace: str, query_embedding: List[float], 
+                           top_k: int = 5, filter_dict: Dict = None) -> List[Dict]:
+        """Search for similar embeddings"""
+        return await self.vector_service.query_similar(
+            namespace, query_embedding, top_k, filter_dict
+        )
+
+    async def delete_embedding(self, namespace: str, doc_id: str) -> bool:
+        """Delete embedding from vector database"""
+        return await self.vector_service.delete_vector(namespace, doc_id)
+
+    # ==========================================
+    # PORTFOLIO OPERATIONS (NEW - Plaid Integration)
+    # ==========================================
+
+    async def link_portfolio_account(self, user_id: str, plaid_data: Dict) -> str:
+        """Link user's brokerage account via Plaid"""
+        return await self.portfolio_service.link_account(user_id, plaid_data)
+
+    async def get_portfolio_positions(self, user_id: str) -> List[Dict]:
+        """Get current portfolio positions"""
+        return await self.portfolio_service.get_positions(user_id)
+
+    async def sync_portfolio_data(self, user_id: str) -> Dict[str, Any]:
+        """Sync portfolio data from Plaid"""
+        return await self.portfolio_service.sync_data(user_id)
+
+    async def calculate_portfolio_performance(self, user_id: str, days: int = 30) -> Dict[str, Any]:
+        """Calculate portfolio performance metrics"""
+        return await self.portfolio_service.calculate_performance(user_id, days)
+
+    async def get_portfolio_analysis(self, user_id: str) -> Dict[str, Any]:
+        """Get comprehensive portfolio analysis"""
+        return await self.portfolio_service.get_analysis(user_id)
+
+    # ==========================================
+    # ALERT OPERATIONS (NEW - Real-time Alerts)
+    # ==========================================
+
+    async def create_price_alert(self, user_id: str, symbol: str, 
+                                target_price: float, condition: str) -> str:
+        """Create price alert"""
+        return await self.alert_service.create_price_alert(
+            user_id, symbol, target_price, condition
+        )
+
+    async def create_technical_alert(self, user_id: str, symbol: str, 
+                                   indicator: str, conditions: Dict) -> str:
+        """Create technical indicator alert"""
+        return await self.alert_service.create_technical_alert(
+            user_id, symbol, indicator, conditions
+        )
+
+    async def get_user_alerts(self, user_id: str, active_only: bool = True) -> List[Dict]:
+        """Get user's alerts"""
+        return await self.alert_service.get_user_alerts(user_id, active_only)
+
+    async def trigger_alert(self, alert_id: str, trigger_data: Dict) -> Dict[str, Any]:
+        """Trigger an alert and send notification"""
+        return await self.alert_service.trigger_alert(alert_id, trigger_data)
+
+    async def update_alert_status(self, alert_id: str, status: str, 
+                                 metadata: Dict = None) -> bool:
+        """Update alert status"""
+        return await self.alert_service.update_status(alert_id, status, metadata)
+
+    # ==========================================
+    # TRADE TRACKING (NEW - Performance Analysis)
+    # ==========================================
+
+    async def record_trade_intent(self, user_id: str, symbol: str, 
+                                 intent_data: Dict) -> str:
+        """Record user's trade intent from conversation"""
+        return await self.trade_tracker.record_intent(user_id, symbol, intent_data)
+
+    async def record_trade_execution(self, user_id: str, trade_data: Dict) -> str:
+        """Record actual trade execution"""
+        return await self.trade_tracker.record_execution(user_id, trade_data)
+
+    async def calculate_trade_performance(self, user_id: str, 
+                                        symbol: str = None) -> Dict[str, Any]:
+        """Calculate trade performance metrics"""
+        return await self.trade_tracker.calculate_performance(user_id, symbol)
+
+    async def get_trade_attribution(self, user_id: str, days: int = 30) -> List[Dict]:
+        """Get trades attributed to bot recommendations"""
+        return await self.trade_tracker.get_attribution(user_id, days)
+
+    async def analyze_trade_patterns(self, user_id: str) -> Dict[str, Any]:
+        """Analyze user's trading patterns"""
+        return await self.trade_tracker.analyze_patterns(user_id)
+
+    # ==========================================
+    # RESEARCH OPERATIONS (NEW - Multi-Engine Research)
+    # ==========================================
+
+    async def save_research_report(self, user_id: str, symbol: str, 
+                                  report_data: Dict) -> str:
+        """Save research report"""
+        return await self.research_service.save_report(user_id, symbol, report_data)
+
+    async def get_research_history(self, user_id: str, symbol: str = None, 
+                                  limit: int = 10) -> List[Dict]:
+        """Get user's research history"""
+        return await self.research_service.get_history(user_id, symbol, limit)
+
+    async def search_research_reports(self, user_id: str, query: str, 
+                                    top_k: int = 5) -> List[Dict]:
+        """Search research reports semantically"""
+        return await self.research_service.search_reports(user_id, query, top_k)
+
+    async def generate_research_digest(self, user_id: str, symbols: List[str]) -> Dict[str, Any]:
+        """Generate personalized research digest"""
+        return await self.research_service.generate_digest(user_id, symbols)
+
+    # ==========================================
+    # NOTIFICATION OPERATIONS (NEW - Multi-Channel)
+    # ==========================================
+
+    async def send_sms_notification(self, user_id: str, message: str, 
+                                   priority: str = "normal") -> Dict[str, Any]:
+        """Send SMS notification"""
+        return await self.notification_service.send_sms(user_id, message, priority)
+
+    async def send_email_notification(self, user_id: str, subject: str, 
+                                    content: str, template: str = None) -> Dict[str, Any]:
+        """Send email notification"""
+        return await self.notification_service.send_email(
+            user_id, subject, content, template
+        )
+
+    async def schedule_notification(self, user_id: str, notification_data: Dict, 
+                                  send_at: datetime) -> str:
+        """Schedule future notification"""
+        return await self.notification_service.schedule(
+            user_id, notification_data, send_at
+        )
+
+    async def get_notification_preferences(self, user_id: str) -> Dict[str, Any]:
+        """Get user's notification preferences"""
+        return await self.notification_service.get_preferences(user_id)
+
+    async def update_notification_preferences(self, user_id: str, 
+                                            preferences: Dict) -> bool:
+        """Update notification preferences"""
+        return await self.notification_service.update_preferences(user_id, preferences)
+
+    # ==========================================
+    # INTELLIGENT CACHE OPERATIONS (NEW)
+    # ==========================================
+
+    async def cache_with_market_awareness(self, key: str, value: Any, 
+                                        ttl_strategy: str = "market_hours") -> bool:
+        """Cache with market-aware TTL"""
+        return await self.cache_service.set_market_aware(key, value, ttl_strategy)
+
+    async def get_cached_with_fallback(self, key: str, fallback_func, 
+                                     cache_ttl: int = 300) -> Any:
+        """Get cached value with fallback function"""
+        return await self.cache_service.get_with_fallback(key, fallback_func, cache_ttl)
+
+    async def invalidate_symbol_cache(self, symbol: str) -> bool:
+        """Invalidate all cache entries for a symbol"""
+        return await self.cache_service.invalidate_symbol(symbol)
+
+    async def burst_cache_invalidation(self, symbols: List[str]) -> Dict[str, bool]:
+        """Invalidate cache for multiple symbols (volatility spike)"""
+        return await self.cache_service.burst_invalidate(symbols)
+
+    # ==========================================
+    # EXISTING METHODS (Maintained for backward compatibility)
     # ==========================================
 
     async def get_conversation_context(self, phone_number: str) -> Dict[str, Any]:
@@ -216,6 +476,14 @@ class UnifiedDatabaseService:
             await self.context_inference.update_from_message(
                 phone_number, user_message, bot_response, intent_data, symbols
             )
+            
+            # ALSO save to new memory system
+            user = await self.get_user_by_phone(phone_number)
+            if user:
+                await self.save_conversation_turn(
+                    user.id, user_message, bot_response, 
+                    {"intent": intent_data, "symbols": symbols, "context": context_used}
+                )
         
         return success
 
@@ -240,7 +508,7 @@ class UnifiedDatabaseService:
         return await self.users.get_usage_summary(user_id)
 
     # ==========================================
-    # GOAL MANAGEMENT
+    # GOAL MANAGEMENT (Enhanced)
     # ==========================================
 
     async def save_financial_goal(self, user_id: str, goal_data: Dict) -> str:
@@ -255,36 +523,12 @@ class UnifiedDatabaseService:
         """Update goal progress"""
         return await self.trading.update_goal_progress(user_id, goal_id, new_amount)
 
-    # ==========================================
-    # ALERT SYSTEM
-    # ==========================================
-
-    async def save_user_alert(self, user_id: str, alert_data: Dict) -> str:
-        """Save user alert"""
-        return await self.trading.save_alert(user_id, alert_data)
-
-    async def get_active_alerts(self, user_id: str = None) -> List[Dict]:
-        """Get active alerts"""
-        return await self.trading.get_active_alerts(user_id)
-
-    async def record_alert_trigger(self, alert_id: str, trigger_data: Dict) -> bool:
-        """Record alert trigger"""
-        return await self.trading.record_alert_trigger(alert_id, trigger_data)
+    async def check_goal_milestones(self, user_id: str) -> List[Dict]:
+        """Check if any goals have reached milestones"""
+        return await self.trading.check_milestones(user_id)
 
     # ==========================================
-    # TRADE TRACKING
-    # ==========================================
-
-    async def save_trade_marker(self, user_id: str, marker_data: Dict) -> str:
-        """Save trade marker"""
-        return await self.trading.save_trade_marker(user_id, marker_data)
-
-    async def get_trade_performance(self, user_id: str, symbol: str = None) -> List[Dict]:
-        """Get trade performance"""
-        return await self.trading.get_trade_performance(user_id, symbol)
-
-    # ==========================================
-    # ANALYTICS & METRICS
+    # ANALYTICS & METRICS (Enhanced)
     # ==========================================
 
     async def get_user_analytics(self, user_id: str, days: int = 30) -> Dict[str, Any]:
@@ -295,17 +539,9 @@ class UnifiedDatabaseService:
         """Get system metrics"""
         return await self.analytics.get_system_metrics()
 
-    # ==========================================
-    # ONBOARDING SUPPORT
-    # ==========================================
-
-    async def save_onboarding_progress(self, user_id: str, progress_data: Dict) -> bool:
-        """Save onboarding progress"""
-        return await self.users.save_onboarding_progress(user_id, progress_data)
-
-    async def get_onboarding_progress(self, user_id: str) -> Optional[Dict]:
-        """Get onboarding progress"""
-        return await self.users.get_onboarding_progress(user_id)
+    async def get_personalization_metrics(self, user_id: str) -> Dict[str, Any]:
+        """Get personalization effectiveness metrics"""
+        return await self.analytics.get_personalization_metrics(user_id)
 
     # ==========================================
     # FEATURE FLAGS
@@ -320,6 +556,46 @@ class UnifiedDatabaseService:
         return await self.feature_flags.set_flag(flag_name, enabled, user_id)
 
     # ==========================================
+    # GDPR COMPLIANCE (Enhanced)
+    # ==========================================
+
+    async def export_user_data(self, user_id: str) -> Dict[str, Any]:
+        """Export all user data for GDPR compliance"""
+        data = await self.compliance.export_user_data(user_id)
+        
+        # Include new service data
+        data["memories"] = await self.memory_service.export_user_memories(user_id)
+        data["portfolio"] = await self.portfolio_service.export_user_data(user_id)
+        data["alerts"] = await self.alert_service.export_user_data(user_id)
+        data["trades"] = await self.trade_tracker.export_user_data(user_id)
+        data["research"] = await self.research_service.export_user_data(user_id)
+        
+        return data
+
+    async def delete_user_data(self, user_id: str) -> Dict[str, Any]:
+        """Delete all user data for GDPR compliance"""
+        results = await self.compliance.delete_user_data(user_id)
+        
+        # Delete from new services
+        vector_result = await self.vector_service.delete_user_data(user_id)
+        memory_result = await self.memory_service.delete_user_data(user_id)
+        portfolio_result = await self.portfolio_service.delete_user_data(user_id)
+        alerts_result = await self.alert_service.delete_user_data(user_id)
+        trades_result = await self.trade_tracker.delete_user_data(user_id)
+        research_result = await self.research_service.delete_user_data(user_id)
+        
+        results.update({
+            "vector_service": vector_result,
+            "memory_service": memory_result,
+            "portfolio_service": portfolio_result,
+            "alert_service": alerts_result,
+            "trade_tracker": trades_result,
+            "research_service": research_result
+        })
+        
+        return results
+
+    # ==========================================
     # STOCK DATA OPERATIONS (KeyBuilder Compatible)
     # ==========================================
 
@@ -332,56 +608,12 @@ class UnifiedDatabaseService:
         return await self.migrations.get_stock_fundamental(symbol)
 
     async def set_stock_data(self, symbol: str, data_type: str, data: Dict, ttl: int = 3600) -> bool:
-        """Set stock data"""
+        """Set stock data with intelligent caching"""
+        # Use market-aware caching for stock data
+        cache_key = f"stock:{symbol}:{data_type}"
+        await self.cache_with_market_awareness(cache_key, data, "stock_data")
+        
         return await self.migrations.set_stock_data(symbol, data_type, data, ttl)
-
-    # ==========================================
-    # PERSONALITY ENGINE COMPATIBILITY
-    # ==========================================
-
-    async def get_personality_profile(self, user_id: str) -> Optional[Dict]:
-        """Get personality profile"""
-        return await self.users.get_personality_profile(user_id)
-
-    async def save_personality_profile(self, user_id: str, profile: Dict) -> bool:
-        """Save personality profile"""
-        return await self.users.save_personality_profile(user_id, profile)
-
-    async def cache_analysis_result(self, user_id: str, analysis_data: Dict, ttl: int = 3600) -> bool:
-        """Cache analysis result"""
-        return await self.users.cache_analysis_result(user_id, analysis_data, ttl)
-
-    async def get_cached_analysis(self, user_id: str) -> Optional[Dict]:
-        """Get cached analysis"""
-        return await self.users.get_cached_analysis(user_id)
-
-    # ==========================================
-    # MIGRATION & MAINTENANCE
-    # ==========================================
-
-    async def migrate_all_users(self, limit: int = None) -> Dict:
-        """Migrate all users"""
-        return await self.migrations.migrate_all_users(limit)
-
-    async def get_migration_stats(self) -> Dict:
-        """Get migration statistics"""
-        return await self.migrations.get_stats()
-
-    async def cleanup_old_keys(self, dry_run: bool = True) -> Dict:
-        """Clean up old Redis keys"""
-        return await self.migrations.cleanup_old_keys(dry_run)
-
-    # ==========================================
-    # GDPR COMPLIANCE
-    # ==========================================
-
-    async def export_user_data(self, user_id: str) -> Dict[str, Any]:
-        """Export all user data for GDPR compliance"""
-        return await self.compliance.export_user_data(user_id)
-
-    async def delete_user_data(self, user_id: str) -> Dict[str, Any]:
-        """Delete all user data for GDPR compliance"""
-        return await self.compliance.delete_user_data(user_id)
 
     # ==========================================
     # RATE LIMITING
@@ -394,26 +626,6 @@ class UnifiedDatabaseService:
     async def reset_rate_limit(self, identifier: str, window_seconds: int) -> bool:
         """Reset rate limit"""
         return await self.base_service.reset_rate_limit(identifier, window_seconds)
-
-    # ==========================================
-    # LEGACY COMPATIBILITY
-    # ==========================================
-
-    async def save_message(self, message: ChatMessage) -> str:
-        """Legacy compatibility: Save chat message"""
-        return await self.conversations.save_legacy_message(message)
-
-    async def get_conversation_history(self, user_id: str, limit: int = 10) -> List[Dict]:
-        """Legacy compatibility: Get conversation history"""
-        return await self.conversations.get_legacy_history(user_id, limit)
-
-    async def save_trading_data(self, user_id: str, symbol: str, data: Dict) -> str:
-        """Legacy compatibility: Save trading data"""
-        return await self.trading.save_legacy_trading_data(user_id, symbol, data)
-
-    async def get_trading_data(self, user_id: str, symbol: str = None, limit: int = 10) -> List[Dict]:
-        """Legacy compatibility: Get trading data"""
-        return await self.trading.get_legacy_trading_data(user_id, symbol, limit)
 
     # ==========================================
     # HELPER METHODS
@@ -477,176 +689,141 @@ class UnifiedDatabaseService:
 
 
 # ==========================================
-# SPECIALIZED SERVICE MODULES (Interfaces)
+# NEW SERVICE STUBS (Ready for Implementation)
 # ==========================================
 
-# services/db/base_db_service.py
 """
-Base Database Service - Shared Infrastructure
-Handles MongoDB, Redis connections, KeyBuilder interface, and common utilities
+The following service stubs define the interfaces for the NEW services
+required for the end-goal architecture. Each can be implemented incrementally
+while maintaining the unified interface above.
 """
 
-import asyncio
-from typing import Optional, Dict, Any, Tuple
-from datetime import datetime, timezone
-import redis.asyncio as aioredis
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from loguru import logger
-from config import settings
-
-
-class BaseDBService:
-    """Base database service providing shared infrastructure"""
+# Vector Service Stub
+class VectorServiceStub:
+    """Placeholder for Vector Service - implement with Pinecone/Qdrant"""
+    def __init__(self, base_service):
+        self.base_service = base_service
     
-    def __init__(self):
-        self.mongo_client: Optional[AsyncIOMotorClient] = None
-        self.db: Optional[AsyncIOMotorDatabase] = None
-        self.redis: Optional[aioredis.Redis] = None
-        self.key_builder: Optional['KeyBuilderInterface'] = None
+    async def initialize(self): pass
+    async def health_check(self): return {"status": "healthy"}
+    async def upsert_vector(self, namespace, doc_id, embedding, metadata): return True
+    async def query_similar(self, namespace, query_embedding, top_k, filter_dict): return []
+    async def delete_vector(self, namespace, doc_id): return True
+    async def delete_user_data(self, user_id): return {"deleted": True}
 
-    async def initialize(self):
-        """Initialize MongoDB and Redis connections"""
-        try:
-            # MongoDB connection
-            self.mongo_client = AsyncIOMotorClient(
-                settings.mongodb_url,
-                maxPoolSize=50,
-                minPoolSize=5,
-                serverSelectionTimeoutMS=5000
-            )
-            self.db = self.mongo_client.ai
-            await self.mongo_client.admin.command("ping")
-            
-            # Redis connection
-            self.redis = await aioredis.from_url(
-                settings.redis_url,
-                decode_responses=True,
-                max_connections=20
-            )
-            await self.redis.ping()
-            
-            # KeyBuilder interface
-            self.key_builder = KeyBuilderInterface(self.redis, self.db)
-            
-            logger.info("✅ Base database infrastructure initialized")
-            
-        except Exception as e:
-            logger.exception(f"❌ Base database initialization failed: {e}")
-            raise
-
-    async def health_check(self) -> Dict[str, Any]:
-        """Check health of base infrastructure"""
-        health = {"status": "healthy", "components": {}}
-        
-        try:
-            await self.mongo_client.admin.command("ping")
-            health["components"]["mongodb"] = {"status": "healthy"}
-        except Exception as e:
-            health["components"]["mongodb"] = {"status": "unhealthy", "error": str(e)}
-            health["status"] = "degraded"
-        
-        try:
-            await self.redis.ping()
-            health["components"]["redis"] = {"status": "healthy"}
-        except Exception as e:
-            health["components"]["redis"] = {"status": "unhealthy", "error": str(e)}
-            health["status"] = "degraded"
-        
-        return health
-
-    async def check_rate_limit(self, identifier: str, limit: int, window_seconds: int) -> Tuple[bool, int]:
-        """Rate limiting implementation"""
-        try:
-            cache_key = f"rate_limit:{identifier}:{window_seconds}"
-            current_data = await self.key_builder.get(cache_key)
-            
-            if not current_data:
-                await self.key_builder.set(cache_key, {"count": 1}, ttl=window_seconds)
-                return True, 1
-            
-            current_count = current_data.get("count", 0)
-            if current_count >= limit:
-                return False, current_count
-            
-            new_count = current_count + 1
-            await self.key_builder.set(cache_key, {"count": new_count}, ttl=window_seconds)
-            return True, new_count
-            
-        except Exception as e:
-            logger.exception(f"❌ Rate limit check failed: {e}")
-            return True, 0
-
-    async def reset_rate_limit(self, identifier: str, window_seconds: int) -> bool:
-        """Reset rate limit"""
-        try:
-            cache_key = f"rate_limit:{identifier}:{window_seconds}"
-            return await self.key_builder.delete(cache_key)
-        except Exception as e:
-            logger.exception(f"❌ Rate limit reset failed: {e}")
-            return False
-
-    async def close(self):
-        """Close all connections"""
-        try:
-            if self.mongo_client:
-                self.mongo_client.close()
-            if self.redis:
-                await self.redis.close()
-            logger.info("✅ Base database connections closed")
-        except Exception as e:
-            logger.exception(f"❌ Error closing connections: {e}")
-
-
-class KeyBuilderInterface:
-    """KeyBuilder compatibility interface"""
+# Cache Service Stub  
+class CacheServiceStub:
+    """Placeholder for Enhanced Cache Service"""
+    def __init__(self, base_service):
+        self.base_service = base_service
     
-    def __init__(self, redis_client, mongo_db):
-        self.redis = redis_client
-        self.db = mongo_db
+    async def initialize(self): pass
+    async def health_check(self): return {"status": "healthy"}
+    async def set_market_aware(self, key, value, ttl_strategy): return True
+    async def get_with_fallback(self, key, fallback_func, cache_ttl): return None
+    async def invalidate_symbol(self, symbol): return True
+    async def burst_invalidate(self, symbols): return {s: True for s in symbols}
+
+# Memory Service Stub
+class MemoryServiceStub:
+    """Placeholder for 3-Layer Memory Service"""
+    def __init__(self, base_service, vector_service):
+        self.base_service = base_service
+        self.vector_service = vector_service
     
-    async def get(self, key: str) -> Optional[Dict]:
-        """Get data from Redis with JSON deserialization"""
-        try:
-            import json
-            data = await self.redis.get(key)
-            if data:
-                if isinstance(data, str):
-                    return json.loads(data)
-                return data
-            return None
-        except Exception as e:
-            logger.error(f"❌ KeyBuilder get error for {key}: {e}")
-            return None
+    async def initialize(self): pass
+    async def health_check(self): return {"status": "healthy"}
+    async def get_conversation_memory(self, user_id, limit): return {}
+    async def save_conversation_turn(self, user_id, user_msg, bot_resp, metadata): return True
+    async def get_relevant_memories(self, user_id, query, top_k): return []
+    async def summarize_session(self, user_id): return {}
+    async def export_user_memories(self, user_id): return {}
+    async def delete_user_data(self, user_id): return {"deleted": True}
+
+# Portfolio Service Stub
+class PortfolioServiceStub:
+    """Placeholder for Portfolio/Plaid Service"""
+    def __init__(self, base_service):
+        self.base_service = base_service
     
-    async def set(self, key: str, value: Dict, ttl: int = 86400) -> bool:
-        """Set data in Redis with JSON serialization"""
-        try:
-            import json
-            if isinstance(value, dict):
-                serialized_value = json.dumps(value, default=str)
-            else:
-                serialized_value = str(value)
-            
-            await self.redis.setex(key, ttl, serialized_value)
-            return True
-        except Exception as e:
-            logger.error(f"❌ KeyBuilder set error for {key}: {e}")
-            return False
+    async def initialize(self): pass
+    async def health_check(self): return {"status": "healthy"}
+    async def link_account(self, user_id, plaid_data): return "portfolio_id"
+    async def get_positions(self, user_id): return []
+    async def sync_data(self, user_id): return {}
+    async def calculate_performance(self, user_id, days): return {}
+    async def get_analysis(self, user_id): return {}
+    async def export_user_data(self, user_id): return {}
+    async def delete_user_data(self, user_id): return {"deleted": True}
+
+# Alert Service Stub
+class AlertServiceStub:
+    """Placeholder for Real-time Alert Service"""
+    def __init__(self, base_service):
+        self.base_service = base_service
     
-    async def delete(self, key: str) -> bool:
-        """Delete key from Redis"""
-        try:
-            result = await self.redis.delete(key)
-            return result > 0
-        except Exception as e:
-            logger.error(f"❌ KeyBuilder delete error for {key}: {e}")
-            return False
+    async def initialize(self): pass
+    async def health_check(self): return {"status": "healthy"}
+    async def create_price_alert(self, user_id, symbol, target_price, condition): return "alert_id"
+    async def create_technical_alert(self, user_id, symbol, indicator, conditions): return "alert_id"
+    async def get_user_alerts(self, user_id, active_only): return []
+    async def trigger_alert(self, alert_id, trigger_data): return {}
+    async def update_status(self, alert_id, status, metadata): return True
+    async def export_user_data(self, user_id): return {}
+    async def delete_user_data(self, user_id): return {"deleted": True}
+
+# Trade Tracker Service Stub
+class TradeTrackerServiceStub:
+    """Placeholder for Trade Performance Tracking"""
+    def __init__(self, base_service):
+        self.base_service = base_service
     
-    async def exists(self, key: str) -> bool:
-        """Check if key exists in Redis"""
-        try:
-            result = await self.redis.exists(key)
-            return result > 0
-        except Exception as e:
-            logger.error(f"❌ KeyBuilder exists error for {key}: {e}")
-            return False
+    async def initialize(self): pass
+    async def health_check(self): return {"status": "healthy"}
+    async def record_intent(self, user_id, symbol, intent_data): return "intent_id"
+    async def record_execution(self, user_id, trade_data): return "trade_id"
+    async def calculate_performance(self, user_id, symbol): return {}
+    async def get_attribution(self, user_id, days): return []
+    async def analyze_patterns(self, user_id): return {}
+    async def export_user_data(self, user_id): return {}
+    async def delete_user_data(self, user_id): return {"deleted": True}
+
+# Research Service Stub
+class ResearchServiceStub:
+    """Placeholder for Advanced Research Service"""
+    def __init__(self, base_service, vector_service):
+        self.base_service = base_service
+        self.vector_service = vector_service
+    
+    async def initialize(self): pass
+    async def health_check(self): return {"status": "healthy"}
+    async def save_report(self, user_id, symbol, report_data): return "report_id"
+    async def get_history(self, user_id, symbol, limit): return []
+    async def search_reports(self, user_id, query, top_k): return []
+    async def generate_digest(self, user_id, symbols): return {}
+    async def export_user_data(self, user_id): return {}
+    async def delete_user_data(self, user_id): return {"deleted": True}
+
+# Notification Service Stub
+class NotificationServiceStub:
+    """Placeholder for Multi-Channel Notification Service"""
+    def __init__(self, base_service):
+        self.base_service = base_service
+    
+    async def initialize(self): pass
+    async def health_check(self): return {"status": "healthy"}
+    async def send_sms(self, user_id, message, priority): return {}
+    async def send_email(self, user_id, subject, content, template): return {}
+    async def schedule(self, user_id, notification_data, send_at): return "notification_id"
+    async def get_preferences(self, user_id): return {}
+    async def update_preferences(self, user_id, preferences): return True
+
+# Use stubs until real services are implemented
+VectorService = VectorServiceStub
+CacheService = CacheServiceStub  
+MemoryService = MemoryServiceStub
+PortfolioService = PortfolioServiceStub
+AlertService = AlertServiceStub
+TradeTrackerService = TradeTrackerServiceStub
+ResearchService = ResearchServiceStub
+NotificationService = NotificationServiceStub
