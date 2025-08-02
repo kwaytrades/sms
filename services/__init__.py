@@ -12,7 +12,7 @@ except ImportError as e:
     print(f"⚠️ Enhanced database service not available: {e}")
     try:
         # Fallback to existing database service
-        from .database import DatabaseService
+        from .database_service import DatabaseService
         print("⚠️ Using legacy DatabaseService")
     except ImportError as e2:
         print(f"❌ Database service import failed: {e2}")
