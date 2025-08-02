@@ -1,4 +1,7 @@
-v4_unified_complete.py
+"""
+Enhanced Personality Engine v3 with Gemini Integration
+"""
+
 import json
 import asyncio
 import re
