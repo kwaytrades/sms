@@ -6,7 +6,7 @@ from loguru import logger
 from enum import Enum
 
 from config import settings
-from services.database import DatabaseService
+from services.database_service import DatabaseService
 
 class SubscriptionStatus(Enum):
     ACTIVE = "active"
