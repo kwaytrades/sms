@@ -11,14 +11,15 @@ import asyncio
 
 # Import NEW services - Using your actual file structure
 try:
-    from services.vector_service import VectorService
-    from services.cache_service import CacheService
-    from services.memory_service import MemoryService
-    from services.portfolio_service import PortfolioService
-    from services.alert_service import AlertService
-    from services.trade_tracker_service import TradeTrackerService
-    from services.research_service import ResearchService
-    from services.notification_service import NotificationService
+    from services.memory.vector_service import VectorService
+    from services.memory.cache_service import CacheService
+    from services.memory.memory_service import MemoryService
+    from services.memory.portfolio_service import PortfolioService
+    from services.memory.alert_service import AlertService
+    from services.memory.trade_tracker_service import TradeTrackerService
+    from services.memory.research_service import ResearchService
+    from services.memory.notification_service import NotificationService
+
     NEW_SERVICES_AVAILABLE = True
     logger.info("✅ New v5.0 services imported successfully")
 except ImportError as e:
