@@ -47,14 +47,21 @@ class SocialTradingAgent:
     async def parse_social_intent(self, content: str, username: str, platform: str,
                                 interaction_type: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        SEMANTIC INTENT PARSING - Fully LLM-powered with validation loop
+        COMPLETE SEMANTIC INTEGRATION - LLM results feed directly into user profile
         """
         try:
+            # Get user for profile integration
+            from ..models.social_user import PlatformType
+            user = await self.memory_service.get_or_create_user(username, PlatformType(platform))
+            
             # Get FULL user context with actual message history
             user_context = await self.memory_service.get_conversation_context(f"{platform}_{username}")
             
-            # SEMANTIC EXTRACTION: Get symbols and topics via LLM FIRST
-            symbols, topics = await self._extract_symbols_and_topics_semantic(content)
+            # LLM SEMANTIC EXTRACTION with user history context
+            symbols, topics = await self._extract_symbols_and_topics_with_history(content, user.interaction_history)
+            
+            # LLM ENGAGEMENT STYLE CLASSIFICATION (replaces keyword analysis)
+            engagement_style = await self._classify_engagement_style_llm(content, user.interaction_history)
             
             # Build enhanced Gemini prompt with ACTUAL user messages
             prompt = self._build_enhanced_intent_prompt(
@@ -63,14 +70,12 @@ class SocialTradingAgent:
             
             # Call Gemini for intent classification
             response = await self._call_gemini_intent(prompt)
-            
-            # Parse and validate response
             intent_data = self._parse_gemini_response(response)
             
-            # LLM VALIDATION LOOP - Self-correction mechanism
+            # LLM VALIDATION LOOP
             validated_intent = await self._validate_intent_classification(content, intent_data)
             
-            # Build final intent object with semantic extractions
+            # Build final intent object with ALL semantic extractions
             final_intent = {
                 "intent": validated_intent.get("primary_intent", "general"),
                 "sub_intent": validated_intent.get("sub_intent", ""),
@@ -85,82 +90,326 @@ class SocialTradingAgent:
                 "competitive_context": validated_intent.get("competitive_context", False),
                 "conversion_potential": validated_intent.get("conversion_potential", "low"),
                 "confidence": validated_intent.get("confidence", 0.8),
-                "engagement_style_detected": validated_intent.get("engagement_style_detected", "unknown"),
-                "user_journey_stage": validated_intent.get("user_journey_stage", "discovery")
+                "engagement_style_detected": engagement_style,  # LLM-classified
+                "user_journey_stage": validated_intent.get("user_journey_stage", "discovery"),
+                "timestamp": datetime.utcnow().isoformat(),
+                "content": content  # Store for analysis
             }
             
-            # STORE CLASSIFICATION IN USER PROFILE for longitudinal analysis
-            await self._store_intent_classification_in_user_profile(
-                username, platform, final_intent, content
-            )
+            # DIRECT INTEGRATION: Feed LLM results into user profile
+            await self._integrate_llm_results_into_user_profile(user, final_intent, symbols, topics, engagement_style)
             
             return final_intent
             
         except Exception as e:
             logger.error(f"Failed to parse social intent: {e}")
             return self._get_fallback_intent(content, interaction_type)
-    
-    async def _extract_symbols_and_topics_semantic(self, content: str) -> Tuple[List[str], List[str]]:
+
+    async def _extract_symbols_and_topics_with_history(self, content: str, 
+                                                     interaction_history: List) -> Tuple[List[str], List[str]]:
         """
-        SEMANTIC SYMBOL & TOPIC EXTRACTION via LLM
-        Replaces keyword-based extraction with true semantic understanding
+        LLM extraction with user history context for better accuracy
         """
         try:
+            # Get recent user messages for context
+            recent_messages = [i.content for i in interaction_history[-5:]] if interaction_history else []
+            history_context = " | ".join(recent_messages) if recent_messages else "No previous context"
+            
             prompt = f"""
-You are an expert at extracting trading-related information from social media content.
+You are an expert at extracting trading information from social media conversations.
 
-Analyze this content and extract:
-1. Stock symbols (tickers) mentioned - include company names converted to tickers
-2. Trading topics discussed
+CURRENT MESSAGE: "{content}"
 
-Content: "{content}"
+RECENT USER CONTEXT: {history_context}
 
-=== EXTRACTION RULES ===
-**Stock Symbols:**
-- Direct tickers: AAPL, TSLA, BTC, etc.
-- Company names: "Apple" → AAPL, "Tesla" → TSLA, "Microsoft" → MSFT
+Extract stock symbols and trading topics from the CURRENT MESSAGE, using the context to resolve ambiguities.
+
+STOCK SYMBOLS (return actual tickers):
+- Direct: AAPL, TSLA, BTC, NVDA, etc.
+- Companies: "Apple" → AAPL, "Tesla" → TSLA, "Microsoft" → MSFT
 - Crypto: "Bitcoin" → BTC, "Ethereum" → ETH
 - ETFs: "S&P 500" → SPY, "Nasdaq" → QQQ
-- Only extract if actually discussed in trading/financial context
+- Context-dependent: Use history to resolve "CAT" (Caterpillar vs cat animal)
 
-**Trading Topics:**
-- technical_analysis: Charts, indicators, patterns, levels
-- options: Calls, puts, strikes, premiums, volatility
-- earnings: Earnings reports, guidance, surprises
-- crypto: Cryptocurrency discussion
-- day_trading: Short-term trading, scalping, intraday
-- swing_trading: Multi-day holds, momentum plays
-- news_trading: Event-driven, catalysts, announcements
-- ai_trading: AI, algorithms, bots, automation
-- market_psychology: Sentiment, fear, greed, FOMO
-- risk_management: Stop losses, position sizing, diversification
-- fundamental_analysis: P/E ratios, revenue, growth
-- sector_rotation: Industry trends, sector moves
-- macro_economics: Fed policy, rates, inflation
+TRADING TOPICS:
+- technical_analysis: Charts, RSI, MACD, support/resistance, breakouts
+- options: Calls, puts, strikes, IV, Greeks
+- earnings: Reports, guidance, beats/misses
+- crypto: Bitcoin, DeFi, altcoins, blockchain
+- day_trading: Scalping, intraday, quick trades
+- swing_trading: Multi-day holds, momentum
+- news_trading: Catalysts, events, announcements
+- ai_trading: Bots, algorithms, automation
+- market_psychology: Sentiment, FOMO, fear
+- risk_management: Stops, position sizing
+- fundamental_analysis: P/E, revenue, growth
+- sector_rotation: Industry moves, themes
 
-Return ONLY valid symbols and topics that are actually discussed:
-
+Return JSON with actual symbols/topics found (empty arrays if none):
 {{
     "symbols": ["AAPL", "TSLA"],
-    "topics": ["technical_analysis", "earnings"]
+    "topics": ["technical_analysis", "earnings"],
+    "confidence": 0.9,
+    "reasoning": "User mentioned Apple earnings and RSI levels"
 }}
 """
             
             response = await self.gemini_client.generate_content_async(prompt)
-            
-            # Parse LLM response
             extraction_data = self._parse_extraction_response(response.text)
             
             symbols = extraction_data.get("symbols", [])
             topics = extraction_data.get("topics", [])
             
-            logger.info(f"LLM extracted - Symbols: {symbols}, Topics: {topics}")
+            logger.info(f"LLM extraction with history - Symbols: {symbols}, Topics: {topics}")
             return symbols, topics
             
         except Exception as e:
-            logger.error(f"Semantic extraction failed: {e}")
-            # Fallback to basic extraction
+            logger.error(f"Semantic extraction with history failed: {e}")
             return self._extract_symbols_fallback(content), self._extract_trading_topics_fallback(content)
+
+    async def _classify_engagement_style_llm(self, content: str, interaction_history: List) -> str:
+        """
+        LLM-based engagement style classification (replaces keyword analysis)
+        """
+        try:
+            # Get last 10 interactions for pattern analysis
+            recent_interactions = interaction_history[-10:] if interaction_history else []
+            
+            if len(recent_interactions) < 3:
+                # Not enough history, analyze current message only
+                history_text = "Insufficient interaction history - analyze current message only"
+            else:
+                history_text = "\n".join([
+                    f"- \"{interaction.content}\"" 
+                    for interaction in recent_interactions
+                ])
+            
+            prompt = f"""
+Classify this user's engagement style based on their interaction pattern.
+
+CURRENT MESSAGE: "{content}"
+
+INTERACTION HISTORY:
+{history_text}
+
+ENGAGEMENT STYLES:
+- question_asker: Frequently asks questions, seeks information and clarification
+- advice_giver: Offers opinions, shares analysis, helps others, provides insights
+- skeptic: Questions claims, doubts results, critical thinking, demands proof
+- supporter: Positive about content, shares wins, encourages others, builds community
+- lurker: Minimal engagement, short responses, observes more than participates
+- technical_analyst: Uses trading terminology, discusses charts/indicators, technical focus
+- influencer: High engagement, opinion leader, others respond to their comments
+
+ANALYSIS CRITERIA:
+- Question frequency and type
+- Tone and language patterns
+- Technical knowledge demonstrated
+- Supportiveness vs skepticism
+- Interaction depth and length
+- Leadership vs following behavior
+
+Return JSON:
+{{
+    "engagement_style": "question_asker",
+    "confidence": 0.8,
+    "reasoning": "User asks multiple clarifying questions and seeks explanations",
+    "secondary_style": "technical_analyst",
+    "style_evolution": "stable" or "evolving_from_X_to_Y"
+}}
+"""
+            
+            response = await self.gemini_client.generate_content_async(prompt)
+            style_data = self._parse_gemini_response(response.text)
+            
+            engagement_style = style_data.get("engagement_style", "lurker")
+            confidence = style_data.get("confidence", 0.5)
+            
+            logger.info(f"LLM classified engagement style: {engagement_style} (confidence: {confidence})")
+            return engagement_style
+            
+        except Exception as e:
+            logger.error(f"LLM engagement style classification failed: {e}")
+            return "lurker"  # Safe fallback
+
+    async def _integrate_llm_results_into_user_profile(self, user, intent_data: Dict, 
+                                                     symbols: List[str], topics: List[str], 
+                                                     engagement_style: str):
+        """
+        CONFIDENCE-FILTERED LLM integration with frequency tracking
+        """
+        try:
+            confidence = intent_data.get("confidence", 0.0)
+            
+            # CONFIDENCE-BASED FILTERING
+            if confidence < user.llm_confidence_threshold:
+                logger.info(f"Skipping LLM update for @{user.primary_username}: confidence {confidence} below threshold {user.llm_confidence_threshold}")
+                return
+            
+            # 1. STORE INTENT CLASSIFICATION (only high confidence)
+            classification_record = {
+                "timestamp": intent_data.get("timestamp"),
+                "content": intent_data.get("content", ""),
+                "intent": intent_data.get("intent"),
+                "sentiment": intent_data.get("sentiment"),
+                "engagement_style": engagement_style,
+                "journey_stage": intent_data.get("user_journey_stage"),
+                "conversion_potential": intent_data.get("conversion_potential"),
+                "confidence": confidence,
+                "symbols_mentioned": symbols,
+                "topics_discussed": topics,
+                "filtered": False  # Passed confidence filter
+            }
+            
+            if not hasattr(user, 'intent_classifications'):
+                user.intent_classifications = []
+            user.intent_classifications.append(classification_record)
+            
+            # Keep only last 20 classifications
+            if len(user.intent_classifications) > 20:
+                user.intent_classifications = user.intent_classifications[-20:]
+            
+            # 2. UPDATE ENGAGEMENT STYLE (confidence-based)
+            await self._update_engagement_style_from_llm_with_confidence(user, engagement_style, confidence)
+            
+            # 3. UPDATE JOURNEY PROGRESSION (confidence-based)
+            await self._update_journey_progression_from_llm_with_confidence(user, intent_data.get("user_journey_stage"), confidence)
+            
+            # 4. FREQUENCY-WEIGHTED TRADING INTERESTS UPDATE
+            user.update_trading_interests_with_frequency(symbols, topics, confidence)
+            
+            # 5. UPDATE COMMUNICATION STYLE
+            await self._update_communication_style_from_llm(user, intent_data.get("content", ""), intent_data)
+            
+            # Save all updates
+            await self.memory_service._save_user_updates(user)
+            
+            logger.info(f"LLM integration complete for @{user.primary_username} (confidence: {confidence})")
+            
+        except Exception as e:
+            logger.error(f"Failed to integrate LLM results: {e}")
+
+    async def _update_engagement_style_from_llm_with_confidence(self, user, llm_engagement_style: str, confidence: float):
+        """Update engagement style only if confidence is high enough"""
+        try:
+            # Require higher confidence for style changes
+            if confidence < 0.7:  # Higher threshold for style changes
+                logger.debug(f"Skipping engagement style update: confidence {confidence} too low")
+                return
+            
+            from ..models.social_user import EngagementStyle
+            
+            style_mapping = {
+                "question_asker": EngagementStyle.QUESTION_ASKER,
+                "advice_giver": EngagementStyle.ADVICE_GIVER,
+                "skeptic": EngagementStyle.SKEPTIC,
+                "supporter": EngagementStyle.SUPPORTER,
+                "lurker": EngagementStyle.LURKER,
+                "technical_analyst": EngagementStyle.TECHNICAL_ANALYST
+            }
+            
+            new_style = style_mapping.get(llm_engagement_style, EngagementStyle.LURKER)
+            old_style = user.engagement_style
+            
+            # Track evolution if style changed
+            if new_style != old_style:
+                if not hasattr(user, 'engagement_style_evolution'):
+                    user.engagement_style_evolution = []
+                
+                evolution_record = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "from_style": old_style.value,
+                    "to_style": new_style.value,
+                    "confidence": confidence,
+                    "llm_triggered": True
+                }
+                
+                user.engagement_style_evolution.append(evolution_record)
+                user.engagement_style = new_style
+                
+                logger.info(f"User @{user.primary_username} evolved: {old_style.value} → {new_style.value} (confidence: {confidence})")
+            
+        except Exception as e:
+            logger.error(f"Failed to update engagement style from LLM: {e}")
+
+    async def _update_journey_progression_from_llm_with_confidence(self, user, llm_journey_stage: str, confidence: float):
+        """Update journey progression only if confidence is high enough"""
+        try:
+            # Require high confidence for journey stage changes
+            if confidence < 0.75:  # Even higher threshold for journey changes
+                logger.debug(f"Skipping journey progression update: confidence {confidence} too low")
+                return
+            
+            from ..models.social_user import ConversionStage
+            
+            stage_mapping = {
+                "discovery": ConversionStage.DISCOVERY,
+                "engagement": ConversionStage.ENGAGEMENT,
+                "recognition": ConversionStage.RECOGNITION,
+                "collaboration": ConversionStage.COLLABORATION,
+                "advocacy": ConversionStage.ADVOCACY,
+                "converted": ConversionStage.CONVERTED
+            }
+            
+            new_stage = stage_mapping.get(llm_journey_stage, ConversionStage.DISCOVERY)
+            old_stage = user.conversion_stage
+            
+            # Track progression if stage changed
+            if new_stage != old_stage:
+                if not hasattr(user, 'journey_progression'):
+                    user.journey_progression = []
+                
+                progression_record = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "from_stage": old_stage.value,
+                    "to_stage": new_stage.value,
+                    "progression_direction": self._get_progression_direction(old_stage.value, new_stage.value),
+                    "confidence": confidence,
+                    "llm_triggered": True
+                }
+                
+                user.journey_progression.append(progression_record)
+                user.advance_conversion_stage(new_stage)
+                
+                logger.info(f"User @{user.primary_username} journey: {old_stage.value} → {new_stage.value} (confidence: {confidence})")
+            
+        except Exception as e:
+            logger.error(f"Failed to update journey progression from LLM: {e}")
+
+    async def _update_communication_style_from_llm(self, user, content: str, intent_data: Dict):
+        """Update communication style using LLM analysis instead of keywords"""
+        try:
+            # Use LLM sentiment and tone analysis
+            sentiment = intent_data.get("sentiment", "neutral")
+            urgency = intent_data.get("urgency", "normal")
+            
+            # Map to communication style
+            if sentiment == "excited" or urgency == "high":
+                user.communication_style.energy_level = "high"
+            elif sentiment == "negative" or urgency == "low":
+                user.communication_style.energy_level = "low"
+            else:
+                user.communication_style.energy_level = "moderate"
+            
+            # Analyze formality from content length and structure
+            if len(content) > 100 and any(word in content.lower() for word in ["please", "thank you", "analysis"]):
+                user.communication_style.formality = "formal"
+            elif len(content) < 50 or any(word in content.lower() for word in ["yo", "hey", "lol"]):
+                user.communication_style.formality = "casual"
+            else:
+                user.communication_style.formality = "neutral"
+            
+            # Emoji usage analysis
+            emoji_count = sum(1 for char in content if ord(char) > 0x1F600)
+            if emoji_count > 3:
+                user.communication_style.emoji_usage = "heavy"
+            elif emoji_count > 1:
+                user.communication_style.emoji_usage = "moderate"
+            else:
+                user.communication_style.emoji_usage = "light"
+            
+        except Exception as e:
+            logger.error(f"Failed to update communication style from LLM: {e}")
     
     def _build_enhanced_intent_prompt(self, content: str, username: str, platform: str,
                                     interaction_type: str, user_context: Dict, context: Dict = None,
@@ -364,117 +613,6 @@ Return as JSON with same structure:
             logger.error(f"Intent validation failed: {e}")
             return intent_data  # Return original if validation fails
     
-    async def _store_intent_classification_in_user_profile(self, username: str, platform: str,
-                                                         intent_data: Dict, content: str):
-        """
-        STORE CLASSIFICATION IN USER PROFILE for longitudinal analysis
-        Tracks user journey progression over time
-        """
-        try:
-            user = await self.memory_service.get_or_create_user(username, platform)
-            
-            # Store current classification
-            classification_record = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "content": content,
-                "intent": intent_data.get("intent"),
-                "sentiment": intent_data.get("sentiment"),
-                "engagement_style": intent_data.get("engagement_style_detected"),
-                "journey_stage": intent_data.get("user_journey_stage"),
-                "conversion_potential": intent_data.get("conversion_potential"),
-                "confidence": intent_data.get("confidence")
-            }
-            
-            # Add to user's classification history
-            if not hasattr(user, 'intent_classifications'):
-                user.intent_classifications = []
-            
-            user.intent_classifications.append(classification_record)
-            
-            # Keep only last 20 classifications
-            if len(user.intent_classifications) > 20:
-                user.intent_classifications = user.intent_classifications[-20:]
-            
-            # Update user's primary engagement style based on patterns
-            await self._update_user_engagement_style_from_classifications(user)
-            
-            # Update user's journey stage progression
-            await self._update_user_journey_progression(user, intent_data.get("user_journey_stage"))
-            
-            # Save updates
-            await self.memory_service._save_user_updates(user)
-            
-            logger.info(f"Stored classification for @{username}: {intent_data.get('intent')} - {intent_data.get('engagement_style_detected')}")
-            
-        except Exception as e:
-            logger.error(f"Failed to store intent classification: {e}")
-    
-    async def _update_user_engagement_style_from_classifications(self, user):
-        """Update user's primary engagement style based on classification patterns"""
-        try:
-            if not hasattr(user, 'intent_classifications') or not user.intent_classifications:
-                return
-            
-            # Count engagement style occurrences
-            style_counts = {}
-            for classification in user.intent_classifications[-10:]:  # Last 10 interactions
-                style = classification.get("engagement_style", "unknown")
-                style_counts[style] = style_counts.get(style, 0) + 1
-            
-            # Determine dominant style
-            if style_counts:
-                dominant_style = max(style_counts, key=style_counts.get)
-                
-                # Update user's engagement style
-                from ..models.social_user import EngagementStyle
-                try:
-                    user.engagement_style = EngagementStyle(dominant_style.upper())
-                except ValueError:
-                    user.engagement_style = EngagementStyle.LURKER
-                
-                logger.info(f"Updated engagement style for {user.primary_username}: {dominant_style}")
-            
-        except Exception as e:
-            logger.error(f"Failed to update engagement style: {e}")
-    
-    async def _update_user_journey_progression(self, user, current_stage: str):
-        """Track user journey progression over time"""
-        try:
-            if not hasattr(user, 'journey_progression'):
-                user.journey_progression = []
-            
-            # Check if stage has changed
-            last_stage = user.journey_progression[-1].get("stage") if user.journey_progression else "discovery"
-            
-            if current_stage != last_stage:
-                progression_record = {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "from_stage": last_stage,
-                    "to_stage": current_stage,
-                    "progression_direction": self._get_progression_direction(last_stage, current_stage)
-                }
-                
-                user.journey_progression.append(progression_record)
-                
-                # Update user's conversion stage
-                from ..models.social_user import ConversionStage
-                stage_mapping = {
-                    "discovery": ConversionStage.DISCOVERY,
-                    "engagement": ConversionStage.ENGAGEMENT,
-                    "recognition": ConversionStage.RECOGNITION,
-                    "collaboration": ConversionStage.COLLABORATION,
-                    "advocacy": ConversionStage.ADVOCACY,
-                    "converted": ConversionStage.CONVERTED
-                }
-                
-                if current_stage in stage_mapping:
-                    user.advance_conversion_stage(stage_mapping[current_stage])
-                
-                logger.info(f"User journey progression: {user.primary_username} moved from {last_stage} to {current_stage}")
-            
-        except Exception as e:
-            logger.error(f"Failed to update journey progression: {e}")
-    
     def _get_progression_direction(self, from_stage: str, to_stage: str) -> str:
         """Determine if user is progressing forward or backward in journey"""
         stage_order = ["discovery", "engagement", "recognition", "collaboration", "advocacy", "converted"]
@@ -638,19 +776,36 @@ Return as JSON with same structure:
         }
     
     def _build_response_prompt(self, context: Dict[str, Any]) -> str:
-        """Build Claude prompt for response generation - ENHANCED WITH PLATFORM VOICE"""
+        """
+        ENHANCED response prompt with frequency-weighted personalization
+        """
         intent = context["intent"]
         user_context = context["user_context"]
         tool_results = context["tool_results"]
         platform = context["platform"]
         
-        # User personalization
+        # User personalization with FREQUENCY DATA
         user_profile = user_context.get("user_profile", {})
         username = user_profile.get("primary_username", "")
-        communication_style = user_context.get("communication_style", {})
-        trading_interests = user_context.get("trading_interests", {})
         
-        # PLATFORM-SPECIFIC VOICE RULES
+        # GET FREQUENCY-WEIGHTED PERSONALIZATION
+        personalization_context = {}
+        if hasattr(user_profile, 'get_personalization_context'):
+            personalization_context = user_profile.get_personalization_context()
+        
+        top_topics = personalization_context.get("top_topics", [])
+        top_symbols = personalization_context.get("top_symbols", [])
+        learning_velocity = personalization_context.get("learning_velocity", {})
+        
+        # SYMBOL RELATIONSHIP suggestions
+        mentioned_symbols = intent.get("symbols", [])
+        related_symbols = []
+        if mentioned_symbols and hasattr(user_profile, 'get_related_symbols'):
+            for symbol in mentioned_symbols[:1]:  # Check first mentioned symbol
+                related = user_profile.get_related_symbols(symbol, 2)
+                related_symbols.extend([r[0] for r in related])
+        
+        # Platform-specific voice rules
         platform_voice_rules = {
             "tiktok": "Casual, energetic, use emojis, trending language, under 150 chars",
             "twitter": "Concise, witty, hashtag-friendly, professional but accessible",
@@ -662,62 +817,49 @@ Return as JSON with same structure:
         voice_rule = platform_voice_rules.get(platform, "Professional but friendly tone")
         
         prompt = f"""
-You are an expert social media manager for a trading bot company. Generate a personalized response for this social media interaction.
+You are an expert social media manager for a trading bot company. Generate a personalized response using FREQUENCY-WEIGHTED user insights.
 
 === INTERACTION CONTEXT ===
 Platform: {platform}
 User: @{username}
 Intent: {intent.get('primary_intent')} - {intent.get('sub_intent')}
 Response Strategy: {intent.get('response_strategy')}
-Priority: {intent.get('priority')}
-Sentiment: {intent.get('sentiment')}
-User Journey Stage: {intent.get('user_journey_stage', 'discovery')}
-Engagement Style: {intent.get('engagement_style_detected', 'unknown')}
+Current Symbols Mentioned: {', '.join(mentioned_symbols) if mentioned_symbols else 'None'}
+
+=== FREQUENCY-WEIGHTED USER INSIGHTS ===
+Top Discussed Topics: {', '.join([f"{topic}({score:.1f})" for topic, score in top_topics[:3]]) if top_topics else 'None'}
+Top Discussed Symbols: {', '.join([f"{symbol}({score:.1f})" for symbol, score in top_symbols[:3]]) if top_symbols else 'None'}
+Related Symbols: {', '.join(related_symbols) if related_symbols else 'None'}
+Learning Velocity: {learning_velocity.get('learning_rate', 'unknown')} ({learning_velocity.get('updates_per_day', 0):.1f} updates/day)
 
 === USER PROFILE ===
-Relationship Score: {context.get('user_relationship_score', 0)}/100
-Influence Level: {context.get('user_influence_level', 'unknown')}
-Conversion Stage: {context.get('conversation_stage', 'discovery')}
-Communication Style: {communication_style.get('formality', 'neutral')}, {communication_style.get('energy', 'moderate')}
-Trading Interests: {', '.join(trading_interests.get('symbols', [])) if trading_interests.get('symbols') else 'None'}
-Trading Focus: {', '.join(trading_interests.get('focus', [])) if trading_interests.get('focus') else 'None'}
+Relationship Score: {user_context.get('relationship_score', 0)}/100
+Journey Stage: {intent.get('user_journey_stage', 'discovery')}
+Engagement Style: {intent.get('engagement_style_detected', 'unknown')}
+Communication Style: {user_context.get('communication_style', {}).get('formality', 'neutral')}
 
 === TOOL RESULTS ===
 {json.dumps(tool_results, indent=2) if tool_results else 'No tool results available'}
 
-=== PLATFORM CONSTRAINTS ===
-Max Length: {context.get('max_length', 280)} characters
-Supports Emoji: {context.get('supports_emoji', True)}
-Supports Hashtags: {context.get('supports_hashtags', True)}
-Platform Voice Rule: {voice_rule}
+=== PERSONALIZATION STRATEGY ===
+**Use Frequency Data for Personalization:**
+- Reference their most discussed topics when relevant
+- Mention their frequently traded symbols for context
+- Suggest related symbols from their relationship graph
+- Adapt depth based on their learning velocity
 
-=== RESPONSE GUIDELINES ===
-
-**Strategy: {intent.get('response_strategy')}**
-- Match user's communication style and energy level
-- Reference their trading interests when relevant
-- Follow platform-specific voice rules
-- Stay within character limits
-- Include call-to-action when appropriate
-- AVOID repeating disclaimers if user has seen them before
-
-**Personalization Rules:**
-- Use @username if relationship score > 30
-- Match formality level: {communication_style.get('formality', 'neutral')}
-- Match energy level: {communication_style.get('energy', 'moderate')}
-- Reference journey stage progression when relevant
-
-**Social Proof Injection:**
-- If competitive context: Reference our unique advantages directly
-- If skeptical user: Provide specific proof points
-- If conversion opportunity: Mention user success stories
-
-**Platform-Specific Adaptations:**
+**Platform Optimization:**
 - {voice_rule}
-- Use appropriate symbols/hashtags: {', '.join(intent.get('symbols', []))}
-- Include relevant topics: {', '.join(intent.get('topics', []))}
+- Max Length: {context.get('max_length', 280)} characters
+- Supports Emoji: {context.get('supports_emoji', True)}
 
-Generate a response that follows these guidelines and matches the user's style perfectly. Return only the response text, no meta-commentary.
+**Response Guidelines:**
+- If high learning velocity: Use more technical depth
+- If top topics include "technical_analysis": Reference charts/indicators
+- If related symbols available: Mention symbol relationships naturally
+- If low frequency data: Keep response general but engaging
+
+Generate a response that leverages the frequency-weighted insights for maximum personalization. Return only the response text.
 """
         return prompt
     
@@ -875,446 +1017,3 @@ Conversion Stage: {user_context.get('conversion_stage', 'discovery')}
             "engagement_style_detected": "unknown",
             "user_journey_stage": "discovery"
         }
-
-# PATCH: Full LLM Integration - Complete the Semantic Loop
-# This updates the existing SocialTradingAgent to feed LLM results directly into user profiles
-
-# ===========================================
-# UPDATED: social/services/social_trading_agent.py 
-# ADD these methods to the existing SocialTradingAgent class
-# ===========================================
-
-    async def parse_social_intent(self, content: str, username: str, platform: str,
-                                interaction_type: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        COMPLETE SEMANTIC INTEGRATION - LLM results feed directly into user profile
-        """
-        try:
-            # Get user for profile integration
-            from ..models.social_user import PlatformType
-            user = await self.memory_service.get_or_create_user(username, PlatformType(platform))
-            
-            # Get FULL user context with actual message history
-            user_context = await self.memory_service.get_conversation_context(f"{platform}_{username}")
-            
-            # LLM SEMANTIC EXTRACTION with user history context
-            symbols, topics = await self._extract_symbols_and_topics_with_history(content, user.interaction_history)
-            
-            # LLM ENGAGEMENT STYLE CLASSIFICATION (replaces keyword analysis)
-            engagement_style = await self._classify_engagement_style_llm(content, user.interaction_history)
-            
-            # Build enhanced Gemini prompt with ACTUAL user messages
-            prompt = self._build_enhanced_intent_prompt(
-                content, username, platform, interaction_type, user_context, context, symbols, topics
-            )
-            
-            # Call Gemini for intent classification
-            response = await self._call_gemini_intent(prompt)
-            intent_data = self._parse_gemini_response(response)
-            
-            # LLM VALIDATION LOOP
-            validated_intent = await self._validate_intent_classification(content, intent_data)
-            
-            # Build final intent object with ALL semantic extractions
-            final_intent = {
-                "intent": validated_intent.get("primary_intent", "general"),
-                "sub_intent": validated_intent.get("sub_intent", ""),
-                "symbols": symbols,  # LLM-extracted
-                "topics": topics,    # LLM-extracted
-                "sentiment": validated_intent.get("sentiment", "neutral"),
-                "urgency": validated_intent.get("urgency", "normal"),
-                "user_type": validated_intent.get("user_type", "regular"),
-                "requires_tools": validated_intent.get("requires_tools", []),
-                "response_strategy": validated_intent.get("response_strategy", "casual_engagement"),
-                "priority": validated_intent.get("priority", "medium"),
-                "competitive_context": validated_intent.get("competitive_context", False),
-                "conversion_potential": validated_intent.get("conversion_potential", "low"),
-                "confidence": validated_intent.get("confidence", 0.8),
-                "engagement_style_detected": engagement_style,  # LLM-classified
-                "user_journey_stage": validated_intent.get("user_journey_stage", "discovery"),
-                "timestamp": datetime.utcnow().isoformat(),
-                "content": content  # Store for analysis
-            }
-            
-            # DIRECT INTEGRATION: Feed LLM results into user profile
-            await self._integrate_llm_results_into_user_profile(user, final_intent, symbols, topics, engagement_style)
-            
-            return final_intent
-            
-        except Exception as e:
-            logger.error(f"Failed to parse social intent: {e}")
-            return self._get_fallback_intent(content, interaction_type)
-
-    async def _extract_symbols_and_topics_with_history(self, content: str, 
-                                                     interaction_history: List) -> Tuple[List[str], List[str]]:
-        """
-        LLM extraction with user history context for better accuracy
-        """
-        try:
-            # Get recent user messages for context
-            recent_messages = [i.content for i in interaction_history[-5:]] if interaction_history else []
-            history_context = " | ".join(recent_messages) if recent_messages else "No previous context"
-            
-            prompt = f"""
-You are an expert at extracting trading information from social media conversations.
-
-CURRENT MESSAGE: "{content}"
-
-RECENT USER CONTEXT: {history_context}
-
-Extract stock symbols and trading topics from the CURRENT MESSAGE, using the context to resolve ambiguities.
-
-STOCK SYMBOLS (return actual tickers):
-- Direct: AAPL, TSLA, BTC, NVDA, etc.
-- Companies: "Apple" → AAPL, "Tesla" → TSLA, "Microsoft" → MSFT
-- Crypto: "Bitcoin" → BTC, "Ethereum" → ETH
-- ETFs: "S&P 500" → SPY, "Nasdaq" → QQQ
-- Context-dependent: Use history to resolve "CAT" (Caterpillar vs cat animal)
-
-TRADING TOPICS:
-- technical_analysis: Charts, RSI, MACD, support/resistance, breakouts
-- options: Calls, puts, strikes, IV, Greeks
-- earnings: Reports, guidance, beats/misses
-- crypto: Bitcoin, DeFi, altcoins, blockchain
-- day_trading: Scalping, intraday, quick trades
-- swing_trading: Multi-day holds, momentum
-- news_trading: Catalysts, events, announcements
-- ai_trading: Bots, algorithms, automation
-- market_psychology: Sentiment, FOMO, fear
-- risk_management: Stops, position sizing
-- fundamental_analysis: P/E, revenue, growth
-- sector_rotation: Industry moves, themes
-
-Return JSON with actual symbols/topics found (empty arrays if none):
-{{
-    "symbols": ["AAPL", "TSLA"],
-    "topics": ["technical_analysis", "earnings"],
-    "confidence": 0.9,
-    "reasoning": "User mentioned Apple earnings and RSI levels"
-}}
-"""
-            
-            response = await self.gemini_client.generate_content_async(prompt)
-            extraction_data = self._parse_extraction_response(response.text)
-            
-            symbols = extraction_data.get("symbols", [])
-            topics = extraction_data.get("topics", [])
-            
-            logger.info(f"LLM extraction with history - Symbols: {symbols}, Topics: {topics}")
-            return symbols, topics
-            
-        except Exception as e:
-            logger.error(f"Semantic extraction with history failed: {e}")
-            return self._extract_symbols_fallback(content), self._extract_trading_topics_fallback(content)
-
-    async def _classify_engagement_style_llm(self, content: str, interaction_history: List) -> str:
-        """
-        LLM-based engagement style classification (replaces keyword analysis)
-        """
-        try:
-            # Get last 10 interactions for pattern analysis
-            recent_interactions = interaction_history[-10:] if interaction_history else []
-            
-            if len(recent_interactions) < 3:
-                # Not enough history, analyze current message only
-                history_text = "Insufficient interaction history - analyze current message only"
-            else:
-                history_text = "\n".join([
-                    f"- \"{interaction.content}\"" 
-                    for interaction in recent_interactions
-                ])
-            
-            prompt = f"""
-Classify this user's engagement style based on their interaction pattern.
-
-CURRENT MESSAGE: "{content}"
-
-INTERACTION HISTORY:
-{history_text}
-
-ENGAGEMENT STYLES:
-- question_asker: Frequently asks questions, seeks information and clarification
-- advice_giver: Offers opinions, shares analysis, helps others, provides insights
-- skeptic: Questions claims, doubts results, critical thinking, demands proof
-- supporter: Positive about content, shares wins, encourages others, builds community
-- lurker: Minimal engagement, short responses, observes more than participates
-- technical_analyst: Uses trading terminology, discusses charts/indicators, technical focus
-- influencer: High engagement, opinion leader, others respond to their comments
-
-ANALYSIS CRITERIA:
-- Question frequency and type
-- Tone and language patterns
-- Technical knowledge demonstrated
-- Supportiveness vs skepticism
-- Interaction depth and length
-- Leadership vs following behavior
-
-Return JSON:
-{{
-    "engagement_style": "question_asker",
-    "confidence": 0.8,
-    "reasoning": "User asks multiple clarifying questions and seeks explanations",
-    "secondary_style": "technical_analyst",
-    "style_evolution": "stable" or "evolving_from_X_to_Y"
-}}
-"""
-            
-            response = await self.gemini_client.generate_content_async(prompt)
-            style_data = self._parse_gemini_response(response.text)
-            
-            engagement_style = style_data.get("engagement_style", "lurker")
-            confidence = style_data.get("confidence", 0.5)
-            
-            logger.info(f"LLM classified engagement style: {engagement_style} (confidence: {confidence})")
-            return engagement_style
-            
-        except Exception as e:
-            logger.error(f"LLM engagement style classification failed: {e}")
-            return "lurker"  # Safe fallback
-
-    async def _integrate_llm_results_into_user_profile(self, user, intent_data: Dict, 
-                                                     symbols: List[str], topics: List[str], 
-                                                     engagement_style: str):
-        """
-        DIRECT INTEGRATION: Feed all LLM results into user profile
-        """
-        try:
-            # 1. STORE INTENT CLASSIFICATION DIRECTLY
-            classification_record = {
-                "timestamp": intent_data.get("timestamp"),
-                "content": intent_data.get("content", ""),
-                "intent": intent_data.get("intent"),
-                "sentiment": intent_data.get("sentiment"),
-                "engagement_style": engagement_style,
-                "journey_stage": intent_data.get("user_journey_stage"),
-                "conversion_potential": intent_data.get("conversion_potential"),
-                "confidence": intent_data.get("confidence"),
-                "symbols_mentioned": symbols,
-                "topics_discussed": topics
-            }
-            
-            # Add to user's classification history
-            if not hasattr(user, 'intent_classifications'):
-                user.intent_classifications = []
-            user.intent_classifications.append(classification_record)
-            
-            # Keep only last 20 classifications
-            if len(user.intent_classifications) > 20:
-                user.intent_classifications = user.intent_classifications[-20:]
-            
-            # 2. UPDATE ENGAGEMENT STYLE DIRECTLY FROM LLM
-            await self._update_engagement_style_from_llm(user, engagement_style, classification_record)
-            
-            # 3. UPDATE JOURNEY PROGRESSION FROM LLM
-            await self._update_journey_progression_from_llm(user, intent_data.get("user_journey_stage"))
-            
-            # 4. UPDATE TRADING INTERESTS FROM LLM EXTRACTIONS
-            if symbols or topics:
-                user.update_trading_interests(symbols, topics)
-                
-                # Store in trading personality directly
-                for symbol in symbols:
-                    if symbol not in user.trading_personality.common_symbols:
-                        user.trading_personality.common_symbols.append(symbol)
-                
-                for topic in topics:
-                    if topic not in user.trading_personality.trading_focus:
-                        user.trading_personality.trading_focus.append(topic)
-                
-                # Keep only recent symbols/topics (last 20)
-                if len(user.trading_personality.common_symbols) > 20:
-                    user.trading_personality.common_symbols = user.trading_personality.common_symbols[-20:]
-                if len(user.trading_personality.trading_focus) > 10:
-                    user.trading_personality.trading_focus = user.trading_personality.trading_focus[-10:]
-            
-            # 5. UPDATE COMMUNICATION STYLE FROM LLM ANALYSIS
-            await self._update_communication_style_from_llm(user, intent_data.get("content", ""), intent_data)
-            
-            # Save all updates
-            await self.memory_service._save_user_updates(user)
-            
-            logger.info(f"Integrated LLM results into profile for @{user.primary_username}")
-            
-        except Exception as e:
-            logger.error(f"Failed to integrate LLM results: {e}")
-
-    async def _update_engagement_style_from_llm(self, user, llm_engagement_style: str, classification_record: Dict):
-        """Update engagement style based on LLM classification (not keywords)"""
-        try:
-            # Map LLM style to enum
-            from ..models.social_user import EngagementStyle
-            
-            style_mapping = {
-                "question_asker": EngagementStyle.QUESTION_ASKER,
-                "advice_giver": EngagementStyle.ADVICE_GIVER,
-                "skeptic": EngagementStyle.SKEPTIC,
-                "supporter": EngagementStyle.SUPPORTER,
-                "lurker": EngagementStyle.LURKER,
-                "technical_analyst": EngagementStyle.TECHNICAL_ANALYST
-            }
-            
-            new_style = style_mapping.get(llm_engagement_style, EngagementStyle.LURKER)
-            old_style = user.engagement_style
-            
-            # Track evolution if style changed
-            if new_style != old_style:
-                if not hasattr(user, 'engagement_style_evolution'):
-                    user.engagement_style_evolution = []
-                
-                evolution_record = {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "from_style": old_style.value,
-                    "to_style": new_style.value,
-                    "trigger_content": classification_record.get("content", ""),
-                    "confidence": classification_record.get("confidence", 0.0)
-                }
-                
-                user.engagement_style_evolution.append(evolution_record)
-                user.engagement_style = new_style
-                
-                logger.info(f"User @{user.primary_username} evolved: {old_style.value} → {new_style.value}")
-            
-        except Exception as e:
-            logger.error(f"Failed to update engagement style from LLM: {e}")
-
-    async def _update_journey_progression_from_llm(self, user, llm_journey_stage: str):
-        """Update journey progression based on LLM classification"""
-        try:
-            from ..models.social_user import ConversionStage
-            
-            stage_mapping = {
-                "discovery": ConversionStage.DISCOVERY,
-                "engagement": ConversionStage.ENGAGEMENT,
-                "recognition": ConversionStage.RECOGNITION,
-                "collaboration": ConversionStage.COLLABORATION,
-                "advocacy": ConversionStage.ADVOCACY,
-                "converted": ConversionStage.CONVERTED
-            }
-            
-            new_stage = stage_mapping.get(llm_journey_stage, ConversionStage.DISCOVERY)
-            old_stage = user.conversion_stage
-            
-            # Track progression if stage changed
-            if new_stage != old_stage:
-                if not hasattr(user, 'journey_progression'):
-                    user.journey_progression = []
-                
-                progression_record = {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "from_stage": old_stage.value,
-                    "to_stage": new_stage.value,
-                    "progression_direction": self._get_progression_direction(old_stage.value, new_stage.value),
-                    "llm_triggered": True
-                }
-                
-                user.journey_progression.append(progression_record)
-                user.advance_conversion_stage(new_stage)
-                
-                logger.info(f"User @{user.primary_username} journey: {old_stage.value} → {new_stage.value}")
-            
-        except Exception as e:
-            logger.error(f"Failed to update journey progression from LLM: {e}")
-
-    async def _update_communication_style_from_llm(self, user, content: str, intent_data: Dict):
-        """Update communication style using LLM analysis instead of keywords"""
-        try:
-            # Use LLM sentiment and tone analysis
-            sentiment = intent_data.get("sentiment", "neutral")
-            urgency = intent_data.get("urgency", "normal")
-            
-            # Map to communication style
-            if sentiment == "excited" or urgency == "high":
-                user.communication_style.energy_level = "high"
-            elif sentiment == "negative" or urgency == "low":
-                user.communication_style.energy_level = "low"
-            else:
-                user.communication_style.energy_level = "moderate"
-            
-            # Analyze formality from content length and structure
-            if len(content) > 100 and any(word in content.lower() for word in ["please", "thank you", "analysis"]):
-                user.communication_style.formality = "formal"
-            elif len(content) < 50 or any(word in content.lower() for word in ["yo", "hey", "lol"]):
-                user.communication_style.formality = "casual"
-            else:
-                user.communication_style.formality = "neutral"
-            
-            # Emoji usage analysis
-            emoji_count = sum(1 for char in content if ord(char) > 0x1F600)
-            if emoji_count > 3:
-                user.communication_style.emoji_usage = "heavy"
-            elif emoji_count > 1:
-                user.communication_style.emoji_usage = "moderate"
-            else:
-                user.communication_style.emoji_usage = "light"
-            
-        except Exception as e:
-            logger.error(f"Failed to update communication style from LLM: {e}")
-
-# ===========================================
-# UPDATED: ComprehensiveSocialProcessor integration
-# ADD this method to use the enhanced LLM integration
-# ===========================================
-
-    async def _update_user_profile(self, username: str, platform: str, content: str,
-                                 intent_data: Dict, tool_results: Dict):
-        """
-        SIMPLIFIED - LLM integration now happens in parse_social_intent()
-        No more keyword-based analysis needed!
-        """
-        try:
-            # LLM integration already happened in parse_social_intent()
-            # Just record the interaction
-            
-            # Create interaction record
-            from ..models.social_user import PlatformType, InteractionHistory
-            
-            interaction = InteractionHistory(
-                platform=PlatformType(platform),
-                interaction_type=intent_data.get("intent", "general"),
-                content=content,
-                sentiment=intent_data.get("sentiment", "neutral")
-            )
-            
-            # Get user and add interaction
-            user = await self.memory_service.get_user_by_username(username, PlatformType(platform))
-            if user:
-                user.add_interaction(interaction)
-                await self.memory_service._save_user_updates(user)
-            
-            logger.info(f"Recorded interaction for @{username}: {intent_data.get('intent')}")
-            
-        except Exception as e:
-            logger.error(f"Failed to update user profile: {e}")
-
-# ===========================================
-# USAGE EXAMPLE: How the complete flow works now
-# ===========================================
-
-"""
-COMPLETE LLM INTEGRATION FLOW:
-
-1. User posts: "Tesla earnings beat expectations! RSI showing bullish divergence 🚀"
-
-2. parse_social_intent() calls:
-   - LLM extracts: symbols=["TSLA"], topics=["earnings", "technical_analysis"] 
-   - LLM classifies engagement_style: "technical_analyst"
-   - LLM determines journey_stage: "engagement"
-   - LLM validation loop confirms accuracy
-
-3. DIRECT INTEGRATION into user profile:
-   - user.intent_classifications.append(full_classification_data)
-   - user.trading_personality.common_symbols.append("TSLA")
-   - user.trading_personality.trading_focus.append("earnings")
-   - user.engagement_style = EngagementStyle.TECHNICAL_ANALYST
-   - user.conversion_stage = ConversionStage.ENGAGEMENT
-
-4. Response generation uses this rich context:
-   - "Great technical analysis @username! TSLA earnings were solid and that RSI divergence setup is textbook. Our AI flagged similar confluence signals yesterday. How are you playing the follow-through?"
-
-5. Next interaction builds on this semantic understanding:
-   - User says "Took profit at 245"
-   - System knows: technical_analyst + earnings_trader + TSLA_interested
-   - Responds with appropriate technical depth and references past analysis
-
-RESULT: True semantic understanding that evolves with each interaction!
-"""
