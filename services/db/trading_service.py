@@ -139,4 +139,250 @@ class TradingService:
                 {
                     "$set": {
                         "current_amount": new_amount,
-                        "update
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
+            )
+            
+            if result.modified_count > 0:
+                # Invalidate caches
+                await self.base.key_builder.delete(f"goals:{user_id}")
+                await self.base.key_builder.delete(f"goal:{user_id}:{goal_id}")
+                
+                # Check for milestone achievements
+                await self._check_milestone_achievements(user_id, goal_id, new_amount)
+                
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.exception(f"❌ Error updating goal progress: {e}")
+            return False
+
+    # Alert System Methods
+    async def save_alert(self, user_id: str, alert_data: Dict) -> str:
+        """Save user alert configuration"""
+        try:
+            alert_doc = {
+                "user_id": user_id,
+                "alert_type": alert_data.get("alert_type"),
+                "symbol": alert_data.get("symbol"),
+                "condition": alert_data.get("condition"),
+                "target_value": alert_data.get("target_value"),
+                "status": alert_data.get("status", "active"),
+                "notification_method": alert_data.get("notification_method", "sms"),
+                "created_at": datetime.now(timezone.utc),
+                "last_checked": None,
+                "trigger_count": 0
+            }
+            
+            result = await self.base.db.user_alerts.insert_one(alert_doc)
+            alert_id = str(result.inserted_id)
+            
+            # Invalidate active alerts cache
+            await self.base.key_builder.delete(f"alerts:active:{user_id}")
+            
+            logger.info(f"✅ Saved alert for user {user_id}")
+            return alert_id
+            
+        except Exception as e:
+            logger.exception(f"❌ Error saving user alert: {e}")
+            raise
+
+    async def get_active_alerts(self, user_id: str = None) -> List[Dict]:
+        """Get active alerts for user or all users"""
+        try:
+            query = {"status": "active"}
+            if user_id:
+                query["user_id"] = user_id
+                
+                # Check cache first for user-specific alerts
+                cache_key = f"alerts:active:{user_id}"
+                cached_alerts = await self.base.key_builder.get(cache_key)
+                if cached_alerts:
+                    return cached_alerts
+            
+            alerts = await self.base.db.user_alerts.find(query).to_list(length=None)
+            
+            # Process alerts
+            for alert in alerts:
+                alert["_id"] = str(alert["_id"])
+                if isinstance(alert.get("created_at"), datetime):
+                    alert["created_at"] = alert["created_at"].isoformat()
+                if isinstance(alert.get("last_checked"), datetime):
+                    alert["last_checked"] = alert["last_checked"].isoformat()
+            
+            # Cache user-specific alerts
+            if user_id:
+                await self.base.key_builder.set(cache_key, alerts, ttl=1800)  # 30 minutes
+            
+            return alerts
+            
+        except Exception as e:
+            logger.exception(f"❌ Error getting active alerts: {e}")
+            return []
+
+    async def record_alert_trigger(self, alert_id: str, trigger_data: Dict) -> bool:
+        """Record alert trigger event"""
+        try:
+            now = datetime.now(timezone.utc)
+            
+            # Update alert
+            await self.base.db.user_alerts.update_one(
+                {"_id": ObjectId(alert_id)},
+                {
+                    "$set": {"last_checked": now},
+                    "$inc": {"trigger_count": 1}
+                }
+            )
+            
+            # Record trigger history
+            history_doc = {
+                "alert_id": alert_id,
+                "user_id": trigger_data.get("user_id"),
+                "symbol": trigger_data.get("symbol"),
+                "condition_met": trigger_data.get("condition_met"),
+                "current_value": trigger_data.get("current_value"),
+                "target_value": trigger_data.get("target_value"),
+                "triggered_at": now,
+                "notification_sent": trigger_data.get("notification_sent", False)
+            }
+            
+            await self.base.db.alert_history.insert_one(history_doc)
+            
+            # Invalidate relevant caches
+            if trigger_data.get("user_id"):
+                await self.base.key_builder.delete(f"alerts:active:{trigger_data['user_id']}")
+            
+            logger.info(f"✅ Recorded alert trigger for alert {alert_id}")
+            return True
+            
+        except Exception as e:
+            logger.exception(f"❌ Error recording alert trigger: {e}")
+            return False
+
+    # Trade Tracking Methods
+    async def save_trade_marker(self, user_id: str, marker_data: Dict) -> str:
+        """Save trade marker for performance tracking"""
+        try:
+            marker_doc = {
+                "user_id": user_id,
+                "symbol": marker_data.get("symbol"),
+                "marker_type": marker_data.get("marker_type"),
+                "entry_price": marker_data.get("entry_price"),
+                "confidence": marker_data.get("confidence", 0.5),
+                "context": marker_data.get("context", ""),
+                "user_sentiment": marker_data.get("user_sentiment", "neutral"),
+                "market_context": marker_data.get("market_context", ""),
+                "timestamp": datetime.now(timezone.utc),
+                "conversation_id": marker_data.get("conversation_id"),
+                "status": "active"
+            }
+            
+            result = await self.base.db.trade_markers.insert_one(marker_doc)
+            marker_id = str(result.inserted_id)
+            
+            logger.info(f"✅ Saved trade marker for {user_id}:{marker_data.get('symbol')}")
+            return marker_id
+            
+        except Exception as e:
+            logger.exception(f"❌ Error saving trade marker: {e}")
+            raise
+
+    async def get_trade_performance(self, user_id: str, symbol: str = None) -> List[Dict]:
+        """Get trade performance data for user"""
+        try:
+            query = {"user_id": user_id}
+            if symbol:
+                query["symbol"] = symbol
+            
+            markers = await self.base.db.trade_markers.find(query).sort("timestamp", -1).to_list(length=None)
+            
+            # Process markers
+            for marker in markers:
+                marker["_id"] = str(marker["_id"])
+                if isinstance(marker.get("timestamp"), datetime):
+                    marker["timestamp"] = marker["timestamp"].isoformat()
+            
+            return markers
+            
+        except Exception as e:
+            logger.exception(f"❌ Error getting trade performance: {e}")
+            return []
+
+    # Legacy Trading Data Methods
+    async def save_legacy_trading_data(self, user_id: str, symbol: str, data: Dict) -> str:
+        """Legacy compatibility: Save trading analysis data"""
+        try:
+            trading_data = {
+                "user_id": user_id,
+                "symbol": symbol,
+                "data": data,
+                "timestamp": datetime.utcnow()
+            }
+            
+            result = await self.base.db.trading_data.insert_one(trading_data)
+            return str(result.inserted_id)
+        except Exception as e:
+            logger.exception(f"❌ Error saving legacy trading data: {e}")
+            raise
+
+    async def get_legacy_trading_data(self, user_id: str, symbol: str = None, limit: int = 10) -> List[Dict]:
+        """Legacy compatibility: Get trading data for user"""
+        try:
+            query = {"user_id": user_id}
+            if symbol:
+                query["symbol"] = symbol
+            
+            data = await self.base.db.trading_data.find(query).sort("timestamp", -1).limit(limit).to_list(length=limit)
+            
+            for item in data:
+                item['_id'] = str(item['_id'])
+            
+            return data
+        except Exception as e:
+            logger.exception(f"❌ Error getting legacy trading data: {e}")
+            return []
+
+    async def _check_milestone_achievements(self, user_id: str, goal_id: str, new_amount: float):
+        """Check and record milestone achievements"""
+        try:
+            # Get goal with milestones
+            goal = await self.base.db.financial_goals.find_one({"_id": ObjectId(goal_id)})
+            if not goal:
+                return
+            
+            target_amount = goal.get("target_amount", 0)
+            milestones = goal.get("milestones", [])
+            
+            if target_amount > 0:
+                progress_percentage = (new_amount / target_amount) * 100
+                
+                # Check for milestone achievements
+                for milestone in milestones:
+                    milestone_percentage = milestone.get("percentage", 0)
+                    if progress_percentage >= milestone_percentage and not milestone.get("achieved", False):
+                        # Record milestone achievement
+                        milestone_doc = {
+                            "user_id": user_id,
+                            "goal_id": goal_id,
+                            "milestone_name": milestone.get("name", f"{milestone_percentage}% milestone"),
+                            "milestone_percentage": milestone_percentage,
+                            "achieved_at": datetime.now(timezone.utc),
+                            "current_amount": new_amount,
+                            "target_amount": target_amount
+                        }
+                        
+                        await self.base.db.goal_milestones.insert_one(milestone_doc)
+                        
+                        # Mark milestone as achieved in goal
+                        await self.base.db.financial_goals.update_one(
+                            {"_id": ObjectId(goal_id), "milestones.percentage": milestone_percentage},
+                            {"$set": {"milestones.$.achieved": True, "milestones.$.achieved_at": datetime.now(timezone.utc)}}
+                        )
+                        
+                        logger.info(f"🎉 Milestone achieved: {user_id} reached {milestone_percentage}% of goal {goal_id}")
+        
+        except Exception as e:
+            logger.exception(f"❌ Error checking milestone achievements: {e}")
