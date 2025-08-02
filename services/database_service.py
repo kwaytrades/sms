@@ -859,3 +859,6 @@ async def initialize_database_service() -> UnifiedDatabaseService:
     service = UnifiedDatabaseService()
     await service.initialize()
     return service
+
+# Add backward compatibility alias
+DatabaseService = UnifiedDatabaseService
