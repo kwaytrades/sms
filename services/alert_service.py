@@ -409,4 +409,4 @@ class AlertService:
                 }
             )
             
-            if result.modified_count
+            if result.modified_count > 0:
