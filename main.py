@@ -91,7 +91,7 @@ except ImportError:
 
 # Import services with error handling
 try:
-    from services.database import DatabaseService
+    from services.database_service import DatabaseService
     logger.info("✅ DatabaseService imported")
 except Exception as e:
     DatabaseService = None
